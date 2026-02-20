@@ -21,21 +21,28 @@ class FluxerWriter:
         
         is_token_valid = False
         is_community_valid = False
+        bot_name = None
+        community_name = None
         try:
             # Check token by fetching me
-            await self.client.get_current_user()
-            is_token_valid = True
+            me = await self.client.get_current_user()
+            if me:
+                is_token_valid = True
+                bot_name = me.get("username")
             
             # Check community
             guild = await self.client.get_guild(self.community_id)
             if guild:
                 is_community_valid = True
+                community_name = guild.get("name")
         except Exception:
             pass
             
         return {
             "token": is_token_valid,
-            "community": is_community_valid
+            "community": is_community_valid,
+            "bot_name": bot_name,
+            "community_name": community_name
         }
 
     async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None) -> str:

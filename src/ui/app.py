@@ -55,8 +55,10 @@ class MigrationCLI:
         old_settings = termios.tcgetattr(fd) if fd is not None else None
         
         self.validation_results = {
-            "discord_token": False, "discord_server": False,
-            "fluxer_token": False, "fluxer_community": False
+            "discord_token": False, "discord_bot_name": None,
+            "discord_server": False, "discord_server_name": None,
+            "fluxer_token": False, "fluxer_bot_name": None,
+            "fluxer_community": False, "fluxer_community_name": None
         }
         self.tokens_valid = False
 
@@ -94,7 +96,9 @@ class MigrationCLI:
                     try:
                         res = discord_task.result()
                         self.validation_results["discord_token"] = res.get("token", False)
+                        self.validation_results["discord_bot_name"] = res.get("bot_name")
                         self.validation_results["discord_server"] = res.get("server", False)
+                        self.validation_results["discord_server_name"] = res.get("server_name")
                         if not res.get("token"):
                             console.print("[bold red]Discord Token validation failed (Invalid Token).[/bold red]")
                         elif not res.get("server"):
@@ -110,7 +114,9 @@ class MigrationCLI:
                     try:
                         res = fluxer_task.result()
                         self.validation_results["fluxer_token"] = res.get("token", False)
+                        self.validation_results["fluxer_bot_name"] = res.get("bot_name")
                         self.validation_results["fluxer_community"] = res.get("community", False)
+                        self.validation_results["fluxer_community_name"] = res.get("community_name")
                         if not res.get("token"):
                             console.print("[bold red]Fluxer Token validation failed (Invalid Token).[/bold red]")
                         elif not res.get("community"):
@@ -146,8 +152,17 @@ class MigrationCLI:
         await self.validate_config()
         
         while True:
-            console.print(Panel.fit("Fluxer Reaper", style="bold blue"))
-            console.print("[bold]Main Menu[/bold]")
+            console.print("")
+            console.print(Panel.fit("Fluxer Reaper", style="bold blue"))            
+            d_name = self.validation_results.get("discord_server_name")
+            d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT SET UP[/bold red]"
+            
+            f_name = self.validation_results.get("fluxer_community_name")
+            f_display = f"[bold green]\"{f_name}\"[/bold green]" if f_name else "[bold red]NOT SET UP[/bold red]"
+            
+            console.print(f"[bold cyan]Discord Server:[/bold cyan] {d_display}")
+            console.print(f"[bold magenta]Fluxer Community:[/bold magenta] {f_display}")
+            console.print("[bold]Main Menu[/bold]")            
             console.print("(1) Clone Server Template (Channels & Categories)")
             console.print("(2) Copy Roles & Permissions")
             console.print("(3) Copy Emojis & Stickers")
@@ -181,13 +196,16 @@ class MigrationCLI:
         await self.validate_config()
         console.print("\n[bold]Configuration Status:[/bold]")
         
-        def get_status_str(is_valid):
-            return "[bold green][VALID][/bold green]" if is_valid else "[bold red][INVALID][/bold red]"
+        def get_status_str(is_valid, name=None):
+            status = "[bold green][VALID][/bold green]" if is_valid else "[bold red][INVALID][/bold red]"
+            if is_valid and name:
+                return f"{status} \"{name}\""
+            return status
             
-        console.print(f"Discord Bot Token {get_status_str(self.validation_results.get('discord_token', False))}")
-        console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
-        console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
-        console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
+        console.print(f"Discord Bot Token {get_status_str(self.validation_results.get('discord_token', False), self.validation_results.get('discord_bot_name'))}")
+        console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False), self.validation_results.get('fluxer_bot_name'))}")
+        console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False), self.validation_results.get('discord_server_name'))}")
+        console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False), self.validation_results.get('fluxer_community_name'))}")
         
         if not Confirm.ask("Edit now?"):
             return

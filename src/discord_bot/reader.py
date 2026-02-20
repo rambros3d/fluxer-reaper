@@ -25,16 +25,20 @@ class DiscordReader:
         # In a real app we'd wait until ready, here we simulate fetching the guild
         self.guild = await self.client.fetch_guild(self.server_id)
 
-    async def validate(self) -> Dict[str, bool]:
+    async def validate(self) -> Dict[str, Any]:
         """Validates the token and server ID."""
-        results = {"token": False, "server": False}
+        results = {"token": False, "server": False, "bot_name": None, "server_name": None}
         temp_client = self._create_client()
         try:
             await temp_client.login(self.token)
             results["token"] = True
+            if temp_client.user:
+                results["bot_name"] = temp_client.user.name
+                
             guild = await temp_client.fetch_guild(self.server_id)
             if guild is not None:
                 results["server"] = True
+                results["server_name"] = guild.name
         except Exception:
             pass
         finally:

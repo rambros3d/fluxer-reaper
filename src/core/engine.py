@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Callable, Awaitable, List
+from typing import Callable, Awaitable, List, Dict, Any
 from src.config import AppConfig
 from src.core.state import MigrationState
 from src.discord_bot.reader import DiscordReader
@@ -27,17 +27,20 @@ class MigrationEngine:
         
         self.is_running = False
 
-    async def validate_all(self) -> Dict[str, bool]:
+    async def validate_all(self) -> Dict[str, Any]:
         """Returns True if both connections are valid."""
         try:
-            # Note: in real scenarios we might want concurrent validation
             d_valid = await self.discord_reader.validate()
             f_valid = await self.fluxer_writer.validate()
             return {
                 "discord_token": d_valid.get("token", False),
+                "discord_bot_name": d_valid.get("bot_name"),
                 "discord_server": d_valid.get("server", False),
+                "discord_server_name": d_valid.get("server_name"),
                 "fluxer_token": f_valid.get("token", False),
-                "fluxer_community": f_valid.get("community", False)
+                "fluxer_bot_name": f_valid.get("bot_name"),
+                "fluxer_community": f_valid.get("community", False),
+                "fluxer_community_name": f_valid.get("community_name")
             }
         except Exception as e:
             logger.error(f"Validation failed with exception: {e}")
