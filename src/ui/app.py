@@ -1,5 +1,8 @@
 import sys
 import asyncio
+import select
+import termios
+import tty
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
@@ -23,17 +26,128 @@ class MigrationCLI:
         self.progress_callback_task = None
         self.tokens_valid = False
 
+    async def _check_skip(self):
+        """Non-blocking check for 'S' key press."""
+        if not sys.stdin.isatty():
+            return False
+            
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            while True:
+                if select.select([sys.stdin], [], [], 0.05)[0]:
+                    char = sys.stdin.read(1).lower()
+                    if char == 's':
+                        return True
+                await asyncio.sleep(0.05)
+        except Exception:
+            return False
+        finally:
+            # Shift back to old settings immediately
+            termios.tcsetattr(fd, termios.TCSANOW, old_settings)
+
     async def validate_config(self):
-        with console.status("[yellow]Validating tokens...[/yellow]"):
-            self.validation_results = await self.engine.validate_all()
-            self.tokens_valid = all(self.validation_results.values())
+        console.print("[yellow]press (S) to skip[/yellow]")
+        
+        # Save terminal settings for safety
+        fd = sys.stdin.fileno() if sys.stdin.isatty() else None
+        old_settings = termios.tcgetattr(fd) if fd is not None else None
+        
+        self.validation_results = {
+            "discord_token": False, "discord_server": False,
+            "fluxer_token": False, "fluxer_community": False
+        }
+        self.tokens_valid = False
+
+        discord_task = asyncio.create_task(self.engine.discord_reader.validate())
+        fluxer_task = asyncio.create_task(self.engine.fluxer_writer.validate())
+        skip_task = asyncio.create_task(self._check_skip())
+
+        try:
+            with console.status("[yellow]Validating tokens...[/yellow]"):
+                start_time = asyncio.get_event_loop().time()
+                done, pending = await asyncio.wait(
+                    [discord_task, fluxer_task, skip_task], 
+                    timeout=5.0,
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if skip_task in done and skip_task.result():
+                    console.print("[yellow]Validation skipped by user.[/yellow]")
+                    for t in [discord_task, fluxer_task]: t.cancel()
+                    return
+
+                # Wait a bit more for validations if they are almost done
+                elapsed = asyncio.get_event_loop().time() - start_time
+                remaining = max(0, 5.0 - elapsed)
+                if not (discord_task.done() and fluxer_task.done()) and remaining > 0:
+                    done2, pending2 = await asyncio.wait(
+                        [discord_task, fluxer_task],
+                        timeout=remaining,
+                        return_when=asyncio.ALL_COMPLETED
+                    )
+                    done.update(done2)
+
+                # Process Discord Result
+                if discord_task in done:
+                    try:
+                        res = discord_task.result()
+                        self.validation_results["discord_token"] = res.get("token", False)
+                        self.validation_results["discord_server"] = res.get("server", False)
+                        if not res.get("token"):
+                            console.print("[bold red]Discord Token validation failed (Invalid Token).[/bold red]")
+                        elif not res.get("server"):
+                            console.print("[bold red]Discord Server ID validation failed (Invalid/Inaccessible ID).[/bold red]")
+                    except Exception as e:
+                        console.print(f"[bold red]Discord validation failed with error: {e}[/bold red]")
+                else:
+                    console.print("[bold red]Discord bot token validation timed out after 5 seconds.[/bold red]")
+                    discord_task.cancel()
+
+                # Process Fluxer Result
+                if fluxer_task in done:
+                    try:
+                        res = fluxer_task.result()
+                        self.validation_results["fluxer_token"] = res.get("token", False)
+                        self.validation_results["fluxer_community"] = res.get("community", False)
+                        if not res.get("token"):
+                            console.print("[bold red]Fluxer Token validation failed (Invalid Token).[/bold red]")
+                        elif not res.get("community"):
+                            console.print("[bold red]Fluxer Community ID validation failed (Invalid/Inaccessible ID).[/bold red]")
+                    except Exception as e:
+                        console.print(f"[bold red]Fluxer validation failed with error: {e}[/bold red]")
+                else:
+                    console.print("[bold red]Fluxer bot token validation timed out after 5 seconds.[/bold red]")
+                    fluxer_task.cancel()
+
+                self.tokens_valid = all(self.validation_results.values())
+
+        except Exception as e:
+            console.print(f"[bold red]Validation system failure: {e}[/bold red]")
+        finally:
+            # Crucial: Ensure the skip check task is dead and terminal is restored
+            if not skip_task.done():
+                skip_task.cancel()
+                try:
+                    await skip_task
+                except asyncio.CancelledError:
+                    pass
+            
+            # Additional safety: manually restore terminal if somehow it's still weird
+            if fd is not None and old_settings is not None:
+                termios.tcsetattr(fd, termios.TCSANOW, old_settings)
+            
+            # Ensure other tasks are also cleaned up
+            for t in [discord_task, fluxer_task]:
+                if not t.done(): t.cancel()
 
     async def run(self):
-        console.print(Panel.fit("Fluxer Reaper", style="bold blue"))
         await self.validate_config()
         
         while True:
-            console.print("\n[bold]Main Menu[/bold]")
+            console.print(Panel.fit("Fluxer Reaper", style="bold blue"))
+            console.print("[bold]Main Menu[/bold]")
             console.print("(1) Clone Server Template (Channels & Categories)")
             console.print("(2) Copy Roles & Permissions")
             console.print("(3) Copy Emojis & Stickers")
@@ -64,6 +178,7 @@ class MigrationCLI:
                 break
 
     async def edit_configuration(self):
+        await self.validate_config()
         console.print("\n[bold]Configuration Status:[/bold]")
         
         def get_status_str(is_valid):
@@ -113,8 +228,7 @@ class MigrationCLI:
             console.print("[yellow]No changes made.[/yellow]")
 
     async def update_validation_status(self):
-        self.validation_results = await self.engine.validate_all()
-        self.tokens_valid = all(self.validation_results.values())
+        await self.validate_config()
 
     async def clone_server_template(self):
         console.print("\n[yellow]Fetching server structure...[/yellow]")

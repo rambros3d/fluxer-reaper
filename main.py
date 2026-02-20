@@ -28,7 +28,7 @@ def main():
     try:
         asyncio.run(run_cli())
     except KeyboardInterrupt:
-        print("\nOperation interrupted by user.")
+        print("\nOperation terminated by user.")
         sys.exit(0)
     except Exception as e:
         print(f"Failed to start tool: {e}")
