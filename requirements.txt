@@ -1,0 +1,5 @@
+discord.py>=2.3.2
+git+https://github.com/akarealemil/fluxer.py
+rich>=13.7.0
+PyYAML>=6.0.1
+pydantic>=2.5.3 # Good for configuration validation and mapping
