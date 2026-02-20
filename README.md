@@ -1,39 +1,40 @@
-# Discord Reaper (to Fluxer)
+# Fluxer Reaper 🚀
 
-A state-of-the-art highly resumable interactive CLI for cloning a Discord server to a Fluxer community.
+Fluxer Reaper is a simple tool to help you move your Discord server content over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
 
-## Project Architecture
+![Fluxer Reaper](fluxer-reaper.jpg)
 
-The architecture separates the generic orchestration UI from the target and source logic.
-- `src/discord_bot/reader.py`: Wraps `discord.py` to fetch server items, channels, users, roles, and message histories.
-- `src/fluxer_bot/writer.py`: Wraps `fluxer.py` and creates mirrored items in Fluxer.
-- `src/core/engine.py`: Manages reading from one end, writing to the other, and keeping state in `state.json`.
-- `src/ui/app.py`: The `rich`-based interactive CLI that binds it all together in an elegant terminal app.
+## 🛠️ Getting Started
 
-## Setup Instructions
+### 1. Prerequisites
+Make sure you have Python installed on your computer.
 
-1. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
-2. Configure your properties in `config.yaml` with the correct Discord Bot Token, Fluxer Bot Token, and IDs.
-3. Run the application:
-   ```bash
-   python main.py
-   ```
+### 2. Install the tool
+Open your terminal and run:
+```bash
+pip install -r requirements.txt
+```
 
-## Production Suggestions
+### 3. Setup your config
+Open the `config.yaml` file and fill in your details:
+*   **Discord Bot Token**: Your bot's token from the Discord Developer Portal.
+*   **Discord Server ID**: The ID of the server you want to copy.
+*   **Fluxer Bot Token**: Your Fluxer bot token.
+*   **Fluxer Community ID**: The ID of the Fluxer community where you want to move everything.
 
-### 1. Speed & Concurrency
-- **Asynchronous Batching**: The current engine reads one message and writes one message. To boost speed significantly without being rate-limited, read history aggressively using `asyncio.gather` for attachments and embeds, but queue write requests. 
-- **Database Backend**: Migrate `state.json` to `aiosqlite`. A JSON file becomes a bottleneck when state has hundreds of thousands of keys and gets rewritten constantly to disk. SQLite ensures safe concurrent commits.
+### 4. Run it!
+Start the tool by running:
+```bash
+python fluxer-reaper.py
+```
 
-### 2. Safety & Error Recovery
-- **Rate Limit Handlers**: `discord.py` natively respects 429s for Discord. For Fluxer, implement a leaky bucket or backoff wrapper inside `fluxer_bot/writer.py` to avoid 429 HTTP bans. Make sure the TUI reports when a rate-limit sleep occurs.
-- **Attachment Caching**: When copying heavy attachments, stream to a temporary local disk file (e.g. `/tmp/discord_reaper/`), upload it to Fluxer, then dynamically delete it. Holding attachments in RAM will cause OOM crashes on large media servers.
-- **Resumability Constraints**: Expand `state.py` to store not just channel offsets, but also thread IDs and role mapping hashes, ensuring total state recovery on unexpected exits.
+## ✨ Features
+*   **Clone Server Structure**: Automatically creates all your Discord categories and channels in Fluxer.
+*   **Copy Roles**: Copies your roles and their basic permissions.
+*   **Copy Emojis & Stickers**: Copies your custom emojis and stickers over.
+*   **Message History**: Select a specific channel and migrate messages starting from the oldest or a custom point.
+*   **Server Identity**: Syncs your server name, icon, and banner.
 
-### 3. CLI UX Improvements
-- **Interactive Selectors**: Replace the static "Run Migration" with a dynamic prompt menu using `rich` or `questionary` that lists Discord categories and channels. Users should be able to check/uncheck categories they want to exclude from the migration.
-- **Color Coding**: Map log levels (INFO, ERROR, WARN) to Rich console colors (green, red, yellow).
-- **Graceful Abort**: The tool gracefully handles exit commands, but adding a hotkey listener or `asyncio.Task.cancel()` for immediate stops during hanging requests could enhance responsiveness.
+## ⚠️ Important Tips
+*   **Token Validation**: The tool will double-check your tokens every time you start it or change settings.
+*   **Safety**: You will always be asked for confirmation before any major action (like deleting or creating many items).
