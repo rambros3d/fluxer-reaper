@@ -29,7 +29,7 @@ class MigrationCLI:
             self.tokens_valid = all(self.validation_results.values())
 
     async def run(self):
-        console.print(Panel.fit("Discord Reaper", style="bold blue"))
+        console.print(Panel.fit("Fluxer Reaper", style="bold blue"))
         await self.validate_config()
         
         while True:
@@ -230,11 +230,39 @@ class MigrationCLI:
             self.engine.is_running = False
 
     async def copy_emojis(self):
-        if not Confirm.ask("Are you sure you want to copy emojis and stickers?"):
-            return
-            
-        console.print("\n[bold green]Starting Emoji Migration...[/bold green]")
+        console.print("\n[yellow]Fetching emojis and stickers...[/yellow]")
         try:
+            await self.engine.start_connections()
+            emojis = await self.engine.discord_reader.get_emojis()
+            stickers = await self.engine.discord_reader.get_stickers()
+            
+            console.print(f"\n[bold]Custom emojis found: {len(emojis)}[/bold]")
+            for e in emojis:
+                console.print(f"  - Emoji: {e.name}")
+            
+            console.print(f"[bold]Custom stickers found: {len(stickers)}[/bold]")
+            for s in stickers:
+                console.print(f"  - Sticker: {s.name}")
+            
+            console.print("\n(1) Copy Emojis only")
+            console.print("(2) Copy Stickers only")
+            console.print("(3) Copy Emojis and Stickers")
+            console.print("(B) Back")
+            
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="1").upper()
+            
+            if choice == "B":
+                return
+
+            types_to_include = []
+            if choice == "1":
+                types_to_include = ["Emoji"]
+            elif choice == "2":
+                types_to_include = ["Sticker"]
+            elif choice == "3":
+                types_to_include = ["Emoji", "Sticker"]
+
+            console.print("\n[bold green]Starting Migration...[/bold green]")
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -243,16 +271,15 @@ class MigrationCLI:
                 console=console
             ) as progress:
                 
-                emoji_task = progress.add_task("[cyan]Copying Emojis...", total=100)
+                emoji_task = progress.add_task("[cyan]Copying Assets...", total=100)
                 
-                async def update_progress(item_name: str, current: int, total: int):
-                    progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying Emoji: {item_name}")
+                async def update_progress(item_name: str, item_type: str, current: int, total: int):
+                    progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying {item_type}: {item_name}")
 
-                await self.engine.start_connections()
                 self.engine.is_running = True
-                await self.engine.migrate_emojis(progress_callback=update_progress)
+                await self.engine.migrate_emojis(progress_callback=update_progress, types_to_include=types_to_include)
                 
-            console.print("[bold green]Emoji migration complete![/bold green]")
+            console.print("[bold green]Migration complete![/bold green]")
             
         except Exception as e:
             console.print(f"[bold red]Error during emoji migration: {str(e)}[/bold red]")

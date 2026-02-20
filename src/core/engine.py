@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, List
 from src.config import AppConfig
 from src.core.state import MigrationState
 from src.discord_bot.reader import DiscordReader
@@ -194,28 +194,44 @@ class MigrationEngine:
             if progress_callback: await progress_callback(role.name, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
-    async def migrate_emojis(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
+    async def migrate_emojis(self, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"]):
         """Copies custom emojis and stickers."""
-        emojis = await self.discord_reader.get_emojis()
-        total = len(emojis)
+        objs = []
+        if "Emoji" in types_to_include:
+            emojis = await self.discord_reader.get_emojis()
+            objs.extend([(e, "Emoji") for e in emojis])
+        if "Sticker" in types_to_include:
+            stickers = await self.discord_reader.get_stickers()
+            objs.extend([(s, "Sticker") for s in stickers])
+            
+        total = len(objs)
         
-        for idx, emoji in enumerate(emojis):
+        for idx, (obj, obj_type) in enumerate(objs):
             if not self.is_running: break
                 
-            fluxer_id = self.state.get_fluxer_channel_id(f"emoji_{emoji.id}")
+            state_key = f"{obj_type.lower()}_{obj.id}"
+            fluxer_id = self.state.get_fluxer_channel_id(state_key)
             if not fluxer_id:
                 try:
-                    img_data = await self.discord_reader.download_emoji(emoji)
-                    fluxer_id = await self.fluxer_writer.create_emoji(
-                        name=emoji.name,
-                        image_bytes=img_data
-                    )
+                    if obj_type == "Emoji":
+                        img_data = await self.discord_reader.download_emoji(obj)
+                        fluxer_id = await self.fluxer_writer.create_emoji(
+                            name=obj.name,
+                            image_bytes=img_data
+                        )
+                    else:
+                        img_data = await self.discord_reader.download_sticker(obj)
+                        fluxer_id = await self.fluxer_writer.create_sticker(
+                            name=obj.name,
+                            image_bytes=img_data
+                        )
+                    
                     if fluxer_id:
-                        self.state.set_channel_mapping(f"emoji_{emoji.id}", fluxer_id)
+                        self.state.set_channel_mapping(state_key, fluxer_id)
                 except Exception as e:
-                    logger.error(f"Error downloading/uploading emoji {emoji.name}: {e}")
+                    logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
             
-            if progress_callback: await progress_callback(emoji.name, idx + 1, total)
+            if progress_callback: await progress_callback(obj.name, obj_type, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def run_full_migration(self):

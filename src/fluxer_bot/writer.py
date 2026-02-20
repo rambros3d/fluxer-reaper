@@ -115,6 +115,23 @@ class FluxerWriter:
             print(f"Failed to copy emoji {name}: {e}")
             return ""
 
+    async def create_sticker(self, name: str, image_bytes: bytes) -> str:
+        """
+        Creates a custom sticker in the Fluxer community.
+        """
+        assert self.client is not None
+        
+        try:
+            sticker = await self.client.create_guild_sticker(
+                guild_id=self.community_id,
+                name=name,
+                image=image_bytes
+            )
+            return str(sticker["id"])
+        except Exception as e:
+            print(f"Failed to copy sticker {name}: {e}")
+            return ""
+
     async def update_guild_metadata(self, name: Optional[str] = None, icon: Optional[bytes] = None, banner: Optional[bytes] = None) -> None:
         """
         Updates the Fluxer community name, icon, and banner.

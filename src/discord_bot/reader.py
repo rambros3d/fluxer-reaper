@@ -77,6 +77,12 @@ class DiscordReader:
             return []
         return await self.guild.fetch_emojis()
 
+    async def get_stickers(self):
+        """Returns all custom stickers in the server."""
+        if not self.guild:
+            return []
+        return await self.guild.fetch_stickers()
+
     async def get_channels(self, category_id: int | None = None):
         """Yields all non-category channels."""
         if not self.guild:
@@ -98,6 +104,10 @@ class DiscordReader:
     async def download_emoji(self, emoji: discord.Emoji) -> bytes:
         """Downloads a Discord emoji into memory."""
         return await emoji.read()
+
+    async def download_sticker(self, sticker: discord.GuildSticker) -> bytes:
+        """Downloads a Discord sticker into memory."""
+        return await sticker.read()
 
     async def download_attachment(self, attachment: discord.Attachment) -> bytes:
         """Downloads a Discord attachment into memory."""
