@@ -176,34 +176,37 @@ class MigrationEngine:
             if progress_callback: await progress_callback(channel.name, current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
-    async def migrate_messages(self, channel_id: int):
+    async def migrate_messages(self, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None):
         """Migrate messages for a specific channel."""
-        fluxer_channel_id = self.state.get_fluxer_channel_id(str(channel_id))
-        if not fluxer_channel_id:
-            logger.error(f"Cannot migrate messages: channel {channel_id} not mapped.")
-            return
-
         message_count = 0
-        async for msg in self.discord_reader.fetch_message_history(channel_id):
+        async for msg in self.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
             if not self.is_running:
                 break
                 
             # Process attachments
             files = []
             for att in msg.attachments:
-                att_data = await self.discord_reader.download_attachment(att)
-                files.append({"filename": att.filename, "data": att_data})
+                try:
+                    att_data = await self.discord_reader.download_attachment(att)
+                    files.append({"filename": att.filename, "data": att_data})
+                except Exception as e:
+                    logger.error(f"Failed to download attachment {att.filename}: {e}")
                 
-            await self.fluxer_writer.send_message(
-                channel_id=fluxer_channel_id,
-                author_name=msg.author.name,
-                content=msg.content,
-                timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                files=files if files else None
-            )
-            
-            self.state.update_last_message_timestamp(str(channel_id), str(msg.created_at))
-            message_count += 1
+            try:
+                await self.fluxer_writer.send_message(
+                    channel_id=target_channel_id,
+                    author_name=msg.author.name,
+                    content=msg.content,
+                    timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    files=files if files else None
+                )
+                
+                self.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
+                message_count += 1
+                if progress_callback:
+                    await progress_callback(message_count)
+            except Exception as e:
+                logger.error(f"Failed to send message to Fluxer: {e}")
             
             # Delay for rate limit safety
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)

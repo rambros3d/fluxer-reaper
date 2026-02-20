@@ -1,22 +1,47 @@
-# Supposing fluxer.py has an API similar to discord.py or requests based 
-# Since we don't have the exact library reference, we create a conceptual skeleton.
-
+import asyncio
 from typing import Optional, List, Dict, Any
-from fluxer.http import HTTPClient
+from fluxer import Bot
 
 class FluxerWriter:
     def __init__(self, token: str, community_id: str):
         self.token = token
         self.community_id = str(community_id)
-        self.client: Optional[HTTPClient] = None
+        self.bot: Optional[Bot] = None
+        self._bot_task: Optional[asyncio.Task] = None
+        self._ready_event = asyncio.Event()
 
     async def start(self):
-        """Authenticate with Fluxer."""
-        self.client = HTTPClient(token=self.token, is_bot=True)
+        """Authenticate with Fluxer and start the background bot session."""
+        if self.bot and self._bot_task and not self._bot_task.done():
+            return
+
+        self.bot = Bot()
+        self._ready_event.clear()
+
+        # Define a simple on_ready listener to signal when we're connected
+        @self.bot.event
+        async def on_ready():
+            self._ready_event.set()
+
+        # Start the bot in the background
+        self._bot_task = asyncio.create_task(self.bot.start(self.token))
+        
+        # Wait for the bot to be ready (timeout of 10s to be safe)
+        try:
+            await asyncio.wait_for(self._ready_event.wait(), timeout=10.0)
+        except asyncio.TimeoutError:
+            # If it's not ready, it might still work for some REST calls, 
+            # but send_message might fail later.
+            pass
+
+    @property
+    def client(self):
+        """Helper to access the underlying HTTP client."""
+        return self.bot._http if self.bot else None
 
     async def validate(self) -> dict:
         """Validates the token and community ID."""
-        if not self.client:
+        if not self.bot or not self._ready_event.is_set():
             await self.start()
         
         is_token_valid = False
@@ -25,10 +50,15 @@ class FluxerWriter:
         community_name = None
         try:
             # Check token by fetching me
-            me = await self.client.get_current_user()
-            if me:
+            if self.bot and self.bot.user:
                 is_token_valid = True
-                bot_name = me.get("username")
+                bot_name = self.bot.user.username
+            else:
+                # Fallback if on_ready didn't fire yet but we want to check token
+                me = await self.client.get_current_user()
+                if me:
+                    is_token_valid = True
+                    bot_name = me.get("username")
             
             # Check community
             guild = await self.client.get_guild(self.community_id)
@@ -51,20 +81,20 @@ class FluxerWriter:
         Returns the new Fluxer channel ID.
         """
         assert self.client is not None
-        payload = {
-            "name": name,
-            "type": type,
-        }
-        if topic:
-            payload["topic"] = topic
-        if parent_id:
-            payload["parent_id"] = parent_id
-            
-        guild_channel = await self.client.request(
-            self.client._route("POST", "/guilds/{guild_id}/channels", guild_id=self.community_id),
-            json=payload
+        
+        guild_channel = await self.client.create_guild_channel(
+            guild_id=self.community_id,
+            name=name,
+            type=type,
+            topic=topic or None,
+            parent_id=parent_id
         )
         return str(guild_channel["id"])
+
+    async def get_channels(self) -> List[Dict[str, Any]]:
+        """Returns all channels in the community."""
+        assert self.client is not None
+        return await self.client.get_guild_channels(self.community_id)
 
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, files: Optional[List[Dict[str, Any]]] = None) -> None:
         """
@@ -72,6 +102,13 @@ class FluxerWriter:
         """
         assert self.client is not None
         
+        # Ensure we are ready before sending (wait a bit if needed)
+        if not self._ready_event.is_set():
+            try:
+                await asyncio.wait_for(self._ready_event.wait(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass
+
         prefix = f"**[{timestamp}] {author_name}**:\n"
         final_content = prefix + content if content else prefix
         
@@ -83,7 +120,10 @@ class FluxerWriter:
             )
         except Exception as e:
             # Handle empty messages if an attachment is the only content
-            print(f"Failed to copy message: {e}")
+            err_msg = f"Failed to copy message: {e}"
+            if hasattr(e, 'errors') and e.errors:
+                err_msg += f" - Details: {e.errors}"
+            print(err_msg)
 
     async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool) -> str:
         """
@@ -170,6 +210,14 @@ class FluxerWriter:
             print(f"Failed to update community metadata: {e}")
 
     async def close(self):
-        """Cleanly close connection."""
-        if self.client:
-            await self.client.close()
+        """Cleanly close connection and stop bot task."""
+        if self.bot:
+            await self.bot.close()
+        if self._bot_task:
+            self._bot_task.cancel()
+            try:
+                await self._bot_task
+            except asyncio.CancelledError:
+                pass
+        self._ready_event.clear()
+

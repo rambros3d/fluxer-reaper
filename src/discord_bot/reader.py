@@ -97,12 +97,32 @@ class DiscordReader:
             all_channels = [c for c in all_channels if c.category_id == category_id]
         return all_channels
 
-    async def fetch_message_history(self, channel_id: int, limit: int = None) -> AsyncGenerator[discord.Message, None]:
-        """Yields messages from a given channel, optionally handling pagination."""
-        channel = await self.client.fetch_channel(channel_id)
+    async def get_channel(self, channel_id: int):
+        """Returns a channel object."""
+        return await self.client.fetch_channel(channel_id)
+
+    async def get_message(self, channel_id: int, message_id: int):
+        """Returns a specific message."""
+        channel = await self.get_channel(channel_id)
+        if hasattr(channel, "fetch_message"):
+            return await channel.fetch_message(message_id)
+        return None
+
+    async def get_first_message(self, channel_id: int):
+        """Returns the first (oldest) message in a channel."""
+        channel = await self.get_channel(channel_id)
         if isinstance(channel, discord.TextChannel) or isinstance(channel, discord.Thread):
+            async for message in channel.history(limit=1, oldest_first=True):
+                return message
+        return None
+
+    async def fetch_message_history(self, channel_id: int, limit: int = None, after_id: int = None) -> AsyncGenerator[discord.Message, None]:
+        """Yields messages from a given channel, optionally handling pagination."""
+        channel = await self.get_channel(channel_id)
+        if isinstance(channel, discord.TextChannel) or isinstance(channel, discord.Thread):
+            after = discord.Object(id=after_id) if after_id else None
             # To avoid exploding RAM, we yield items one by one
-            async for message in channel.history(limit=limit, oldest_first=True):
+            async for message in channel.history(limit=limit, oldest_first=True, after=after):
                 yield message
 
     async def download_emoji(self, emoji: discord.Emoji) -> bytes:
