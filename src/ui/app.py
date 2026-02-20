@@ -288,18 +288,47 @@ class MigrationCLI:
             self.engine.is_running = False
 
     async def sync_server_metadata(self):
-        if not Confirm.ask("Are you sure you want to sync server name, logo and banner?"):
-            return
-            
-        console.print("\n[bold green]Syncing Server Metadata...[/bold green]")
-        
-        async def progress_callback(item: str, status: str):
-            color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
-            console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
-
+        console.print("\n[yellow]Fetching server metadata...[/yellow]")
         try:
             await self.engine.start_connections()
-            await self.engine.sync_server_metadata(progress_callback)
+            metadata = await self.engine.discord_reader.get_server_metadata()
+            
+            name = metadata.get("name")
+            icon_status = "[bold green]FOUND[/bold green]" if metadata.get("icon_url") else "[yellow]NOT FOUND[/yellow]"
+            banner_status = "[bold green]FOUND[/bold green]" if metadata.get("banner_url") else "[yellow]NOT FOUND[/yellow]"
+            
+            console.print(f"\n[bold]Server Name:[/bold] {name}")
+            console.print(f"[bold]Server Icon:[/bold] {icon_status}")
+            console.print(f"[bold]Server Banner:[/bold] {banner_status}")
+            
+            console.print("\n(1) Sync Name only")
+            console.print("(2) Sync Icon only")
+            console.print("(3) Sync Banner only")
+            console.print("(4) Sync Everything")
+            console.print("(B) Back")
+            
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "B", "b"], default="4").upper()
+            
+            if choice == "B":
+                return
+
+            components = []
+            if choice == "1":
+                components = ["name"]
+            elif choice == "2":
+                components = ["icon"]
+            elif choice == "3":
+                components = ["banner"]
+            elif choice == "4":
+                components = ["name", "icon", "banner"]
+
+            console.print("\n[bold green]Syncing Server Metadata...[/bold green]")
+            
+            async def progress_callback(item: str, status: str):
+                color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
+                console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
+
+            await self.engine.sync_server_metadata(progress_callback, components=components)
             console.print("[bold green]Server metadata sync finished![/bold green]")
         except Exception as e:
             console.print(f"[bold red]Error during metadata sync: {str(e)}[/bold red]")
