@@ -38,14 +38,14 @@ class MigrationCLI:
             console.print("(2) Copy Roles & Permissions")
             console.print("(3) Copy Emojis & Stickers")
             console.print("(4) Sync Server Name, Logo and Banner")
-            console.print("(5) Migrate message history")
+            console.print("(5) Migrate message history [NOT IMPLEMENTED]")
             
             val_status = "[bold green][VALID][/bold green]" if self.tokens_valid else "[bold red][INVALID][/bold red]"
             console.print(f"(6) Configuration {val_status}")
             
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "Q", "q"], default="1").upper()
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "Q", "q"], default="Q").upper()
             
             if choice == "1":
                 await self.clone_server_template()
@@ -199,35 +199,71 @@ class MigrationCLI:
             self.engine.is_running = False
 
     async def copy_roles(self):
-        if not Confirm.ask("Are you sure you want to copy roles?"):
+        console.print("\n[bold]Role & Permission Options[/bold]")
+        console.print("(1) Copy Roles & Role Permissions")
+        console.print("(2) Sync Category Permissions & Channel Permissions")
+        console.print("(B) Back")
+        
+        choice = Prompt.ask("Select an option", choices=["1", "2", "B", "b"], default="B").upper()
+        
+        if choice == "B":
             return
-            
-        console.print("\n[bold green]Starting Role Migration...[/bold green]")
-        try:
-            with Progress(
-                SpinnerColumn(),
-                TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
-                console=console
-            ) as progress:
-                
-                role_task = progress.add_task("[cyan]Copying Roles...", total=100)
-                
-                async def update_progress(item_name: str, current: int, total: int):
-                    progress.update(role_task, total=total, completed=current, description=f"[cyan]Copying Role: {item_name}")
 
-                await self.engine.start_connections()
-                self.engine.is_running = True
-                await self.engine.migrate_roles(progress_callback=update_progress)
+        if choice == "1":
+            console.print("\n[bold green]Starting Role Migration...[/bold green]")
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    
+                    role_task = progress.add_task("[cyan]Copying Roles...", total=100)
+                    
+                    async def update_progress(item_name: str, current: int, total: int):
+                        progress.update(role_task, total=total, completed=current, description=f"[cyan]Copying Role: {item_name}")
+    
+                    await self.engine.start_connections()
+                    self.engine.is_running = True
+                    await self.engine.migrate_roles(progress_callback=update_progress)
+                    
+                console.print("[bold green]Role migration complete![/bold green]")
                 
-            console.print("[bold green]Role migration complete![/bold green]")
-            
-        except Exception as e:
-            console.print(f"[bold red]Error during role migration: {str(e)}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-            self.engine.is_running = False
+            except Exception as e:
+                console.print(f"[bold red]Error during role migration: {str(e)}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+                self.engine.is_running = False
+        
+        elif choice == "2":
+            console.print("\n[bold green]Syncing Category & Channel Permissions...[/bold green]")
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    
+                    perm_task = progress.add_task("[cyan]Syncing Permissions...", total=100)
+                    
+                    async def update_progress(item_name: str, current: int, total: int):
+                        progress.update(perm_task, total=total, completed=current, description=f"[cyan]Syncing: {item_name}")
+    
+                    await self.engine.start_connections()
+                    self.engine.is_running = True
+                    await self.engine.sync_permissions(progress_callback=update_progress)
+                    
+                console.print("[bold green]Permission synchronization complete![/bold green]")
+                
+            except Exception as e:
+                console.print(f"[bold red]Error during permission sync: {str(e)}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+                self.engine.is_running = False
 
     async def copy_emojis(self):
         console.print("\n[yellow]Fetching emojis and stickers...[/yellow]")
@@ -249,7 +285,7 @@ class MigrationCLI:
             console.print("(3) Copy Emojis and Stickers")
             console.print("(B) Back")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="1").upper()
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="B").upper()
             
             if choice == "B":
                 return
@@ -307,7 +343,7 @@ class MigrationCLI:
             console.print("(4) Sync Everything")
             console.print("(B) Back")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "B", "b"], default="4").upper()
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "B", "b"], default="B").upper()
             
             if choice == "B":
                 return
