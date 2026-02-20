@@ -66,6 +66,11 @@ class FluxerWriter:
         )
         return str(guild_channel["id"])
 
+    async def get_channels(self) -> List[Dict[str, Any]]:
+        """Returns all channels in the community."""
+        assert self.client is not None
+        return await self.client.get_guild_channels(self.community_id)
+
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, files: Optional[List[Dict[str, Any]]] = None) -> None:
         """
         Sends a message to the target channel.

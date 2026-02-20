@@ -445,24 +445,116 @@ class MigrationCLI:
             await self.engine.close_connections()
 
     async def migrate_message_history(self):
-        if not Confirm.ask("Are you sure you want to migrate message history?"):
-            return
-            
-        console.print("\n[bold green]Starting Message History Migration...[/bold green]")
+        console.print("\n[bold]Message History Migration (Manual Selection)[/bold]")
+        
+        if not self.tokens_valid:
+             console.print("[bold red]Error: You must have a valid configuration (Option 6) to migrate messages.[/bold red]")
+             return
+
         try:
+            # Note: We don't call start_connections here because engine methods handles it 
+            # or we handle it manually if we need to fetch data before migration.
+            # Actually, to get channels, we need connections.
             await self.engine.start_connections()
-            # Mock example of passing message progress.
-            console.print("[cyan]Migrating messages for the first channel (Demo)...[/cyan]")
-            channels = await self.engine.discord_reader.get_channels()
-            if channels:
-                self.engine.is_running = True
-                await self.engine.migrate_messages(channels[0].id)
-            console.print("[bold green]Message history migration complete![/bold green]")
+            
+            # 1. Select Source Discord Channel
+            d_channels = await self.engine.discord_reader.get_channels()
+            if not d_channels:
+                console.print("[yellow]No text channels found in Discord server.[/yellow]")
+                return
+            
+            console.print("\n[bold]Select Source Discord Channel:[/bold]")
+            for i, ch in enumerate(d_channels):
+                console.print(f"({i+1}) {ch.name}")
+            
+            d_choices = [str(i+1) for i in range(len(d_channels))]
+            d_choice = Prompt.ask("Select Discord Channel", choices=d_choices)
+            source_channel = d_channels[int(d_choice) - 1]
+
+            # 2. Select Target Fluxer Channel
+            f_channels = await self.engine.fluxer_writer.get_channels()
+            if not f_channels:
+                console.print("[yellow]No channels found in Fluxer community.[/yellow]")
+                return
+                
+            console.print("\n[bold]Select Target Fluxer Channel:[/bold]")
+            for i, ch in enumerate(f_channels):
+                console.print(f"({i+1}) {ch.get('name', 'Unnamed Channel')}")
+
+            f_choices = [str(i+1) for i in range(len(f_channels))]
+            f_choice = Prompt.ask("Select Fluxer Channel", choices=f_choices)
+            target_channel = f_channels[int(f_choice) - 1]
+
+            # 3. Handle Starting Message
+            first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
+            after_id = None
+            
+            if first_msg:
+                # Link format: https://discord.com/channels/GUILD_ID/CHANNEL_ID/MESSAGE_ID
+                first_msg_link = f"https://discord.com/channels/{self.config.discord_server_id}/{source_channel.id}/{first_msg.id}"
+                console.print(f"\n[bold green]Channel Found![/bold green]")
+                console.print(f"Oldest Message Link: {first_msg_link}")
+                console.print(f"Author: [blue]{first_msg.author.name}[/blue]")
+                console.print(f"Content Preview: {first_msg.content[:100]}...")
+                
+                prompt_text = "Start migration from this oldest message? (Y for Yes, S for Specific Link, B to Back)"
+                start_mode = Prompt.ask(prompt_text, choices=["Y", "S", "B"], default="Y").upper()
+                
+                if start_mode == "B":
+                    return
+                elif start_mode == "S":
+                    custom_link = Prompt.ask("Enter Discord Message Link")
+                    try:
+                        # Extract message ID from end of link
+                        custom_id = int(custom_link.split("/")[-1])
+                        # Check if message exists to give feedback
+                        msg = await self.engine.discord_reader.get_message(source_channel.id, custom_id)
+                        if msg:
+                            # To include this message, we start 'after' the ID before it
+                            after_id = custom_id - 1
+                            console.print(f"[green]Confirmed: Starting from {msg.author.name}'s message.[/green]")
+                        else:
+                            console.print("[red]Warning: Message ID not found in this channel. Starting from beginning.[/red]")
+                    except Exception as e:
+                        console.print(f"[red]Error parsing link: {e}. Starting from beginning.[/red]")
+            else:
+                console.print("[yellow]Source channel appears to be empty. Nothing to migrate.[/yellow]")
+                return
+
+            # 4. Final Confirmation
+            if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [magenta]#{target_channel.get('name')}[/magenta]?"):
+                return
+            
+            # 5. Migration Execution
+            console.print("\n[bold green]Starting Migration...[/bold green]")
+            self.engine.is_running = True
+            
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=console
+            ) as progress:
+                task = progress.add_task("[cyan]Migrating messages...", total=None)
+                
+                async def update_msg_progress(count: int):
+                    progress.update(task, description=f"[cyan]Migrated {count} messages...")
+
+                count = await self.engine.migrate_messages(
+                    source_channel_id=source_channel.id,
+                    target_channel_id=target_channel.get("id"),
+                    after_message_id=after_id,
+                    progress_callback=update_msg_progress
+                )
+                
+            console.print(f"\n[bold green]Success! {count} messages migrated to {target_channel.get('name')}.[/bold green]")
+
         except Exception as e:
-            console.print(f"[bold red]Error during message migration: {str(e)}[/bold red]")
+            console.print(f"[bold red]Migration encountered an error: {str(e)}[/bold red]")
         finally:
-            await self.engine.close_connections()
             self.engine.is_running = False
+            await self.engine.close_connections()
 
 async def run_cli():
     cli = MigrationCLI()
