@@ -56,6 +56,46 @@ class MigrationEngine:
         await self.discord_reader.close()
         await self.fluxer_writer.close()
 
+    async def sync_server_metadata(self, progress_callback: Callable[[str, str], Awaitable[None]]):
+        """Syncs the server name, logo and banner."""
+        metadata = await self.discord_reader.get_server_metadata()
+        name = metadata.get("name")
+        
+        # 1. Sync Name
+        try:
+            await self.fluxer_writer.update_guild_metadata(name=name)
+            await progress_callback("Server Name", "DONE")
+        except Exception:
+            await progress_callback("Server Name", "ERROR")
+
+        # 2. Sync Icon
+        try:
+            icon_bytes = None
+            if self.discord_reader.guild and self.discord_reader.guild.icon:
+                icon_bytes = await self.discord_reader.download_asset(self.discord_reader.guild.icon)
+            
+            if icon_bytes:
+                await self.fluxer_writer.update_guild_metadata(icon=icon_bytes)
+                await progress_callback("Server Icon", "DONE")
+            else:
+                await progress_callback("Server Icon", "SKIP")
+        except Exception:
+            await progress_callback("Server Icon", "ERROR")
+            
+        # 3. Sync Banner
+        try:
+            banner_bytes = None
+            if self.discord_reader.guild and self.discord_reader.guild.banner:
+                banner_bytes = await self.discord_reader.download_asset(self.discord_reader.guild.banner)
+            
+            if banner_bytes:
+                await self.fluxer_writer.update_guild_metadata(banner=banner_bytes)
+                await progress_callback("Server Banner", "DONE")
+            else:
+                await progress_callback("Server Banner", "SKIP")
+        except Exception:
+            await progress_callback("Server Banner", "ERROR")
+
     async def migrate_channels(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
         """Clones categories and text channels."""
         categories = await self.discord_reader.get_categories()

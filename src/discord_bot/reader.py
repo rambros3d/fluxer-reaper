@@ -49,8 +49,13 @@ class DiscordReader:
         return {
             "name": self.guild.name,
             "id": str(self.guild.id),
-            "icon_url": self.guild.icon.url if self.guild.icon else None
+            "icon_url": self.guild.icon.url if self.guild.icon else None,
+            "banner_url": self.guild.banner.url if self.guild.banner else None
         }
+
+    async def download_asset(self, asset: discord.Asset) -> bytes:
+        """Downloads an asset (icon, banner) into memory."""
+        return await asset.read()
 
     async def get_categories(self):
         if not self.guild:

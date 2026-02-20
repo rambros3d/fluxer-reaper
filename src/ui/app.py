@@ -37,14 +37,15 @@ class MigrationCLI:
             console.print("(1) Clone Server Template (Channels & Categories)")
             console.print("(2) Copy Roles & Permissions")
             console.print("(3) Copy Emojis & Stickers")
-            console.print("(4) Migrate message history")
+            console.print("(4) Sync Server Name, Logo and Banner")
+            console.print("(5) Migrate message history")
             
             val_status = "[bold green][VALID][/bold green]" if self.tokens_valid else "[bold red][INVALID][/bold red]"
-            console.print(f"(5) Configuration {val_status}")
+            console.print(f"(6) Configuration {val_status}")
             
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "Q", "q"], default="1").upper()
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "Q", "q"], default="1").upper()
             
             if choice == "1":
                 await self.clone_server_template()
@@ -53,8 +54,10 @@ class MigrationCLI:
             elif choice == "3":
                 await self.copy_emojis()
             elif choice == "4":
-                await self.migrate_message_history()
+                await self.sync_server_metadata()
             elif choice == "5":
+                await self.migrate_message_history()
+            elif choice == "6":
                 await self.edit_configuration()
             elif choice == "Q":
                 console.print("[yellow]Exiting tool...[/yellow]")
@@ -256,6 +259,25 @@ class MigrationCLI:
         finally:
             await self.engine.close_connections()
             self.engine.is_running = False
+
+    async def sync_server_metadata(self):
+        if not Confirm.ask("Are you sure you want to sync server name, logo and banner?"):
+            return
+            
+        console.print("\n[bold green]Syncing Server Metadata...[/bold green]")
+        
+        async def progress_callback(item: str, status: str):
+            color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
+            console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
+
+        try:
+            await self.engine.start_connections()
+            await self.engine.sync_server_metadata(progress_callback)
+            console.print("[bold green]Server metadata sync finished![/bold green]")
+        except Exception as e:
+            console.print(f"[bold red]Error during metadata sync: {str(e)}[/bold red]")
+        finally:
+            await self.engine.close_connections()
 
     async def migrate_message_history(self):
         if not Confirm.ask("Are you sure you want to migrate message history?"):

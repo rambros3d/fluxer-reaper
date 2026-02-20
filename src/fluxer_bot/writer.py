@@ -115,6 +115,36 @@ class FluxerWriter:
             print(f"Failed to copy emoji {name}: {e}")
             return ""
 
+    async def update_guild_metadata(self, name: Optional[str] = None, icon: Optional[bytes] = None, banner: Optional[bytes] = None) -> None:
+        """
+        Updates the Fluxer community name, icon, and banner.
+        """
+        assert self.client is not None
+        
+        kwargs = {}
+        if banner:
+            import base64
+            image_data = base64.b64encode(banner).decode("ascii")
+            if banner.startswith(b"\x89PNG"):
+                mime_type = "image/png"
+            elif banner.startswith(b"\xff\xd8\xff"):
+                mime_type = "image/jpeg"
+            elif banner.startswith(b"GIF89a") or banner.startswith(b"GIF87a"):
+                mime_type = "image/gif"
+            else:
+                mime_type = "image/png"
+            kwargs["banner"] = f"data:{mime_type};base64,{image_data}"
+
+        try:
+            await self.client.modify_guild(
+                guild_id=self.community_id,
+                name=name,
+                icon=icon,
+                **kwargs
+            )
+        except Exception as e:
+            print(f"Failed to update community metadata: {e}")
+
     async def close(self):
         """Cleanly close connection."""
         if self.client:
