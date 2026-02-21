@@ -110,6 +110,99 @@ class MigrationEngine:
             except Exception:
                 await progress_callback("Server Banner", "ERROR")
 
+    async def sync_channel_state(self):
+        """
+        Scans Fluxer for channels matching Discord names and updates state.json mappings.
+        This prevents duplicate creation when the state.json is empty but channels exist in Fluxer.
+        """
+        categories = await self.discord_reader.get_categories()
+        channels = await self.discord_reader.get_channels()
+        fluxer_channels = await self.fluxer_writer.get_channels()
+        
+        # Build name -> id map and ID set for Fluxer for fast lookup
+        fluxer_name_map = {c.get("name"): str(c.get("id")) for c in fluxer_channels if c.get("name")}
+        fluxer_id_set = {str(c.get("id")) for c in fluxer_channels}
+        
+        updates = 0
+        removals = 0
+        
+        # 1. Verify and Sync Categories
+        for cat in categories:
+            discord_id = str(cat.id)
+            fluxer_id = self.state.get_fluxer_category_id(discord_id)
+            
+            if fluxer_id:
+                if fluxer_id not in fluxer_id_set:
+                    self.state.remove_category_mapping(discord_id)
+                    removals += 1
+            elif cat.name in fluxer_name_map:
+                self.state.set_category_mapping(discord_id, fluxer_name_map[cat.name])
+                updates += 1
+                    
+        # 2. Verify and Sync Channels
+        for ch in channels:
+            discord_id = str(ch.id)
+            fluxer_id = self.state.get_fluxer_channel_id(discord_id)
+            
+            if fluxer_id:
+                if fluxer_id not in fluxer_id_set:
+                    self.state.remove_channel_mapping(discord_id)
+                    removals += 1
+            elif ch.name in fluxer_name_map:
+                self.state.set_channel_mapping(discord_id, fluxer_name_map[ch.name])
+                updates += 1
+        
+        if updates > 0 or removals > 0:
+            logger.info(f"Channel sync: {updates} mapped, {removals} stale mappings removed")
+
+    async def sync_assets_state(self):
+        """
+        Scans Fluxer for emojis and stickers matching Discord names and updates state.json mappings.
+        """
+        discord_emojis = await self.discord_reader.get_emojis()
+        discord_stickers = await self.discord_reader.get_stickers()
+        
+        fluxer_emojis = await self.fluxer_writer.client.get_guild_emojis(self.config.fluxer_community_id)
+        fluxer_stickers = await self.fluxer_writer.client.get_guild_stickers(self.config.fluxer_community_id)
+        
+        # Build name -> id maps and ID sets for Fluxer for fast lookup
+        fluxer_emoji_map = {e.get("name"): str(e.get("id")) for e in fluxer_emojis if e.get("name")}
+        fluxer_sticker_map = {s.get("name"): str(s.get("id")) for s in fluxer_stickers if s.get("name")}
+        fluxer_emoji_ids = {str(e.get("id")) for e in fluxer_emojis}
+        fluxer_sticker_ids = {str(s.get("id")) for s in fluxer_stickers}
+        
+        updates = 0
+        removals = 0
+        
+        # 1. Verify and Sync Emojis
+        for emoji in discord_emojis:
+            discord_id = str(emoji.id)
+            fluxer_id = self.state.get_fluxer_emoji_id(discord_id)
+            
+            if fluxer_id:
+                if fluxer_id not in fluxer_emoji_ids:
+                    self.state.remove_emoji_mapping(discord_id)
+                    removals += 1
+            elif emoji.name in fluxer_emoji_map:
+                self.state.set_emoji_mapping(discord_id, fluxer_emoji_map[emoji.name])
+                updates += 1
+                    
+        # 2. Verify and Sync Stickers
+        for sticker in discord_stickers:
+            discord_id = str(sticker.id)
+            fluxer_id = self.state.get_fluxer_sticker_id(discord_id)
+            
+            if fluxer_id:
+                if fluxer_id not in fluxer_sticker_ids:
+                    self.state.remove_sticker_mapping(discord_id)
+                    removals += 1
+            elif sticker.name in fluxer_sticker_map:
+                self.state.set_sticker_mapping(discord_id, fluxer_sticker_map[sticker.name])
+                updates += 1
+                    
+        if updates > 0 or removals > 0:
+            logger.info(f"Asset sync: {updates} mapped, {removals} stale mappings removed")
+
     async def migrate_channels(self, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, force: bool = False):
         """Clones categories and text channels.
         
@@ -128,13 +221,13 @@ class MigrationEngine:
             if not self.is_running: break
             
             state_key = str(cat.id)
-            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
+            fluxer_id = None if force else self.state.get_fluxer_category_id(state_key)
             status = "Copying"
             
             if not fluxer_id:
                 # 4 corresponds to Category type in Discord/Fluxer typically
                 fluxer_id = await self.fluxer_writer.create_channel(cat.name, type=4)
-                self.state.set_channel_mapping(state_key, fluxer_id)
+                self.state.set_category_mapping(state_key, fluxer_id)
             else:
                 status = "Skipping"
             
@@ -152,7 +245,7 @@ class MigrationEngine:
             
             if not fluxer_id:
                 topic = channel.topic if channel.topic else ""
-                parent_id = self.state.get_fluxer_channel_id(str(channel.category_id)) if channel.category_id else None
+                parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
                 
                 fluxer_id = await self.fluxer_writer.create_channel(
                     name=channel.name, 

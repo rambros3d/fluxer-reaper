@@ -239,6 +239,8 @@ class MigrationCLI:
         channels = []
         try:
             await self.engine.start_connections()
+            with console.status("[yellow]Syncing Fluxer channel state...[/yellow]"):
+                await self.engine.sync_channel_state()
             categories = await self.engine.discord_reader.get_categories()
             channels = await self.engine.discord_reader.get_channels()
         except Exception as e:
@@ -286,18 +288,62 @@ class MigrationCLI:
         console.print("")
 
         # Check for existing mappings to determine if we should suggest a force re-copy
-        all_ids = [str(cat.id) for cat in categories] + [str(ch.id) for ch in channels]
-        cached_count = sum(1 for k in all_ids if self.engine.state.get_fluxer_channel_id(k))
+        cached_count = sum(1 for cat in categories if self.engine.state.get_fluxer_category_id(str(cat.id)))
+        cached_count += sum(1 for ch in channels if self.engine.state.get_fluxer_channel_id(str(ch.id)))
+        all_ids_len = len(categories) + len(channels)
         
-        # Prompt for confirmation
         force = False
         if cached_count > 0:
-            console.print(f"[yellow]\u26a0  {cached_count}/{len(all_ids)} item(s) already in state.json cache.[/yellow]")
-            force = Confirm.ask("Force re-clone anyway?", default=False)
-            if not force:
-                if not Confirm.ask("Continue with only missing items?", default=True):
-                    await self.engine.close_connections()
-                    return
+            console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in state.json cache.[/yellow]")
+            
+            # List missing items
+            missing_categories = [cat for cat in categories if not self.engine.state.get_fluxer_category_id(str(cat.id))]
+            missing_channels = [ch for ch in channels if not self.engine.state.get_fluxer_channel_id(str(ch.id))]
+            
+            if missing_categories or missing_channels:
+                console.print("\n[bold red]The following channels/categories are missing in your fluxer server:[/bold red]")
+                
+                # Group missing channels by their categories
+                missing_by_cat = {}
+                missing_uncategorized = []
+                for ch in missing_channels:
+                    cat_id = str(ch.category_id) if ch.category_id else None
+                    if cat_id:
+                        if cat_id not in missing_by_cat: missing_by_cat[cat_id] = []
+                        missing_by_cat[cat_id].append(ch)
+                    else:
+                        missing_uncategorized.append(ch)
+
+                # Iterate through all categories to print missing ones or categories with missing children
+                for cat in categories:
+                    cat_id_str = str(cat.id)
+                    is_cat_missing = not self.engine.state.get_fluxer_category_id(cat_id_str)
+                    child_missing_channels = missing_by_cat.get(cat_id_str, [])
+                    
+                    if is_cat_missing or child_missing_channels:
+                        footer = " [dim](Category itself is missing)[/dim]" if is_cat_missing else ""
+                        console.print(f"[bold yellow]{cat.name}[/bold yellow]{footer}")
+                        for ch in child_missing_channels:
+                            print_channel(ch)
+                
+                if missing_uncategorized:
+                    console.print(f"[bold yellow]Uncategorized[/bold yellow]")
+                    for ch in missing_uncategorized:
+                        print_channel(ch)
+                console.print("")
+
+            console.print("[bold green](Y) Continue with only missing items[/bold green]")
+            console.print("[bold red](F) Force re-clone, creates duplicate channels![/bold red]")
+            console.print("[bold yellow](B) Back[/bold yellow]")
+            
+            choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+            
+            if choice == "B":
+                await self.engine.close_connections()
+                return
+            elif choice == "F":
+                force = True
+            # if 'Y', force remains False and we continue
         else:
             if not Confirm.ask("Clone channels and categories?", default=True):
                 await self.engine.close_connections()
@@ -404,6 +450,10 @@ class MigrationCLI:
         console.print("\n[yellow]Fetching emojis and stickers...[/yellow]")
         try:
             await self.engine.start_connections()
+            
+            with console.status("[yellow]Checking Fluxer for existing emojis and stickers...[/yellow]"):
+                await self.engine.sync_assets_state()
+                
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
 
@@ -426,13 +476,11 @@ class MigrationCLI:
             total_items = len(emojis) + len(stickers)
             cached_count = cached_emojis + cached_stickers
 
-            if cached_count > 0:
-                console.print(f"\n[yellow]\u26a0  {cached_count}/{total_items} item(s) marked as already copied in state.json.[/yellow]")
-                console.print("[yellow]   If the target community was reset, choose Force Re-copy.[/yellow]")
 
-            console.print("\n(1) Copy Emojis only")
-            console.print("(2) Copy Stickers only")
-            console.print("(3) Copy Emojis and Stickers")
+
+            console.print("\n(1) Sync Emojis only")
+            console.print("(2) Sync Stickers only")
+            console.print("(3) Sync Emojis and Stickers")
             console.print("(B) Back")
 
             choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="B").upper()
@@ -457,10 +505,18 @@ class MigrationCLI:
 
             force = False
             if cached_in_scope > 0:
-                force = Confirm.ask(
-                    f"[yellow]{cached_in_scope} item(s) already in state cache. Force re-copy anyway?[/yellow]",
-                    default=False
-                )
+                console.print(f"\n[yellow]{cached_in_scope} item(s) already in state cache.[/yellow]")
+                console.print("[bold green](Y) Copy missing items only[/bold green]")
+                console.print("[bold red](F) Force Overwrite[/bold red]")
+                console.print("[bold yellow](B) Back[/bold yellow]")
+                
+                choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+                
+                if choice == "B":
+                    return
+                elif choice == "F":
+                    force = True
+                # if 'Y', force remains False and we continue
 
             console.print("\n[bold green]Starting Migration...[/bold green]")
             with Progress(
@@ -548,13 +604,10 @@ class MigrationCLI:
              return
 
         try:
-            # Note: We don't call start_connections here because engine methods handles it 
-            # or we handle it manually if we need to fetch data before migration.
-            # Actually, to get channels, we need connections.
-            await self.engine.start_connections()
+            with console.status("[yellow]Fetching Discord channels...[/yellow]"):
+                await self.engine.start_connections()
+                d_channels = await self.engine.discord_reader.get_channels()
             
-            # 1. Select Source Discord Channel
-            d_channels = await self.engine.discord_reader.get_channels()
             if not d_channels:
                 console.print("[yellow]No text channels found in Discord server.[/yellow]")
                 return
@@ -575,7 +628,8 @@ class MigrationCLI:
             source_channel = d_channels[int(d_choice) - 1]
 
             # 2. Select Target Fluxer Channel
-            f_channels = await self.engine.fluxer_writer.get_channels()
+            with console.status("[yellow]Fetching Fluxer channels...[/yellow]"):
+                f_channels = await self.engine.fluxer_writer.get_channels()
             if not f_channels:
                 console.print("[yellow]No channels found in Fluxer community.[/yellow]")
                 return
@@ -626,7 +680,7 @@ class MigrationCLI:
                     with console.status(f"[yellow]Creating Fluxer channel #{source_channel.name}...[/yellow]"):
                         parent_id = None
                         if source_channel.category_id:
-                            parent_id = self.engine.state.get_fluxer_channel_id(str(source_channel.category_id))
+                            parent_id = self.engine.state.get_fluxer_category_id(str(source_channel.category_id))
                         
                         topic = getattr(source_channel, 'topic', "") or ""
                         new_id = await self.engine.fluxer_writer.create_channel(
@@ -647,7 +701,8 @@ class MigrationCLI:
                 target_channel = f_channels[int(f_choice) - 1]
 
             # 3. Handle Starting Message
-            first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
+            with console.status("[yellow]Fetching first message...[/yellow]"):
+                first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
             after_id = None
             
             if first_msg:
@@ -658,12 +713,15 @@ class MigrationCLI:
                 console.print(f"Author: [blue]{first_msg.author.name}[/blue]")
                 console.print(f"Content Preview: {first_msg.content[:100]}...")
                 
-                prompt_text = "Start migration from this oldest message? (Y for Yes, S for Specific Link, B to Back)"
-                start_mode = Prompt.ask(prompt_text, choices=["Y", "S", "B"], default="Y").upper()
+                console.print("\n(Y) [green]Yes, start from oldest message[/green]")
+                console.print("(M) Provide Specific message link or ID")
+                console.print("(B) Back")
+                
+                start_mode = Prompt.ask("Start migration", choices=["Y", "M", "B"], default="Y").upper()
                 
                 if start_mode == "B":
                     return
-                elif start_mode == "S":
+                elif start_mode == "M":
                     custom_link = Prompt.ask("Enter Discord Message Link")
                     try:
                         # Extract message ID from end of link

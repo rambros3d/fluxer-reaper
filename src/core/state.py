@@ -9,10 +9,10 @@ class MigrationState:
         self.state_file = Path(state_file)
         # mappings: discord_id -> fluxer_id
         self.channel_map: Dict[str, str] = {}
+        self.category_map: Dict[str, str] = {}
         self.role_map: Dict[str, str] = {}
         self.emoji_map: Dict[str, str] = {}
         self.sticker_map: Dict[str, str] = {}
-        self.user_map: Dict[str, str] = {}
         self.message_map: Dict[str, str] = {}
         
         # tracking last message timestamp per channel to resume
@@ -25,10 +25,10 @@ class MigrationState:
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.channel_map = data.get("channels", {})
+                self.category_map = data.get("categories", {})
                 self.role_map = data.get("roles", {})
                 self.emoji_map = data.get("emojis", {})
                 self.sticker_map = data.get("stickers", {})
-                self.user_map = data.get("users", {})
                 self.message_map = data.get("messages", {})
                 self.last_message_timestamps = data.get("last_message_timestamps", {})
                 
@@ -55,10 +55,10 @@ class MigrationState:
     def save(self):
         data = {
             "channels": self.channel_map,
+            "categories": self.category_map,
             "roles": self.role_map,
             "emojis": self.emoji_map,
             "stickers": self.sticker_map,
-            "users": self.user_map,
             "last_message_timestamps": self.last_message_timestamps,
             "messages": self.message_map
         }
@@ -71,6 +71,21 @@ class MigrationState:
 
     def get_fluxer_channel_id(self, discord_id: str) -> str | None:
         return self.channel_map.get(str(discord_id))
+
+    def remove_channel_mapping(self, discord_id: str):
+        self.channel_map.pop(str(discord_id), None)
+        self.save()
+
+    def set_category_mapping(self, discord_id: str, fluxer_id: str):
+        self.category_map[str(discord_id)] = str(fluxer_id)
+        self.save()
+
+    def get_fluxer_category_id(self, discord_id: str) -> str | None:
+        return self.category_map.get(str(discord_id))
+
+    def remove_category_mapping(self, discord_id: str):
+        self.category_map.pop(str(discord_id), None)
+        self.save()
 
     def set_message_mapping(self, discord_id: str, fluxer_id: str):
         self.message_map[str(discord_id)] = str(fluxer_id)
@@ -99,6 +114,10 @@ class MigrationState:
     def get_fluxer_emoji_id(self, discord_id: str) -> str | None:
         return self.emoji_map.get(str(discord_id))
 
+    def remove_emoji_mapping(self, discord_id: str):
+        self.emoji_map.pop(str(discord_id), None)
+        self.save()
+
     def set_sticker_mapping(self, discord_id: str, fluxer_id: str):
         self.sticker_map[str(discord_id)] = str(fluxer_id)
         self.save()
@@ -106,11 +125,16 @@ class MigrationState:
     def get_fluxer_sticker_id(self, discord_id: str) -> str | None:
         return self.sticker_map.get(str(discord_id))
 
+    def remove_sticker_mapping(self, discord_id: str):
+        self.sticker_map.pop(str(discord_id), None)
+        self.save()
+
     # --- Danger Zone Clearing ---
 
     def clear_channel_mappings(self):
         """Clears all channel and category mappings."""
         self.channel_map.clear()
+        self.category_map.clear()
         self.save()
 
     def clear_role_mappings(self):
