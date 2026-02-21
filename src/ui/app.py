@@ -245,9 +245,22 @@ class MigrationCLI:
                 
         console.print("")
 
-        if not Confirm.ask("Are you sure you want to clone channels and categories?"):
+        # Check for existing mappings to determine if we should suggest a force re-copy
+        all_ids = [str(cat.id) for cat in categories] + [str(ch.id) for ch in channels]
+        cached_count = sum(1 for k in all_ids if self.engine.state.get_fluxer_channel_id(k))
+        
+        force = False
+        if cached_count > 0:
+            console.print(f"[yellow]\u26a0  {cached_count}/{len(all_ids)} item(s) already in state.json cache.[/yellow]")
+            force = Confirm.ask("Force re-clone anyway?", default=False)
+        elif not Confirm.ask("Are you sure you want to clone channels and categories?"):
             await self.engine.close_connections()
             return
+
+        if cached_count == 0 or force:
+            if not force and not Confirm.ask("Are you sure you want to clone channels and categories?"):
+                await self.engine.close_connections()
+                return
             
         console.print("\n[bold green]Starting Channel Cloning...[/bold green]")
         try:
@@ -261,11 +274,12 @@ class MigrationCLI:
                 
                 channel_task = progress.add_task("[cyan]Copying Channels...", total=100)
                 
-                async def update_progress(item_name: str, current: int, total: int):
-                    progress.update(channel_task, total=total, completed=current, description=f"[cyan]Copying Channel: {item_name}")
+                async def update_progress(item_name: str, status: str, current: int, total: int):
+                    color = "cyan" if status == "Copying" else "yellow"
+                    progress.update(channel_task, total=total, completed=current, description=f"[{color}]{status} Channel: {item_name}")
 
                 self.engine.is_running = True
-                await self.engine.migrate_channels(progress_callback=update_progress)
+                await self.engine.migrate_channels(progress_callback=update_progress, force=force)
                 
             console.print("[bold green]Server Template cloned![/bold green]")
             
@@ -561,7 +575,39 @@ class MigrationCLI:
                 console.print("[yellow]Source channel appears to be empty. Nothing to migrate.[/yellow]")
                 return
 
-            # 4. Final Confirmation
+            # 4. Analysis and Confirmation
+            console.print("\n[yellow]Analyzing channel content...[/yellow]")
+            self.engine.is_running = True
+            stats = {"messages": 0, "threads": 0, "attachments": 0}
+            try:
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    console=console
+                ) as progress:
+                    task = progress.add_task("[cyan]Scanning history...", total=None)
+                    async def update_scan_progress(count: int):
+                        progress.update(task, description=f"[cyan]Scanned {count} items...")
+                    
+                    stats = await self.engine.analyze_migration(
+                        source_channel_id=source_channel.id,
+                        after_message_id=after_id,
+                        progress_callback=update_scan_progress
+                    )
+            finally:
+                self.engine.is_running = False
+
+            console.print(f"\n[bold]Migration Summary:[/bold]")
+            console.print(f"Number of messages:    [bold cyan]{stats['messages']}[/bold cyan]")
+            console.print(f"Number of threads:     [bold cyan]{stats['threads']}[/bold cyan]")
+            console.print(f"Number of attachments: [bold cyan]{stats['attachments']}[/bold cyan]")
+            
+            console.print("\n[bold yellow]Estimated Overhead:[/bold yellow]")
+            msg_time = stats['messages'] * self.config.migration.rate_limit_delay_seconds
+            console.print(f"- [bold]Messages:[/bold] ~{msg_time}s delay (rate limiting), {stats['messages']} API writes.")
+            console.print(f"- [bold]Threads:[/bold] {stats['threads'] * 2} extra marker messages, {stats['threads']} extra history fetches.")
+            console.print(f"- [bold]Attachments:[/bold] {stats['attachments']} downloads and uploads (bandwidth & API calls).")
+
             if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [magenta]#{target_channel.get('name')}[/magenta]?"):
                 return
             

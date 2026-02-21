@@ -110,8 +110,13 @@ class MigrationEngine:
             except Exception:
                 await progress_callback("Server Banner", "ERROR")
 
-    async def migrate_channels(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
-        """Clones categories and text channels."""
+    async def migrate_channels(self, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, force: bool = False):
+        """Clones categories and text channels.
+        
+        Args:
+            progress_callback: Optional callback receiving (item_name, status, current, total)
+            force: If True, re-create channels even if they exist in state.
+        """
         categories = await self.discord_reader.get_categories()
         channels = await self.discord_reader.get_channels()
         
@@ -121,21 +126,30 @@ class MigrationEngine:
         # Migrate Categories first
         for cat in categories:
             if not self.is_running: break
-            fluxer_id = self.state.get_fluxer_channel_id(str(cat.id))
+            
+            state_key = str(cat.id)
+            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
+            status = "Copying"
+            
             if not fluxer_id:
                 # 4 corresponds to Category type in Discord/Fluxer typically
                 fluxer_id = await self.fluxer_writer.create_channel(cat.name, type=4)
-                self.state.set_channel_mapping(str(cat.id), fluxer_id)
+                self.state.set_channel_mapping(state_key, fluxer_id)
+            else:
+                status = "Skipping"
             
             current_idx += 1
-            if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
+            if progress_callback: await progress_callback(f"Cat: {cat.name}", status, current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
         # Migrate Text Channels
         for channel in channels:
             if not self.is_running: break
                 
-            fluxer_id = self.state.get_fluxer_channel_id(str(channel.id))
+            state_key = str(channel.id)
+            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
+            status = "Copying"
+            
             if not fluxer_id:
                 topic = channel.topic if channel.topic else ""
                 parent_id = self.state.get_fluxer_channel_id(str(channel.category_id)) if channel.category_id else None
@@ -146,10 +160,12 @@ class MigrationEngine:
                     type=0, 
                     parent_id=parent_id
                 )
-                self.state.set_channel_mapping(str(channel.id), fluxer_id)
+                self.state.set_channel_mapping(state_key, fluxer_id)
+            else:
+                status = "Skipping"
             
             current_idx += 1
-            if progress_callback: await progress_callback(channel.name, current_idx, total)
+            if progress_callback: await progress_callback(channel.name, status, current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def sync_permissions(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
@@ -183,6 +199,33 @@ class MigrationEngine:
             current_idx += 1
             if progress_callback: await progress_callback(channel.name, current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
+
+    async def analyze_migration(self, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, int]:
+        """
+        Scans channel history to count messages, threads, and attachments.
+        """
+        stats = {"messages": 0, "threads": 0, "attachments": 0}
+        
+        async for msg in self.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
+            if not self.is_running:
+                break
+            
+            stats["messages"] += 1
+            stats["attachments"] += len(msg.attachments)
+            
+            # Count thread messages and markers
+            if hasattr(msg, 'thread') and msg.thread:
+                stats["threads"] += 1
+                # Recursively count thread content
+                thread_stats = await self.analyze_migration(msg.thread.id)
+                stats["messages"] += thread_stats["messages"]
+                stats["attachments"] += thread_stats["attachments"]
+                stats["threads"] += thread_stats["threads"] # Nested threads (rare in Discord but possible in forum channels)
+
+            if progress_callback and stats["messages"] % 10 == 0:
+                await progress_callback(stats["messages"])
+
+        return stats
 
     async def migrate_messages(self, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None):
         """Migrate messages for a specific channel."""
@@ -241,12 +284,39 @@ class MigrationEngine:
                 if fluxer_msg_id:
                     self.state.set_message_mapping(str(msg.id), fluxer_msg_id)
 
+                # Check for associated thread
+                if hasattr(msg, 'thread') and msg.thread:
+                    thread = msg.thread
+                    logger.info(f"Detected thread '{thread.name}' on message {msg.id}")
+                    
+                    # Send Start Marker
+                    await self.fluxer_writer.send_marker(
+                        channel_id=target_channel_id,
+                        content=f"> <<< THREAD: **{thread.name}** >>>"
+                    )
+                    
+                    # Migrate thread messages
+                    # We don't pass a progress callback here to avoid confusing the UI
+                    # but we do want to track count if possible.
+                    await self.migrate_messages(
+                        source_channel_id=thread.id,
+                        target_channel_id=target_channel_id
+                    )
+                    
+                    # Send End Marker
+                    await self.fluxer_writer.send_marker(
+                        channel_id=target_channel_id,
+                        content=f"> <<< END OF THREAD >>>"
+                    )
+
                 self.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
                 message_count += 1
                 if progress_callback:
                     await progress_callback(message_count)
             except Exception as e:
-                logger.error(f"Failed to send message to Fluxer: {e}")
+                logger.error(f"Failed to process message {msg.id}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
             
             # Delay for rate limit safety
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
@@ -345,7 +415,10 @@ class MigrationEngine:
 
     async def danger_delete_all_channels(self, progress_callback=None) -> int:
         """Deletes every channel and category in the Fluxer community."""
-        return await self.fluxer_writer.delete_all_channels(progress_callback=progress_callback)
+        count = await self.fluxer_writer.delete_all_channels(progress_callback=progress_callback)
+        self.state.clear_channel_mappings()
+        self.state.clear_message_history()
+        return count
 
     async def danger_reset_channel_permissions(self, progress_callback=None) -> int:
         """Resets all permission overwrites on every channel and category."""
@@ -353,9 +426,13 @@ class MigrationEngine:
 
     async def danger_delete_all_roles(self, progress_callback=None) -> int:
         """Deletes all deletable roles (skips managed/bot roles and @everyone)."""
-        return await self.fluxer_writer.delete_all_roles(progress_callback=progress_callback)
+        count = await self.fluxer_writer.delete_all_roles(progress_callback=progress_callback)
+        self.state.clear_role_mappings()
+        return count
 
     async def danger_delete_all_emojis_and_stickers(self, progress_callback=None) -> dict:
         """Deletes all custom emojis and stickers. Returns {"emojis": int, "stickers": int}."""
-        return await self.fluxer_writer.delete_all_emojis_and_stickers(progress_callback=progress_callback)
+        counts = await self.fluxer_writer.delete_all_emojis_and_stickers(progress_callback=progress_callback)
+        self.state.clear_asset_mappings()
+        return counts
 

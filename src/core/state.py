@@ -56,3 +56,31 @@ class MigrationState:
     def update_last_message_timestamp(self, channel_id: str, timestamp: str):
         self.last_message_timestamps[str(channel_id)] = timestamp
         self.save()
+
+    def clear_channel_mappings(self):
+        """Clears all channel and category mappings (excludes roles/emojis/stickers)."""
+        to_remove = [k for k in self.channel_map.keys() if k.isdigit()]
+        for k in to_remove:
+            del self.channel_map[k]
+        self.save()
+
+    def clear_role_mappings(self):
+        """Clears all role mappings."""
+        to_remove = [k for k in self.channel_map.keys() if k.startswith("role_")]
+        for k in to_remove:
+            del self.channel_map[k]
+        self.role_map.clear()
+        self.save()
+
+    def clear_asset_mappings(self):
+        """Clears all emoji and sticker mappings."""
+        to_remove = [k for k in self.channel_map.keys() if k.startswith("emoji_") or k.startswith("sticker_")]
+        for k in to_remove:
+            del self.channel_map[k]
+        self.save()
+
+    def clear_message_history(self):
+        """Clears all message mappings and timestamps."""
+        self.message_map.clear()
+        self.last_message_timestamps.clear()
+        self.save()

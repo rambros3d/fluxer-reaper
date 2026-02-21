@@ -193,6 +193,20 @@ class FluxerWriter:
             print(err_msg)
             return None
 
+    async def send_marker(self, channel_id: str, content: str) -> Optional[str]:
+        """
+        Sends a simple marker message (e.g., thread start/end) using the bot directly.
+        """
+        assert self.client is not None
+        try:
+            msg_data = await self.client.send_message(
+                channel_id=channel_id,
+                content=content
+            )
+            return str(msg_data["id"]) if msg_data else None
+        except Exception as e:
+            print(f"Failed to send marker: {e}")
+            return None
 
     async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool) -> str:
         """
