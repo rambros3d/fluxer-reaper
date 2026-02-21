@@ -256,6 +256,146 @@ class FluxerWriter:
         except Exception as e:
             print(f"Failed to update community metadata: {e}")
 
+    async def remove_community_logo_and_banner(self) -> None:
+        """
+        Removes the community logo (icon) and banner by setting them to None.
+        """
+        assert self.client is not None
+        try:
+            await self.client.modify_guild(
+                guild_id=self.community_id,
+                icon=None,
+                banner=None
+            )
+        except Exception as e:
+            print(f"Failed to remove community logo/banner: {e}")
+
+    async def delete_all_channels(self, progress_callback=None) -> int:
+        """
+        Deletes all channels and categories in the Fluxer community.
+        Returns the count of deleted channels.
+        """
+        assert self.client is not None
+        channels = await self.client.get_guild_channels(self.community_id)
+        total = len(channels)
+        deleted = 0
+        # Delete non-category channels first, then categories
+        sorted_channels = sorted(channels, key=lambda c: 0 if c.get("type") == 4 else -1)
+        for ch in sorted_channels:
+            try:
+                await self.client.delete_channel(ch["id"])
+                deleted += 1
+                if progress_callback:
+                    await progress_callback(ch.get("name", "Unknown"), deleted, total)
+            except Exception as e:
+                print(f"Failed to delete channel {ch.get('name')}: {e}")
+        return deleted
+
+    async def reset_channel_permissions(self, progress_callback=None) -> int:
+        """
+        Resets all permission overwrites on every channel and category.
+        Returns the count of channels processed.
+        """
+        assert self.client is not None
+        channels = await self.client.get_guild_channels(self.community_id)
+        total = len(channels)
+        processed = 0
+        for ch in channels:
+            try:
+                # Fetch existing overwrites and delete each one
+                overwrites = ch.get("permission_overwrites", [])
+                for ow in overwrites:
+                    try:
+                        await self.client.delete_channel_permission(ch["id"], ow["id"])
+                    except Exception:
+                        pass
+                processed += 1
+                if progress_callback:
+                    await progress_callback(ch.get("name", "Unknown"), processed, total)
+            except Exception as e:
+                print(f"Failed to reset permissions for channel {ch.get('name')}: {e}")
+        return processed
+
+    async def delete_all_roles(self, progress_callback=None) -> int:
+        """
+        Deletes all non-managed, non-default roles in the Fluxer community,
+        while safely skipping the bot's own managed role.
+        Returns the count of deleted roles.
+        """
+        assert self.client is not None
+        
+        # Fetch the bot's user ID so we can skip its managed role
+        bot_user_id = None
+        try:
+            if self.bot and self.bot.user:
+                bot_user_id = str(self.bot.user.id)
+            else:
+                me = await self.client.get_current_user()
+                if me:
+                    bot_user_id = str(me.get("id"))
+        except Exception:
+            pass
+
+        roles = await self.client.get_guild_roles(self.community_id)
+        deletable = []
+        for r in roles:
+            # Skip @everyone (position 0) and managed roles (e.g. bot roles)
+            if r.get("managed") or r.get("name") == "@everyone":
+                continue
+            deletable.append(r)
+
+        total = len(deletable)
+        deleted = 0
+        for role in deletable:
+            try:
+                await self.client.delete_guild_role(self.community_id, role["id"])
+                deleted += 1
+                if progress_callback:
+                    await progress_callback(role.get("name", "Unknown"), deleted, total)
+            except Exception as e:
+                print(f"Failed to delete role {role.get('name')}: {e}")
+        return deleted
+
+    async def delete_all_emojis_and_stickers(self, progress_callback=None) -> int:
+        """
+        Deletes all custom emojis and stickers in the Fluxer community.
+        Returns the total count of deleted items.
+        """
+        assert self.client is not None
+        deleted = 0
+
+        # Delete emojis
+        try:
+            emojis = await self.client.get_guild_emojis(self.community_id)
+            emoji_total = len(emojis)
+            for idx, emoji in enumerate(emojis):
+                try:
+                    await self.client.delete_guild_emoji(self.community_id, emoji["id"])
+                    deleted += 1
+                    if progress_callback:
+                        await progress_callback(emoji.get("name", "Unknown"), "Emoji", deleted, emoji_total)
+                except Exception as e:
+                    print(f"Failed to delete emoji {emoji.get('name')}: {e}")
+        except Exception as e:
+            print(f"Failed to fetch emojis: {e}")
+
+        # Delete stickers
+        try:
+            stickers = await self.client.get_guild_stickers(self.community_id)
+            sticker_total = len(stickers)
+            for idx, sticker in enumerate(stickers):
+                try:
+                    await self.client.delete_guild_sticker(self.community_id, sticker["id"])
+                    deleted += 1
+                    if progress_callback:
+                        await progress_callback(sticker.get("name", "Unknown"), "Sticker", deleted, sticker_total)
+                except Exception as e:
+                    print(f"Failed to delete sticker {sticker.get('name')}: {e}")
+        except Exception as e:
+            print(f"Failed to fetch stickers: {e}")
+
+        return deleted
+
     async def close(self):
         """Cleanly close connection and stop bot task."""
         if self.bot:

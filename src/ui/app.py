@@ -112,10 +112,11 @@ class MigrationCLI:
             
             val_status = "[bold green][VALID][/bold green]" if self.tokens_valid else "[bold red][INVALID][/bold red]"
             console.print(f"(6) Configuration {val_status}")
+            console.print("(7) [bold red]⚠  Danger Zone[/bold red]")
             
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "Q", "q"], default="Q").upper()
+            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q").upper()
             
             if choice == "1":
                 await self.clone_server_template()
@@ -129,6 +130,8 @@ class MigrationCLI:
                 await self.migrate_message_history()
             elif choice == "6":
                 await self.edit_configuration()
+            elif choice == "7":
+                await self.danger_zone()
             elif choice == "Q":
                 console.print("[yellow]Exiting tool...[/yellow]")
                 await self.engine.close_connections()
@@ -556,6 +559,171 @@ class MigrationCLI:
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
+
+    async def danger_zone(self):
+        """Danger Zone – irreversible destructive operations on the Fluxer community."""
+        console.print("")
+        console.print(Panel.fit(
+            "[bold red]⚠  DANGER ZONE ⚠[/bold red]\n"
+            "[yellow]These actions are PERMANENT and IRREVERSIBLE on your Fluxer community.[/yellow]\n"
+            "[yellow]Always double-check before confirming.[/yellow]",
+            style="bold red"
+        ))
+        console.print("(1) Remove Community Logo and Banner")
+        console.print("(2) Delete all Channels & Categories")
+        console.print("(3) Reset Channel & Category Permissions")
+        console.print("(4) Delete all Roles  [dim](bot role is protected)[/dim]")
+        console.print("(5) Delete all custom Emojis & Stickers")
+        console.print("(B) Back")
+
+        choice = Prompt.ask(
+            "Select a Danger Zone option",
+            choices=["1", "2", "3", "4", "5", "B", "b"],
+            default="B"
+        ).upper()
+
+        if choice == "B":
+            return
+
+        # ---- (1) Remove Logo & Banner ----
+        if choice == "1":
+            console.print("")
+            console.print("[bold red]This will REMOVE the community logo and banner image.[/bold red]")
+            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
+                return
+            if not Confirm.ask("[bold red]Last chance – confirm permanent removal?[/bold red]"):
+                return
+            try:
+                await self.engine.start_connections()
+                with console.status("[red]Removing logo and banner...[/red]"):
+                    await self.engine.danger_remove_logo_and_banner()
+                console.print("[bold green]Community logo and banner removed.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+
+        # ---- (2) Delete all Channels & Categories ----
+        elif choice == "2":
+            console.print("")
+            console.print("[bold red]This will DELETE every channel and category in the Fluxer community.[/bold red]")
+            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
+                return
+            if not Confirm.ask("[bold red]Last chance – this cannot be undone. Continue?[/bold red]"):
+                return
+            try:
+                await self.engine.start_connections()
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    del_task = progress.add_task("[red]Deleting channels...", total=100)
+
+                    async def on_channel_deleted(name: str, current: int, total: int):
+                        progress.update(del_task, total=total, completed=current,
+                                        description=f"[red]Deleting: {name}")
+
+                    count = await self.engine.danger_delete_all_channels(progress_callback=on_channel_deleted)
+                console.print(f"[bold green]Done. {count} channels/categories deleted.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+
+        # ---- (3) Reset Channel & Category Permissions ----
+        elif choice == "3":
+            console.print("")
+            console.print("[bold red]This will RESET all permission overwrites on every channel and category.[/bold red]")
+            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
+                return
+            if not Confirm.ask("[bold red]Last chance – all custom permission overrides will be wiped. Continue?[/bold red]"):
+                return
+            try:
+                await self.engine.start_connections()
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    perm_task = progress.add_task("[red]Resetting permissions...", total=100)
+
+                    async def on_perm_reset(name: str, current: int, total: int):
+                        progress.update(perm_task, total=total, completed=current,
+                                        description=f"[red]Resetting: {name}")
+
+                    count = await self.engine.danger_reset_channel_permissions(progress_callback=on_perm_reset)
+                console.print(f"[bold green]Done. Permissions reset on {count} channels/categories.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+
+        # ---- (4) Delete all Roles ----
+        elif choice == "4":
+            console.print("")
+            console.print("[bold red]This will DELETE all roles in the Fluxer community.[/bold red]")
+            console.print("[dim]Managed roles (including the bot's own role) and @everyone are automatically protected.[/dim]")
+            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
+                return
+            if not Confirm.ask("[bold red]Last chance – confirm permanent role deletion?[/bold red]"):
+                return
+            try:
+                await self.engine.start_connections()
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    role_task = progress.add_task("[red]Deleting roles...", total=100)
+
+                    async def on_role_deleted(name: str, current: int, total: int):
+                        progress.update(role_task, total=total, completed=current,
+                                        description=f"[red]Deleting role: {name}")
+
+                    count = await self.engine.danger_delete_all_roles(progress_callback=on_role_deleted)
+                console.print(f"[bold green]Done. {count} roles deleted.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+
+        # ---- (5) Delete all Emojis & Stickers ----
+        elif choice == "5":
+            console.print("")
+            console.print("[bold red]This will DELETE all custom emojis and stickers in the Fluxer community.[/bold red]")
+            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
+                return
+            if not Confirm.ask("[bold red]Last chance – this cannot be undone. Continue?[/bold red]"):
+                return
+            try:
+                await self.engine.start_connections()
+                with Progress(
+                    SpinnerColumn(),
+                    TextColumn("[progress.description]{task.description}"),
+                    BarColumn(),
+                    TaskProgressColumn(),
+                    console=console
+                ) as progress:
+                    asset_task = progress.add_task("[red]Deleting assets...", total=100)
+
+                    async def on_asset_deleted(name: str, asset_type: str, current: int, total: int):
+                        progress.update(asset_task, total=total, completed=current,
+                                        description=f"[red]Deleting {asset_type}: {name}")
+
+                    count = await self.engine.danger_delete_all_emojis_and_stickers(progress_callback=on_asset_deleted)
+                console.print(f"[bold green]Done. {count} emojis/stickers deleted.[/bold green]")
+            except Exception as e:
+                console.print(f"[bold red]Error: {e}[/bold red]")
+            finally:
+                await self.engine.close_connections()
+
 
 async def run_cli():
     cli = MigrationCLI()

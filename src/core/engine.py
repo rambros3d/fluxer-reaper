@@ -293,3 +293,25 @@ class MigrationEngine:
 
     def stop(self):
         self.is_running = False
+
+    # ──────────────── DANGER ZONE ────────────────
+
+    async def danger_remove_logo_and_banner(self) -> None:
+        """Removes the community logo and banner image."""
+        await self.fluxer_writer.remove_community_logo_and_banner()
+
+    async def danger_delete_all_channels(self, progress_callback=None) -> int:
+        """Deletes every channel and category in the Fluxer community."""
+        return await self.fluxer_writer.delete_all_channels(progress_callback=progress_callback)
+
+    async def danger_reset_channel_permissions(self, progress_callback=None) -> int:
+        """Resets all permission overwrites on every channel and category."""
+        return await self.fluxer_writer.reset_channel_permissions(progress_callback=progress_callback)
+
+    async def danger_delete_all_roles(self, progress_callback=None) -> int:
+        """Deletes all deletable roles (skips managed/bot roles and @everyone)."""
+        return await self.fluxer_writer.delete_all_roles(progress_callback=progress_callback)
+
+    async def danger_delete_all_emojis_and_stickers(self, progress_callback=None) -> int:
+        """Deletes all custom emojis and stickers from the Fluxer community."""
+        return await self.fluxer_writer.delete_all_emojis_and_stickers(progress_callback=progress_callback)
