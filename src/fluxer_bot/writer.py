@@ -124,7 +124,7 @@ class FluxerWriter:
         assert self.client is not None
         return await self.client.get_guild_channels(self.community_id)
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None) -> Optional[str]:
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False) -> Optional[str]:
         """
         Sends a message to the target channel.
         Uses a webhook to mimic the original author if possible.
@@ -145,7 +145,14 @@ class FluxerWriter:
         # Prepare content with subtext timestamp
         # -# is Fluxer/Discord's subtext markdown: small, muted grey text
         prefix = f"-# {timestamp}\n"
-        final_content = prefix + content if content else prefix
+        if is_forwarded:
+            prefix += "-# -->*forwarded*\n"
+            
+        display_content = content
+        if is_forwarded and content:
+            display_content = f">>> {content}"
+            
+        final_content = prefix + display_content if display_content else prefix
 
         try:
             # Current limitation: fluxer.py execute_webhook doesn't support 'files' or 'message_reference' yet.
@@ -161,8 +168,12 @@ class FluxerWriter:
             else:
                 # Use bot direct message (supports files and message_reference)
                 # We add the author name to the prefix since bot name won't match
-                bot_prefix = f"-# {timestamp} · {author_name}\n"
-                bot_content = bot_prefix + content if content else bot_prefix
+                bot_prefix = f"-# {timestamp}\n"
+                if is_forwarded:
+                    bot_prefix += "-# -->*forwarded*\n"
+                bot_prefix += f"-# · {author_name}\n"
+                
+                final_bot_content = bot_prefix + display_content if display_content else bot_prefix
                 
                 message_reference = None
                 if reply_to_message_id:
@@ -170,7 +181,7 @@ class FluxerWriter:
 
                 msg_data = await self.client.send_message(
                     channel_id=channel_id,
-                    content=bot_content,
+                    content=final_bot_content,
                     files=files,
                     message_reference=message_reference
                 )

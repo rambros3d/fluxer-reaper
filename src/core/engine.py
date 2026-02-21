@@ -193,7 +193,28 @@ class MigrationEngine:
                 
             # Process attachments
             files = []
-            for att in msg.attachments:
+            attachments_to_process = list(msg.attachments)
+            
+            # Check if this message is forwarded
+            # Discord flags: forwarded (is bit 28 / 0x10000000)
+            is_forwarded = False
+            if hasattr(msg.flags, 'forwarded'):
+                is_forwarded = msg.flags.forwarded
+            
+            # If forwarded, the content and attachments might be in message_snapshots (discord.py 2.5+)
+            content = msg.content
+            if is_forwarded:
+                logger.debug(f"Detected forwarded message: ID={msg.id}, Flags={msg.flags.value}")
+                if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
+                    # For now we handle the first snapshot
+                    snapshot = msg.message_snapshots[0]
+                    if not content:
+                        content = snapshot.content
+                    # Add snapshot attachments to the list to process
+                    attachments_to_process.extend(snapshot.attachments)
+                    logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")
+
+            for att in attachments_to_process:
                 try:
                     att_data = await self.discord_reader.download_attachment(att)
                     files.append({"filename": att.filename, "data": att_data})
@@ -210,10 +231,11 @@ class MigrationEngine:
                     channel_id=target_channel_id,
                     author_name=msg.author.display_name,
                     author_avatar_url=str(msg.author.display_avatar.url),
-                    content=msg.content,
+                    content=content,
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     files=files if files else None,
-                    reply_to_message_id=reply_to_fluxer_id
+                    reply_to_message_id=reply_to_fluxer_id,
+                    is_forwarded=is_forwarded
                 )
                 
                 if fluxer_msg_id:
