@@ -58,8 +58,21 @@ fi
 EOF
 chmod +x dist/Launch-Reaper.sh
 
+echo "Packaging release: fluxer-reaper-linux.zip..."
+cp config.example.yaml dist/
+cd dist
+if command -v zip >/dev/null 2>&1; then
+    zip -q fluxer-reaper-linux.zip fluxer-reaper Launch-Reaper.sh config.example.yaml
+    echo "Package created: dist/fluxer-reaper-linux.zip"
+else
+    echo "Warning: 'zip' command not found. Skipping zip creation."
+    echo "Files available in dist/ directory."
+fi
+cd ..
+
 echo "-----------------------------------"
 echo "Build complete!"
 echo "Standalone executable: dist/fluxer-reaper"
 echo "Launcher script:       dist/Launch-Reaper.sh"
+echo "Release Package:       dist/fluxer-reaper-linux.zip"
 echo "---"
