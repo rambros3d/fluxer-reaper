@@ -1,6 +1,9 @@
 import asyncio
+import logging
 from typing import Optional, List, Dict, Any
 from fluxer import Bot, Webhook
+
+logger = logging.getLogger(__name__)
 
 class FluxerWriter:
     def __init__(self, token: str, community_id: str):
@@ -121,10 +124,11 @@ class FluxerWriter:
         assert self.client is not None
         return await self.client.get_guild_channels(self.community_id)
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None) -> None:
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None) -> Optional[str]:
         """
         Sends a message to the target channel.
         Uses a webhook to mimic the original author if possible.
+        Returns the ID of the sent message if available.
         """
         assert self.client is not None
         
@@ -138,38 +142,45 @@ class FluxerWriter:
         # Use webhook for avatar/username spoofing
         webhook = await self._get_or_create_webhook(channel_id)
         
-        # Use webhook for avatar/username spoofing
-        webhook = await self._get_or_create_webhook(channel_id)
-        
-        # Prepare content with timestamp (crucial for migration)
-        # We still add the timestamp to the message body so it's searchable and preserved
-        prefix = f"**[{timestamp}]**:\n"
+        # Prepare content with subtext timestamp
+        # -# is Fluxer/Discord's subtext markdown: small, muted grey text
+        prefix = f"-# {timestamp}\n"
         final_content = prefix + content if content else prefix
 
         try:
-            # Current limitation: fluxer.py execute_webhook doesn't support 'files' yet.
-            # So if we have files, we MUST use the bot's direct send method.
-            if webhook and not files:
-                await webhook.send(
+            # Current limitation: fluxer.py execute_webhook doesn't support 'files' or 'message_reference' yet.
+            # So if we have files OR a reply, we MUST use the bot's direct send method.
+            if webhook and not files and not reply_to_message_id:
+                msg = await webhook.send(
                     content=final_content,
                     username=f"{author_name} (via Discord)",
-                    avatar_url=author_avatar_url
+                    avatar_url=author_avatar_url,
+                    wait=True
                 )
+                return str(msg.id) if msg else None
             else:
-                # Use bot direct message (supports files)
+                # Use bot direct message (supports files and message_reference)
                 # We add the author name to the prefix since bot name won't match
-                bot_prefix = f"**[{timestamp}] {author_name}**:\n"
+                bot_prefix = f"-# {timestamp} · {author_name}\n"
                 bot_content = bot_prefix + content if content else bot_prefix
-                await self.client.send_message(
+                
+                message_reference = None
+                if reply_to_message_id:
+                    message_reference = {"message_id": str(reply_to_message_id), "channel_id": str(channel_id)}
+
+                msg_data = await self.client.send_message(
                     channel_id=channel_id,
                     content=bot_content,
-                    files=files
+                    files=files,
+                    message_reference=message_reference
                 )
+                return str(msg_data["id"]) if msg_data else None
         except Exception as e:
             err_msg = f"Failed to copy message: {e}"
             if hasattr(e, 'errors') and e.errors:
                 err_msg += f" - Details: {e.errors}"
             print(err_msg)
+            return None
 
 
     async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool) -> str:
@@ -206,7 +217,7 @@ class FluxerWriter:
             )
             return str(emoji["id"])
         except Exception as e:
-            print(f"Failed to copy emoji {name}: {e}")
+            logger.error(f"Failed to copy emoji '{name}': {e}", exc_info=True)
             return ""
 
     async def create_sticker(self, name: str, image_bytes: bytes) -> str:
@@ -223,7 +234,7 @@ class FluxerWriter:
             )
             return str(sticker["id"])
         except Exception as e:
-            print(f"Failed to copy sticker {name}: {e}")
+            logger.error(f"Failed to copy sticker '{name}': {e}", exc_info=True)
             return ""
 
     async def update_guild_metadata(self, name: Optional[str] = None, icon: Optional[bytes] = None, banner: Optional[bytes] = None) -> None:
@@ -256,19 +267,50 @@ class FluxerWriter:
         except Exception as e:
             print(f"Failed to update community metadata: {e}")
 
-    async def remove_community_logo_and_banner(self) -> None:
+    async def remove_community_logo_and_banner(self) -> dict:
         """
-        Removes the community logo (icon) and banner by setting them to None.
+        Removes the community logo (icon) and banner.
+        Fetches the current guild state first so it can report whether each
+        field was actually set (REMOVED) or already empty (SKIP).
+
+        Correct API calls per Fluxer contract:
+            await http.modify_guild(guild_id, icon=None)
+            await http.modify_guild(guild_id, banner=None)
+
+        Returns:
+            {"icon": "REMOVED"|"SKIP", "banner": "REMOVED"|"SKIP"}
         """
         assert self.client is not None
-        try:
-            await self.client.modify_guild(
-                guild_id=self.community_id,
-                icon=None,
-                banner=None
-            )
-        except Exception as e:
-            print(f"Failed to remove community logo/banner: {e}")
+
+        # 1. Check current state
+        guild = await self.client.get_guild(self.community_id)
+        has_icon = bool(guild.get("icon"))
+        has_banner = bool(guild.get("banner"))
+
+        # 2. Remove icon if set
+        if has_icon:
+            try:
+                await self.client.modify_guild(
+                    guild_id=self.community_id,
+                    icon=None
+                )
+            except Exception as e:
+                print(f"Failed to remove community icon: {e}")
+
+        # 3. Remove banner if set
+        if has_banner:
+            try:
+                await self.client.modify_guild(
+                    guild_id=self.community_id,
+                    banner=None
+                )
+            except Exception as e:
+                print(f"Failed to remove community banner: {e}")
+
+        return {
+            "icon": "REMOVED" if has_icon else "SKIP",
+            "banner": "REMOVED" if has_banner else "SKIP",
+        }
 
     async def delete_all_channels(self, progress_callback=None) -> int:
         """
@@ -356,24 +398,25 @@ class FluxerWriter:
                 print(f"Failed to delete role {role.get('name')}: {e}")
         return deleted
 
-    async def delete_all_emojis_and_stickers(self, progress_callback=None) -> int:
+    async def delete_all_emojis_and_stickers(self, progress_callback=None) -> dict:
         """
         Deletes all custom emojis and stickers in the Fluxer community.
-        Returns the total count of deleted items.
+        Returns {"emojis": int, "stickers": int} with independent counts.
         """
         assert self.client is not None
-        deleted = 0
+        emoji_deleted = 0
+        sticker_deleted = 0
 
         # Delete emojis
         try:
             emojis = await self.client.get_guild_emojis(self.community_id)
             emoji_total = len(emojis)
-            for idx, emoji in enumerate(emojis):
+            for emoji in emojis:
                 try:
                     await self.client.delete_guild_emoji(self.community_id, emoji["id"])
-                    deleted += 1
+                    emoji_deleted += 1
                     if progress_callback:
-                        await progress_callback(emoji.get("name", "Unknown"), "Emoji", deleted, emoji_total)
+                        await progress_callback(emoji.get("name", "Unknown"), "Emoji", emoji_deleted, emoji_total)
                 except Exception as e:
                     print(f"Failed to delete emoji {emoji.get('name')}: {e}")
         except Exception as e:
@@ -383,18 +426,19 @@ class FluxerWriter:
         try:
             stickers = await self.client.get_guild_stickers(self.community_id)
             sticker_total = len(stickers)
-            for idx, sticker in enumerate(stickers):
+            for sticker in stickers:
                 try:
                     await self.client.delete_guild_sticker(self.community_id, sticker["id"])
-                    deleted += 1
+                    sticker_deleted += 1
                     if progress_callback:
-                        await progress_callback(sticker.get("name", "Unknown"), "Sticker", deleted, sticker_total)
+                        await progress_callback(sticker.get("name", "Unknown"), "Sticker", sticker_deleted, sticker_total)
                 except Exception as e:
                     print(f"Failed to delete sticker {sticker.get('name')}: {e}")
         except Exception as e:
             print(f"Failed to fetch stickers: {e}")
 
-        return deleted
+        return {"emojis": emoji_deleted, "stickers": sticker_deleted}
+
 
     async def close(self):
         """Cleanly close connection and stop bot task."""

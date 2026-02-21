@@ -55,8 +55,16 @@ class MigrationEngine:
         await self.discord_reader.start()
         await self.fluxer_writer.start()
 
+    async def start_fluxer_only(self):
+        """Starts only the Fluxer writer (used for Danger Zone operations that don't need Discord)."""
+        await self.fluxer_writer.start()
+
     async def close_connections(self):
         await self.discord_reader.close()
+        await self.fluxer_writer.close()
+
+    async def close_fluxer_only(self):
+        """Closes only the Fluxer writer. Pair with start_fluxer_only()."""
         await self.fluxer_writer.close()
 
     async def sync_server_metadata(self, progress_callback: Callable[[str, str], Awaitable[None]], components: List[str] = ["name", "icon", "banner"]):
@@ -193,15 +201,24 @@ class MigrationEngine:
                     logger.error(f"Failed to download attachment {att.filename}: {e}")
                 
             try:
-                await self.fluxer_writer.send_message(
+                # Check if this message is a reply
+                reply_to_fluxer_id = None
+                if msg.reference and msg.reference.message_id:
+                    reply_to_fluxer_id = self.state.get_fluxer_message_id(str(msg.reference.message_id))
+                
+                fluxer_msg_id = await self.fluxer_writer.send_message(
                     channel_id=target_channel_id,
-                    author_name=msg.author.name,
+                    author_name=msg.author.display_name,
                     author_avatar_url=str(msg.author.display_avatar.url),
                     content=msg.content,
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
-                    files=files if files else None
+                    files=files if files else None,
+                    reply_to_message_id=reply_to_fluxer_id
                 )
                 
+                if fluxer_msg_id:
+                    self.state.set_message_mapping(str(msg.id), fluxer_msg_id)
+
                 self.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
                 message_count += 1
                 if progress_callback:
@@ -236,8 +253,12 @@ class MigrationEngine:
             if progress_callback: await progress_callback(role.name, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
-    async def migrate_emojis(self, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"]):
-        """Copies custom emojis and stickers."""
+    async def migrate_emojis(self, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"], force: bool = False):
+        """Copies custom emojis and stickers.
+        
+        Args:
+            force: If True, skip state cache and re-copy even if already migrated.
+        """
         objs = []
         if "Emoji" in types_to_include:
             emojis = await self.discord_reader.get_emojis()
@@ -252,7 +273,7 @@ class MigrationEngine:
             if not self.is_running: break
                 
             state_key = f"{obj_type.lower()}_{obj.id}"
-            fluxer_id = self.state.get_fluxer_channel_id(state_key)
+            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
             if not fluxer_id:
                 try:
                     if obj_type == "Emoji":
@@ -296,9 +317,9 @@ class MigrationEngine:
 
     # ──────────────── DANGER ZONE ────────────────
 
-    async def danger_remove_logo_and_banner(self) -> None:
-        """Removes the community logo and banner image."""
-        await self.fluxer_writer.remove_community_logo_and_banner()
+    async def danger_remove_logo_and_banner(self) -> dict:
+        """Removes the community logo and banner image. Returns per-field status."""
+        return await self.fluxer_writer.remove_community_logo_and_banner()
 
     async def danger_delete_all_channels(self, progress_callback=None) -> int:
         """Deletes every channel and category in the Fluxer community."""
@@ -312,6 +333,7 @@ class MigrationEngine:
         """Deletes all deletable roles (skips managed/bot roles and @everyone)."""
         return await self.fluxer_writer.delete_all_roles(progress_callback=progress_callback)
 
-    async def danger_delete_all_emojis_and_stickers(self, progress_callback=None) -> int:
-        """Deletes all custom emojis and stickers from the Fluxer community."""
+    async def danger_delete_all_emojis_and_stickers(self, progress_callback=None) -> dict:
+        """Deletes all custom emojis and stickers. Returns {"emojis": int, "stickers": int}."""
         return await self.fluxer_writer.delete_all_emojis_and_stickers(progress_callback=progress_callback)
+

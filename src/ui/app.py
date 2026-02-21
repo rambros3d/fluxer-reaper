@@ -348,22 +348,36 @@ class MigrationCLI:
             await self.engine.start_connections()
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
-            
+
             console.print(f"\n[bold]Custom emojis found: {len(emojis)}[/bold]")
             for e in emojis:
-                console.print(f"  - Emoji: {e.name}")
-            
+                already = self.engine.state.get_fluxer_channel_id(f"emoji_{e.id}")
+                tag = " [dim](already copied)[/dim]" if already else ""
+                console.print(f"  - Emoji: {e.name}{tag}")
+
             console.print(f"[bold]Custom stickers found: {len(stickers)}[/bold]")
             for s in stickers:
-                console.print(f"  - Sticker: {s.name}")
-            
+                already = self.engine.state.get_fluxer_channel_id(f"sticker_{s.id}")
+                tag = " [dim](already copied)[/dim]" if already else ""
+                console.print(f"  - Sticker: {s.name}{tag}")
+
+            # Warn if everything is already in the state cache
+            all_ids = ([f"emoji_{e.id}" for e in emojis] +
+                       [f"sticker_{s.id}" for s in stickers])
+            cached_count = sum(
+                1 for k in all_ids if self.engine.state.get_fluxer_channel_id(k)
+            )
+            if cached_count > 0:
+                console.print(f"\n[yellow]\u26a0  {cached_count}/{len(all_ids)} item(s) marked as already copied in state.json.[/yellow]")
+                console.print("[yellow]   If the target community was reset, choose Force Re-copy.[/yellow]")
+
             console.print("\n(1) Copy Emojis only")
             console.print("(2) Copy Stickers only")
             console.print("(3) Copy Emojis and Stickers")
             console.print("(B) Back")
-            
+
             choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="B").upper()
-            
+
             if choice == "B":
                 return
 
@@ -375,6 +389,23 @@ class MigrationCLI:
             elif choice == "3":
                 types_to_include = ["Emoji", "Sticker"]
 
+            # Ask about force re-copy only if there are cached items in scope
+            in_scope_keys = []
+            if "Emoji" in types_to_include:
+                in_scope_keys += [f"emoji_{e.id}" for e in emojis]
+            if "Sticker" in types_to_include:
+                in_scope_keys += [f"sticker_{s.id}" for s in stickers]
+            cached_in_scope = sum(
+                1 for k in in_scope_keys if self.engine.state.get_fluxer_channel_id(k)
+            )
+
+            force = False
+            if cached_in_scope > 0:
+                force = Confirm.ask(
+                    f"[yellow]{cached_in_scope} item(s) already in state cache. Force re-copy anyway?[/yellow]",
+                    default=False
+                )
+
             console.print("\n[bold green]Starting Migration...[/bold green]")
             with Progress(
                 SpinnerColumn(),
@@ -383,21 +414,26 @@ class MigrationCLI:
                 TaskProgressColumn(),
                 console=console
             ) as progress:
-                
+
                 emoji_task = progress.add_task("[cyan]Copying Assets...", total=100)
-                
+
                 async def update_progress(item_name: str, item_type: str, current: int, total: int):
                     progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying {item_type}: {item_name}")
 
                 self.engine.is_running = True
-                await self.engine.migrate_emojis(progress_callback=update_progress, types_to_include=types_to_include)
-                
+                await self.engine.migrate_emojis(
+                    progress_callback=update_progress,
+                    types_to_include=types_to_include,
+                    force=force
+                )
+
             console.print("[bold green]Migration complete![/bold green]")
-            
+
         except Exception as e:
             console.print(f"[bold red]Error during emoji migration: {str(e)}[/bold red]")
         finally:
             await self.engine.close_connections()
+
             self.engine.is_running = False
 
     async def sync_server_metadata(self):
@@ -564,55 +600,36 @@ class MigrationCLI:
         """Danger Zone – irreversible destructive operations on the Fluxer community."""
         console.print("")
         console.print(Panel.fit(
-            "[bold red]⚠  DANGER ZONE ⚠[/bold red]\n"
+            "[bold red]\u26a0  DANGER ZONE \u26a0[/bold red]\n"
             "[yellow]These actions are PERMANENT and IRREVERSIBLE on your Fluxer community.[/yellow]\n"
             "[yellow]Always double-check before confirming.[/yellow]",
             style="bold red"
         ))
-        console.print("(1) Remove Community Logo and Banner")
-        console.print("(2) Delete all Channels & Categories")
-        console.print("(3) Reset Channel & Category Permissions")
-        console.print("(4) Delete all Roles  [dim](bot role is protected)[/dim]")
-        console.print("(5) Delete all custom Emojis & Stickers")
+        console.print("(1) Delete all Channels & Categories")
+        console.print("(2) Reset Channel & Category Permissions")
+        console.print("(3) Delete all Roles  [dim](bot role is protected)[/dim]")
+        console.print("(4) Delete all custom Emojis & Stickers")
         console.print("(B) Back")
 
         choice = Prompt.ask(
             "Select a Danger Zone option",
-            choices=["1", "2", "3", "4", "5", "B", "b"],
+            choices=["1", "2", "3", "4", "B", "b"],
             default="B"
         ).upper()
 
         if choice == "B":
             return
 
-        # ---- (1) Remove Logo & Banner ----
+        # ---- (1) Delete all Channels & Categories ----
         if choice == "1":
-            console.print("")
-            console.print("[bold red]This will REMOVE the community logo and banner image.[/bold red]")
-            if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
-                return
-            if not Confirm.ask("[bold red]Last chance – confirm permanent removal?[/bold red]"):
-                return
-            try:
-                await self.engine.start_connections()
-                with console.status("[red]Removing logo and banner...[/red]"):
-                    await self.engine.danger_remove_logo_and_banner()
-                console.print("[bold green]Community logo and banner removed.[/bold green]")
-            except Exception as e:
-                console.print(f"[bold red]Error: {e}[/bold red]")
-            finally:
-                await self.engine.close_connections()
-
-        # ---- (2) Delete all Channels & Categories ----
-        elif choice == "2":
             console.print("")
             console.print("[bold red]This will DELETE every channel and category in the Fluxer community.[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
-            if not Confirm.ask("[bold red]Last chance – this cannot be undone. Continue?[/bold red]"):
+            if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):
                 return
             try:
-                await self.engine.start_connections()
+                await self.engine.start_fluxer_only()
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -627,22 +644,23 @@ class MigrationCLI:
                                         description=f"[red]Deleting: {name}")
 
                     count = await self.engine.danger_delete_all_channels(progress_callback=on_channel_deleted)
-                console.print(f"[bold green]Done. {count} channels/categories deleted.[/bold green]")
+                console.print(f"[bold green]{count} channels/categories deleted.[/bold green]")
+                console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
             finally:
-                await self.engine.close_connections()
+                await self.engine.close_fluxer_only()
 
-        # ---- (3) Reset Channel & Category Permissions ----
-        elif choice == "3":
+        # ---- (2) Reset Channel & Category Permissions ----
+        elif choice == "2":
             console.print("")
             console.print("[bold red]This will RESET all permission overwrites on every channel and category.[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
-            if not Confirm.ask("[bold red]Last chance – all custom permission overrides will be wiped. Continue?[/bold red]"):
+            if not Confirm.ask("[bold red]Last chance \u2013 all custom permission overrides will be wiped. Continue?[/bold red]"):
                 return
             try:
-                await self.engine.start_connections()
+                await self.engine.start_fluxer_only()
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -657,23 +675,24 @@ class MigrationCLI:
                                         description=f"[red]Resetting: {name}")
 
                     count = await self.engine.danger_reset_channel_permissions(progress_callback=on_perm_reset)
-                console.print(f"[bold green]Done. Permissions reset on {count} channels/categories.[/bold green]")
+                console.print(f"[bold green]Permissions reset on {count} channels/categories.[/bold green]")
+                console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
             finally:
-                await self.engine.close_connections()
+                await self.engine.close_fluxer_only()
 
-        # ---- (4) Delete all Roles ----
-        elif choice == "4":
+        # ---- (3) Delete all Roles ----
+        elif choice == "3":
             console.print("")
             console.print("[bold red]This will DELETE all roles in the Fluxer community.[/bold red]")
             console.print("[dim]Managed roles (including the bot's own role) and @everyone are automatically protected.[/dim]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
-            if not Confirm.ask("[bold red]Last chance – confirm permanent role deletion?[/bold red]"):
+            if not Confirm.ask("[bold red]Last chance \u2013 confirm permanent role deletion?[/bold red]"):
                 return
             try:
-                await self.engine.start_connections()
+                await self.engine.start_fluxer_only()
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -688,22 +707,23 @@ class MigrationCLI:
                                         description=f"[red]Deleting role: {name}")
 
                     count = await self.engine.danger_delete_all_roles(progress_callback=on_role_deleted)
-                console.print(f"[bold green]Done. {count} roles deleted.[/bold green]")
+                console.print(f"[bold green]{count} roles deleted.[/bold green]")
+                console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
             finally:
-                await self.engine.close_connections()
+                await self.engine.close_fluxer_only()
 
-        # ---- (5) Delete all Emojis & Stickers ----
-        elif choice == "5":
+        # ---- (4) Delete all Emojis & Stickers ----
+        elif choice == "4":
             console.print("")
             console.print("[bold red]This will DELETE all custom emojis and stickers in the Fluxer community.[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
-            if not Confirm.ask("[bold red]Last chance – this cannot be undone. Continue?[/bold red]"):
+            if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):
                 return
             try:
-                await self.engine.start_connections()
+                await self.engine.start_fluxer_only()
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -717,12 +737,15 @@ class MigrationCLI:
                         progress.update(asset_task, total=total, completed=current,
                                         description=f"[red]Deleting {asset_type}: {name}")
 
-                    count = await self.engine.danger_delete_all_emojis_and_stickers(progress_callback=on_asset_deleted)
-                console.print(f"[bold green]Done. {count} emojis/stickers deleted.[/bold green]")
+                    counts = await self.engine.danger_delete_all_emojis_and_stickers(progress_callback=on_asset_deleted)
+                console.print(f"[bold green]{counts.get('emojis', 0)} emojis deleted.[/bold green]")
+                console.print(f"[bold green]{counts.get('stickers', 0)} stickers deleted.[/bold green]")
+                console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
             finally:
-                await self.engine.close_connections()
+                await self.engine.close_fluxer_only()
+
 
 
 async def run_cli():

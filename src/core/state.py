@@ -11,6 +11,7 @@ class MigrationState:
         self.channel_map: Dict[str, str] = {}
         self.role_map: Dict[str, str] = {}
         self.user_map: Dict[str, str] = {}
+        self.message_map: Dict[str, str] = {}
         
         # tracking last message timestamp per channel to resume
         self.last_message_timestamps: Dict[str, str] = {}
@@ -24,6 +25,7 @@ class MigrationState:
                 self.channel_map = data.get("channels", {})
                 self.role_map = data.get("roles", {})
                 self.user_map = data.get("users", {})
+                self.message_map = data.get("messages", {})
                 self.last_message_timestamps = data.get("last_message_timestamps", {})
 
     def save(self):
@@ -31,6 +33,7 @@ class MigrationState:
             "channels": self.channel_map,
             "roles": self.role_map,
             "users": self.user_map,
+            "messages": self.message_map,
             "last_message_timestamps": self.last_message_timestamps
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
@@ -42,6 +45,13 @@ class MigrationState:
 
     def get_fluxer_channel_id(self, discord_id: str) -> str | None:
         return self.channel_map.get(str(discord_id))
+
+    def set_message_mapping(self, discord_id: str, fluxer_id: str):
+        self.message_map[str(discord_id)] = str(fluxer_id)
+        self.save()
+
+    def get_fluxer_message_id(self, discord_id: str) -> str | None:
+        return self.message_map.get(str(discord_id))
         
     def update_last_message_timestamp(self, channel_id: str, timestamp: str):
         self.last_message_timestamps[str(channel_id)] = timestamp
