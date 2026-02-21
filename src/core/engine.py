@@ -213,26 +213,28 @@ class MigrationEngine:
         categories = await self.discord_reader.get_categories()
         channels = await self.discord_reader.get_channels()
         
+        # Filter items if not forcing
+        if not force:
+            categories = [cat for cat in categories if not self.state.get_fluxer_category_id(str(cat.id))]
+            channels = [ch for ch in channels if not self.state.get_fluxer_channel_id(str(ch.id))]
+
         total = len(categories) + len(channels)
         current_idx = 0
         
+        if total == 0:
+            return
+
         # Migrate Categories first
         for cat in categories:
             if not self.is_running: break
             
             state_key = str(cat.id)
-            fluxer_id = None if force else self.state.get_fluxer_category_id(state_key)
-            status = "Copying"
-            
-            if not fluxer_id:
-                # 4 corresponds to Category type in Discord/Fluxer typically
-                fluxer_id = await self.fluxer_writer.create_channel(cat.name, type=4)
-                self.state.set_category_mapping(state_key, fluxer_id)
-            else:
-                status = "Skipping"
+            # 4 corresponds to Category type in Discord/Fluxer typically
+            fluxer_id = await self.fluxer_writer.create_channel(cat.name, type=4)
+            self.state.set_category_mapping(state_key, fluxer_id)
             
             current_idx += 1
-            if progress_callback: await progress_callback(f"Cat: {cat.name}", status, current_idx, total)
+            if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
         # Migrate Text Channels
@@ -240,25 +242,19 @@ class MigrationEngine:
             if not self.is_running: break
                 
             state_key = str(channel.id)
-            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
-            status = "Copying"
+            topic = channel.topic if channel.topic else ""
+            parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
             
-            if not fluxer_id:
-                topic = channel.topic if channel.topic else ""
-                parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
-                
-                fluxer_id = await self.fluxer_writer.create_channel(
-                    name=channel.name, 
-                    topic=topic, 
-                    type=0, 
-                    parent_id=parent_id
-                )
-                self.state.set_channel_mapping(state_key, fluxer_id)
-            else:
-                status = "Skipping"
+            fluxer_id = await self.fluxer_writer.create_channel(
+                name=channel.name, 
+                topic=topic, 
+                type=0, 
+                parent_id=parent_id
+            )
+            self.state.set_channel_mapping(state_key, fluxer_id)
             
             current_idx += 1
-            if progress_callback: await progress_callback(channel.name, status, current_idx, total)
+            if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def sync_permissions(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
@@ -266,32 +262,34 @@ class MigrationEngine:
         categories = await self.discord_reader.get_categories()
         channels = await self.discord_reader.get_channels()
         
+        # Only sync for items that are already mapped
+        categories = [c for c in categories if self.state.get_fluxer_category_id(str(c.id))]
+        channels = [c for c in channels if self.state.get_fluxer_channel_id(str(c.id))]
+
         total = len(categories) + len(channels)
         current_idx = 0
         
+        if total == 0:
+            return
+
         # Sync Category Permissions (Role Overwrites)
         for cat in categories:
             if not self.is_running: break
             fluxer_id = self.state.get_fluxer_channel_id(str(cat.id))
-            if fluxer_id:
-                # In a real implementation, we would diff discord perms 
-                # and apply them to fluxer_id using client methods.
-                pass
+            # In a real implementation, we would diff discord perms 
+            # and apply them to fluxer_id using client methods.
             
             current_idx += 1
             if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
-            await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
         # Sync Channel Permissions
         for channel in channels:
             if not self.is_running: break
             fluxer_id = self.state.get_fluxer_channel_id(str(channel.id))
-            if fluxer_id:
-                pass
+            # apply perms
             
             current_idx += 1
             if progress_callback: await progress_callback(channel.name, current_idx, total)
-            await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def analyze_migration(self, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, int]:
         """
@@ -416,24 +414,29 @@ class MigrationEngine:
             
         return message_count
 
-    async def migrate_roles(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
+    async def migrate_roles(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False):
         """Copies roles and their baseline permissions."""
         roles = await self.discord_reader.get_roles()
+        
+        if not force:
+            roles = [r for r in roles if not self.state.get_fluxer_role_id(str(r.id))]
+
         total = len(roles)
         
+        if total == 0:
+            return
+
         for idx, role in enumerate(roles):
             if not self.is_running: break
                 
-            fluxer_id = self.state.get_fluxer_role_id(str(role.id))
-            if not fluxer_id:
-                fluxer_id = await self.fluxer_writer.create_role(
-                    name=role.name,
-                    color=role.color.value,
-                    hoist=role.hoist,
-                    mentionable=role.mentionable
-                )
-                if fluxer_id:
-                    self.state.set_role_mapping(str(role.id), fluxer_id)
+            fluxer_id = await self.fluxer_writer.create_role(
+                name=role.name,
+                color=role.color.value,
+                hoist=role.hoist,
+                mentionable=role.mentionable
+            )
+            if fluxer_id:
+                self.state.set_role_mapping(str(role.id), fluxer_id)
             
             if progress_callback: await progress_callback(role.name, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
@@ -452,36 +455,38 @@ class MigrationEngine:
             stickers = await self.discord_reader.get_stickers()
             objs.extend([(s, "Sticker") for s in stickers])
             
+        if not force:
+            objs = [(obj, obj_type) for obj, obj_type in objs if not (
+                self.state.get_fluxer_emoji_id(str(obj.id)) if obj_type == "Emoji" else self.state.get_fluxer_sticker_id(str(obj.id))
+            )]
+
         total = len(objs)
         
+        if total == 0:
+            return
+
         for idx, (obj, obj_type) in enumerate(objs):
             if not self.is_running: break
                 
-            if obj_type == "Emoji":
-                fluxer_id = None if force else self.state.get_fluxer_emoji_id(str(obj.id))
-            else:
-                fluxer_id = None if force else self.state.get_fluxer_sticker_id(str(obj.id))
-
-            if not fluxer_id:
-                try:
-                    if obj_type == "Emoji":
-                        img_data = await self.discord_reader.download_emoji(obj)
-                        fluxer_id = await self.fluxer_writer.create_emoji(
-                            name=obj.name,
-                            image_bytes=img_data
-                        )
-                        if fluxer_id:
-                            self.state.set_emoji_mapping(str(obj.id), fluxer_id)
-                    else:
-                        img_data = await self.discord_reader.download_sticker(obj)
-                        fluxer_id = await self.fluxer_writer.create_sticker(
-                            name=obj.name,
-                            image_bytes=img_data
-                        )
-                        if fluxer_id:
-                            self.state.set_sticker_mapping(str(obj.id), fluxer_id)
-                except Exception as e:
-                    logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
+            try:
+                if obj_type == "Emoji":
+                    img_data = await self.discord_reader.download_emoji(obj)
+                    fluxer_id = await self.fluxer_writer.create_emoji(
+                        name=obj.name,
+                        image_bytes=img_data
+                    )
+                    if fluxer_id:
+                        self.state.set_emoji_mapping(str(obj.id), fluxer_id)
+                else:
+                    img_data = await self.discord_reader.download_sticker(obj)
+                    fluxer_id = await self.fluxer_writer.create_sticker(
+                        name=obj.name,
+                        image_bytes=img_data
+                    )
+                    if fluxer_id:
+                        self.state.set_sticker_mapping(str(obj.id), fluxer_id)
+            except Exception as e:
+                logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
             
             if progress_callback: await progress_callback(obj.name, obj_type, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)

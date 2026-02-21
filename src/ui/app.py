@@ -4,6 +4,7 @@ import logging
 import re
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
+from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from src.config import load_config, save_config
@@ -248,43 +249,48 @@ class MigrationCLI:
             await self.engine.close_connections()
             return
             
-        console.print("\n[bold]Server Template Preview:[/bold]")
-        
-        # Group channels by category
-        import discord
-        channels_by_cat = {}
-        uncategorized = []
-        
-        for ch in channels:
-            if ch.category_id:
-                if ch.category_id not in channels_by_cat:
-                    channels_by_cat[ch.category_id] = []
-                channels_by_cat[ch.category_id].append(ch)
-            else:
-                uncategorized.append(ch)
-                
-        def print_channel(ch):
-            if isinstance(ch, discord.TextChannel):
-                color = "cyan"
-            elif isinstance(ch, discord.VoiceChannel):
-                color = "green"
-            elif isinstance(ch, discord.ForumChannel):
-                color = "magenta"
-            else:
-                color = "white"
-            console.print(f"  [{color}]- {ch.name}[/{color}]")
+        table = Table(show_header=True, header_style="bold magenta")
+        table.add_column("Type", width=12)
+        table.add_column("Discord Name")
+        table.add_column("Status", justify="right")
 
+        # Group channels by category for status check
+        missing_by_cat = {}
+        missing_uncategorized = []
+        for ch in channels:
+            cat_id = str(ch.category_id) if ch.category_id else None
+            if not self.engine.state.get_fluxer_channel_id(str(ch.id)):
+                if cat_id:
+                    if cat_id not in missing_by_cat: missing_by_cat[cat_id] = []
+                    missing_by_cat[cat_id].append(ch)
+                else:
+                    missing_uncategorized.append(ch)
+
+        # Build the unified preview table
         for cat in categories:
-            console.print(f"[bold yellow]{cat.name}[/bold yellow]")
-            cat_channels = channels_by_cat.get(cat.id, [])
+            cat_id_str = str(cat.id)
+            fluxer_cat_id = self.engine.state.get_fluxer_category_id(cat_id_str)
+            
+            status = f"[cyan]{fluxer_cat_id}[/cyan]" if fluxer_cat_id else "[bold red]Missing[/bold red]"
+            table.add_row("Category", f"[bold yellow]{cat.name}[/bold yellow]", status)
+            
+            # Show ALL channels under this category
+            cat_channels = [ch for ch in channels if str(ch.category_id) == cat_id_str]
             for ch in cat_channels:
-                print_channel(ch)
-                
+                fluxer_ch_id = self.engine.state.get_fluxer_channel_id(str(ch.id))
+                ch_status = f"[cyan]{fluxer_ch_id}[/cyan]" if fluxer_ch_id else "[red]Missing[/red]"
+                table.add_row("  Channel", ch.name, ch_status)
+        
+        # Show Uncategorized
+        uncategorized = [ch for ch in channels if not ch.category_id]
         if uncategorized:
-            console.print(f"[bold yellow]Uncategorized[/bold yellow]")
+            table.add_row("Uncategorized", "", "")
             for ch in uncategorized:
-                print_channel(ch)
-                
+                fluxer_ch_id = self.engine.state.get_fluxer_channel_id(str(ch.id))
+                ch_status = f"[cyan]{fluxer_ch_id}[/cyan]" if fluxer_ch_id else "[red]Missing[/red]"
+                table.add_row("  Channel", ch.name, ch_status)
+
+        console.print(table)
         console.print("")
 
         # Check for existing mappings to determine if we should suggest a force re-copy
@@ -295,42 +301,7 @@ class MigrationCLI:
         force = False
         if cached_count > 0:
             console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in state.json cache.[/yellow]")
-            
-            # List missing items
-            missing_categories = [cat for cat in categories if not self.engine.state.get_fluxer_category_id(str(cat.id))]
-            missing_channels = [ch for ch in channels if not self.engine.state.get_fluxer_channel_id(str(ch.id))]
-            
-            if missing_categories or missing_channels:
-                console.print("\n[bold red]The following channels/categories are missing in your fluxer server:[/bold red]")
-                
-                # Group missing channels by their categories
-                missing_by_cat = {}
-                missing_uncategorized = []
-                for ch in missing_channels:
-                    cat_id = str(ch.category_id) if ch.category_id else None
-                    if cat_id:
-                        if cat_id not in missing_by_cat: missing_by_cat[cat_id] = []
-                        missing_by_cat[cat_id].append(ch)
-                    else:
-                        missing_uncategorized.append(ch)
-
-                # Iterate through all categories to print missing ones or categories with missing children
-                for cat in categories:
-                    cat_id_str = str(cat.id)
-                    is_cat_missing = not self.engine.state.get_fluxer_category_id(cat_id_str)
-                    child_missing_channels = missing_by_cat.get(cat_id_str, [])
-                    
-                    if is_cat_missing or child_missing_channels:
-                        footer = " [dim](Category itself is missing)[/dim]" if is_cat_missing else ""
-                        console.print(f"[bold yellow]{cat.name}[/bold yellow]{footer}")
-                        for ch in child_missing_channels:
-                            print_channel(ch)
-                
-                if missing_uncategorized:
-                    console.print(f"[bold yellow]Uncategorized[/bold yellow]")
-                    for ch in missing_uncategorized:
-                        print_channel(ch)
-                console.print("")
+            # End of table consolidated section, back to standard flow logic.
 
             console.print("[bold green](Y) Continue with only missing items[/bold green]")
             console.print("[bold red](F) Force re-clone, creates duplicate channels![/bold red]")
@@ -381,7 +352,7 @@ class MigrationCLI:
 
     async def copy_roles(self):
         console.print("\n[bold]Role & Permission Options[/bold]")
-        console.print("(1) Copy Roles & Role Permissions")
+        console.print("(1) Clone Roles & Role Permissions")
         console.print("(2) Sync Category Permissions & Channel Permissions")
         console.print("(B) Back")
         
@@ -391,8 +362,47 @@ class MigrationCLI:
             return
 
         if choice == "1":
-            console.print("\n[bold green]Starting Role Migration...[/bold green]")
             try:
+                await self.engine.start_connections()
+                
+                with console.status("[yellow]Checking Fluxer for existing roles...[/yellow]"):
+                    await self.engine.sync_roles_state()
+                
+                roles = await self.engine.discord_reader.get_roles()
+                
+                table = Table(show_header=True, header_style="bold magenta")
+                table.add_column("Discord Role")
+                table.add_column("Status", justify="center")
+                table.add_column("Fluxer ID", justify="right")
+
+                cached_count = 0
+                for r in roles:
+                    fluxer_id = self.engine.state.get_fluxer_role_id(str(r.id))
+                    status = "[bold green]NEW[/bold green]"
+                    fid_str = "[dim]N/A[/dim]"
+                    if fluxer_id:
+                        status = "[dim]already copied[/dim]"
+                        fid_str = f"[cyan]{fluxer_id}[/cyan]"
+                        cached_count += 1
+                    table.add_row(r.name, status, fid_str)
+                
+                console.print(table)
+
+                force = False
+                if cached_count > 0:
+                    console.print(f"\n[yellow]{cached_count} role(s) already in state cache.[/yellow]")
+                    console.print("[bold green](Y) Sync missing roles only[/bold green]")
+                    console.print("[bold red](F) Force Overwrite[/bold red]")
+                    console.print("[bold yellow](B) Back[/bold yellow]")
+                    
+                    sub_choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+                    
+                    if sub_choice == "B":
+                        return
+                    elif sub_choice == "F":
+                        force = True
+
+                console.print("\n[bold green]Starting Role Migration...[/bold green]")
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -401,14 +411,13 @@ class MigrationCLI:
                     console=console
                 ) as progress:
                     
-                    role_task = progress.add_task("[cyan]Copying Roles...", total=100)
+                    role_task = progress.add_task("[cyan]Syncing Roles...", total=100)
                     
                     async def update_progress(item_name: str, current: int, total: int):
-                        progress.update(role_task, total=total, completed=current, description=f"[cyan]Copying Role: {item_name}")
+                        progress.update(role_task, total=total, completed=current, description=f"[cyan]Syncing Role: {item_name}")
     
-                    await self.engine.start_connections()
                     self.engine.is_running = True
-                    await self.engine.migrate_roles(progress_callback=update_progress)
+                    await self.engine.migrate_roles(progress_callback=update_progress, force=force)
                     
                 console.print("[bold green]Role migration complete![/bold green]")
                 
@@ -419,8 +428,27 @@ class MigrationCLI:
                 self.engine.is_running = False
         
         elif choice == "2":
-            console.print("\n[bold green]Syncing Category & Channel Permissions...[/bold green]")
             try:
+                await self.engine.start_connections()
+                
+                with console.status("[yellow]Analyzing categories and channels...[/yellow]"):
+                    categories = await self.engine.discord_reader.get_categories()
+                    channels = await self.engine.discord_reader.get_channels()
+                
+                mapped_cats = sum(1 for c in categories if self.engine.state.get_fluxer_category_id(str(c.id)))
+                mapped_chs = sum(1 for c in channels if self.engine.state.get_fluxer_channel_id(str(c.id)))
+                total_mapped = mapped_cats + mapped_chs
+                
+                console.print(f"\n[yellow]Ready to sync permissions for {total_mapped} items ({mapped_cats} categories, {mapped_chs} channels).[/yellow]")
+                console.print("[bold green](Y) Proceed with Permission synchronization[/bold green]")
+                console.print("[bold yellow](B) Back[/bold yellow]")
+                
+                sub_choice = Prompt.ask("Select an option", choices=["Y", "B"], default="Y").upper()
+                
+                if sub_choice == "B":
+                    return
+
+                console.print("\n[bold green]Syncing Category & Channel Permissions...[/bold green]")
                 with Progress(
                     SpinnerColumn(),
                     TextColumn("[progress.description]{task.description}"),
@@ -434,7 +462,6 @@ class MigrationCLI:
                     async def update_progress(item_name: str, current: int, total: int):
                         progress.update(perm_task, total=total, completed=current, description=f"[cyan]Syncing: {item_name}")
     
-                    await self.engine.start_connections()
                     self.engine.is_running = True
                     await self.engine.sync_permissions(progress_callback=update_progress)
                     
@@ -457,22 +484,29 @@ class MigrationCLI:
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
 
-            console.print(f"\n[bold]Custom emojis found: {len(emojis)}[/bold]")
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Type", width=10)
+            table.add_column("Name")
+            table.add_column("Status", justify="right")
+
+            cached_emojis = 0
             for e in emojis:
                 already = self.engine.state.get_fluxer_emoji_id(str(e.id))
-                tag = " [dim](already copied)[/dim]" if already else ""
-                console.print(f"  - Emoji: {e.name}{tag}")
+                status = "[dim]already copied[/dim]" if already else "[bold green]NEW[/bold green]"
+                if already: cached_emojis += 1
+                table.add_row("Emoji", e.name, status)
 
-            console.print(f"[bold]Custom stickers found: {len(stickers)}[/bold]")
+            cached_stickers = 0
             for s in stickers:
                 already = self.engine.state.get_fluxer_sticker_id(str(s.id))
-                tag = " [dim](already copied)[/dim]" if already else ""
-                console.print(f"  - Sticker: {s.name}{tag}")
+                status = "[dim]already copied[/dim]" if already else "[bold green]NEW[/bold green]"
+                if already: cached_stickers += 1
+                table.add_row("Sticker", s.name, status)
+
+            console.print(table)
 
             # Warn if everything is already in the state cache
             force = False
-            cached_emojis = sum(1 for e in emojis if self.engine.state.get_fluxer_emoji_id(str(e.id)))
-            cached_stickers = sum(1 for s in stickers if self.engine.state.get_fluxer_sticker_id(str(s.id)))
             total_items = len(emojis) + len(stickers)
             cached_count = cached_emojis + cached_stickers
 
@@ -558,9 +592,17 @@ class MigrationCLI:
             icon_status = "[bold green]FOUND[/bold green]" if metadata.get("icon_url") else "[yellow]NOT FOUND[/yellow]"
             banner_status = "[bold green]FOUND[/bold green]" if metadata.get("banner_url") else "[yellow]NOT FOUND[/yellow]"
             
-            console.print(f"\n[bold]Server Name:[/bold] {name}")
-            console.print(f"[bold]Server Icon:[/bold] {icon_status}")
-            console.print(f"[bold]Server Banner:[/bold] {banner_status}")
+            banner_status = "[bold green]FOUND[/bold green]" if metadata.get("banner_url") else "[yellow]NOT FOUND[/yellow]"
+            
+            table = Table(show_header=False, box=None)
+            table.add_column("Property", style="bold")
+            table.add_column("Value")
+            
+            table.add_row("Server Name:", name)
+            table.add_row("Server Icon:", icon_status)
+            table.add_row("Server Banner:", banner_status)
+            
+            console.print(Panel(table, title="[bold]Discord Server Metadata[/bold]", expand=False))
             
             console.print("\n(1) Sync Name only")
             console.print("(2) Sync Icon only")
@@ -762,16 +804,30 @@ class MigrationCLI:
             finally:
                 self.engine.is_running = False
 
-            console.print(f"\n[bold]Migration Summary:[/bold]")
-            console.print(f"Number of messages:    [bold cyan]{stats['messages']}[/bold cyan]")
-            console.print(f"Number of threads:     [bold cyan]{stats['threads']}[/bold cyan]")
-            console.print(f"Number of attachments: [bold cyan]{stats['attachments']}[/bold cyan]")
-            
-            console.print("\n[bold yellow]Estimated Overhead:[/bold yellow]")
+            table = Table(show_header=True, header_style="bold magenta", title="Migration Summary & Estimates")
+            table.add_column("Item", width=15)
+            table.add_column("Count", justify="right", width=10)
+            table.add_column("Overhead/Details")
+
             msg_time = stats['messages'] * self.config.migration.rate_limit_delay_seconds
-            console.print(f"- [bold]Messages:[/bold] ~{msg_time}s delay (rate limiting), {stats['messages']} API writes.")
-            console.print(f"- [bold]Threads:[/bold] {stats['threads'] * 2} extra marker messages, {stats['threads']} extra history fetches.")
-            console.print(f"- [bold]Attachments:[/bold] {stats['attachments']} downloads and uploads (bandwidth & API calls).")
+            table.add_row(
+                "Messages", 
+                f"[bold cyan]{stats['messages']}[/bold cyan]", 
+                f"~{msg_time}s delay (rate limiting), {stats['messages']} API writes"
+            )
+            table.add_row(
+                "Threads", 
+                f"[bold cyan]{stats['threads']}[/bold cyan]", 
+                f"{stats['threads'] * 2} extra marker messages, {stats['threads']} extra history fetches"
+            )
+            table.add_row(
+                "Attachments", 
+                f"[bold cyan]{stats['attachments']}[/bold cyan]", 
+                f"{stats['attachments']} downloads and uploads (bandwidth & API calls)"
+            )
+
+            console.print("")
+            console.print(table)
 
             if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [magenta]#{target_channel.get('name')}[/magenta]?"):
                 return
