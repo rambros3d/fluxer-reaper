@@ -138,4 +138,5 @@ class DiscordReader:
         return await attachment.read()
 
     async def close(self):
-        await self.client.close()
+        if self.client:
+            await self.client.close()

@@ -143,7 +143,7 @@ class MigrationCLI:
             f_display = f"[bold green]\"{f_name}\"[/bold green]" if f_name else "[bold red]NOT SET UP[/bold red]"
             
             console.print(f"[bold cyan]Discord Server:[/bold cyan] {d_display}")
-            console.print(f"[bold magenta]Fluxer Community:[/bold magenta] {f_display}")
+            console.print(f"[bold #4641D9]Fluxer Community:[/bold #4641D9] {f_display}")
             console.print("[bold]Main Menu[/bold]")            
             console.print("(1) Clone Server Template (Channels & Categories)")
             console.print("(2) Copy Roles & Permissions")
@@ -249,7 +249,7 @@ class MigrationCLI:
             await self.engine.close_connections()
             return
             
-        table = Table(show_header=True, header_style="bold magenta")
+        table = Table(show_header=True, header_style="bold #4641D9")
         table.add_column("Type", width=12)
         table.add_column("Discord Name")
         table.add_column("Status", justify="right")
@@ -370,7 +370,7 @@ class MigrationCLI:
                 
                 roles = await self.engine.discord_reader.get_roles()
                 
-                table = Table(show_header=True, header_style="bold magenta")
+                table = Table(show_header=True, header_style="bold #4641D9")
                 table.add_column("Discord Role")
                 table.add_column("Status", justify="center")
                 table.add_column("Fluxer ID", justify="right")
@@ -484,7 +484,7 @@ class MigrationCLI:
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
 
-            table = Table(show_header=True, header_style="bold magenta")
+            table = Table(show_header=True, header_style="bold #4641D9")
             table.add_column("Type", width=10)
             table.add_column("Name")
             table.add_column("Status", justify="right")
@@ -804,7 +804,7 @@ class MigrationCLI:
             finally:
                 self.engine.is_running = False
 
-            table = Table(show_header=True, header_style="bold magenta", title="Migration Summary & Estimates")
+            table = Table(show_header=True, header_style="bold #4641D9", title="Migration Summary & Estimates")
             table.add_column("Item", width=15)
             table.add_column("Count", justify="right", width=10)
             table.add_column("Overhead/Details")
@@ -829,7 +829,7 @@ class MigrationCLI:
             console.print("")
             console.print(table)
 
-            if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [magenta]#{target_channel.get('name')}[/magenta]?"):
+            if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [#4641D9]#{target_channel.get('name')}[/#4641D9]?"):
                 return
             
             # 5. Migration Execution

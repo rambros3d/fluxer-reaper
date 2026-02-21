@@ -119,6 +119,17 @@ class FluxerWriter:
         )
         return str(guild_channel["id"])
 
+    async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
+        """
+        Updates the parent category of an existing channel.
+        """
+        assert self.client is not None
+        await self.client.modify_channel(
+            channel_id=channel_id,
+            parent_id=parent_id
+        )
+        return True
+
     async def get_channels(self) -> List[Dict[str, Any]]:
         """Returns all channels in the community."""
         assert self.client is not None

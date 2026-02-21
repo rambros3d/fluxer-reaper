@@ -213,23 +213,47 @@ class MigrationEngine:
         categories = await self.discord_reader.get_categories()
         channels = await self.discord_reader.get_channels()
         
-        # Filter items if not forcing
-        if not force:
-            categories = [cat for cat in categories if not self.state.get_fluxer_category_id(str(cat.id))]
-            channels = [ch for ch in channels if not self.state.get_fluxer_channel_id(str(ch.id))]
+        # 1. Identify categories to create
+        missing_categories = [cat for cat in categories if force or not self.state.get_fluxer_category_id(str(cat.id))]
+        missing_category_ids = {str(cat.id) for cat in missing_categories}
+        
+        # 2. Identify channels to create or move
+        # Fetch current Fluxer state to check parent_ids
+        fluxer_channels = await self.fluxer_writer.get_channels()
+        fluxer_parent_map = {str(c["id"]): (str(c.get("parent_id")) if c.get("parent_id") else None) for c in fluxer_channels}
+        
+        channels_to_create = []
+        channels_to_move = []
+        
+        for ch in channels:
+            discord_id = str(ch.id)
+            fluxer_id = self.state.get_fluxer_channel_id(discord_id)
+            discord_parent_id = str(ch.category_id) if ch.category_id else None
+            
+            if force or not fluxer_id:
+                # We'll resolve the parent_id in the loop after categories are created
+                channels_to_create.append(ch)
+            else:
+                current_fluxer_parent = fluxer_parent_map.get(fluxer_id)
+                # Case A: Its category is being created right now
+                # Case B: It has a category that exists but is not set in Fluxer correctly
+                will_create_parent = discord_parent_id in missing_category_ids
+                expected_parent_fluxer_id = self.state.get_fluxer_category_id(discord_parent_id) if discord_parent_id else None
+                
+                if will_create_parent or current_fluxer_parent != expected_parent_fluxer_id:
+                    channels_to_move.append((ch, fluxer_id))
 
-        total = len(categories) + len(channels)
+        total = len(missing_categories) + len(channels_to_create) + len(channels_to_move)
         current_idx = 0
         
         if total == 0:
             return
 
         # Migrate Categories first
-        for cat in categories:
+        for cat in missing_categories:
             if not self.is_running: break
             
             state_key = str(cat.id)
-            # 4 corresponds to Category type in Discord/Fluxer typically
             fluxer_id = await self.fluxer_writer.create_channel(cat.name, type=4)
             self.state.set_category_mapping(state_key, fluxer_id)
             
@@ -237,8 +261,8 @@ class MigrationEngine:
             if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
-        # Migrate Text Channels
-        for channel in channels:
+        # Create missing channels
+        for channel in channels_to_create:
             if not self.is_running: break
                 
             state_key = str(channel.id)
@@ -255,6 +279,17 @@ class MigrationEngine:
             
             current_idx += 1
             if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)
+            await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
+
+        # Move existing channels if needed
+        for channel, fluxer_id in channels_to_move:
+            if not self.is_running: break
+            
+            parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
+            await self.fluxer_writer.move_channel(fluxer_id, parent_id)
+            
+            current_idx += 1
+            if progress_callback: await progress_callback(channel.name, "Moving", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def sync_permissions(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
