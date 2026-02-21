@@ -331,7 +331,7 @@ class MigrationEngine:
         for idx, role in enumerate(roles):
             if not self.is_running: break
                 
-            fluxer_id = self.state.get_fluxer_channel_id(f"role_{role.id}") # reusing mapping method
+            fluxer_id = self.state.get_fluxer_role_id(str(role.id))
             if not fluxer_id:
                 fluxer_id = await self.fluxer_writer.create_role(
                     name=role.name,
@@ -340,7 +340,7 @@ class MigrationEngine:
                     mentionable=role.mentionable
                 )
                 if fluxer_id:
-                    self.state.set_channel_mapping(f"role_{role.id}", fluxer_id)
+                    self.state.set_role_mapping(str(role.id), fluxer_id)
             
             if progress_callback: await progress_callback(role.name, idx + 1, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
@@ -364,8 +364,11 @@ class MigrationEngine:
         for idx, (obj, obj_type) in enumerate(objs):
             if not self.is_running: break
                 
-            state_key = f"{obj_type.lower()}_{obj.id}"
-            fluxer_id = None if force else self.state.get_fluxer_channel_id(state_key)
+            if obj_type == "Emoji":
+                fluxer_id = None if force else self.state.get_fluxer_emoji_id(str(obj.id))
+            else:
+                fluxer_id = None if force else self.state.get_fluxer_sticker_id(str(obj.id))
+
             if not fluxer_id:
                 try:
                     if obj_type == "Emoji":
@@ -374,15 +377,16 @@ class MigrationEngine:
                             name=obj.name,
                             image_bytes=img_data
                         )
+                        if fluxer_id:
+                            self.state.set_emoji_mapping(str(obj.id), fluxer_id)
                     else:
                         img_data = await self.discord_reader.download_sticker(obj)
                         fluxer_id = await self.fluxer_writer.create_sticker(
                             name=obj.name,
                             image_bytes=img_data
                         )
-                    
-                    if fluxer_id:
-                        self.state.set_channel_mapping(state_key, fluxer_id)
+                        if fluxer_id:
+                            self.state.set_sticker_mapping(str(obj.id), fluxer_id)
                 except Exception as e:
                     logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
             

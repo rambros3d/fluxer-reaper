@@ -10,6 +10,8 @@ class MigrationState:
         # mappings: discord_id -> fluxer_id
         self.channel_map: Dict[str, str] = {}
         self.role_map: Dict[str, str] = {}
+        self.emoji_map: Dict[str, str] = {}
+        self.sticker_map: Dict[str, str] = {}
         self.user_map: Dict[str, str] = {}
         self.message_map: Dict[str, str] = {}
         
@@ -24,17 +26,41 @@ class MigrationState:
                 data = json.load(f)
                 self.channel_map = data.get("channels", {})
                 self.role_map = data.get("roles", {})
+                self.emoji_map = data.get("emojis", {})
+                self.sticker_map = data.get("stickers", {})
                 self.user_map = data.get("users", {})
                 self.message_map = data.get("messages", {})
                 self.last_message_timestamps = data.get("last_message_timestamps", {})
+                
+            # Legacy Migration: Move role_, emoji_, sticker_ from channel_map to dedicated maps
+            migrated = False
+            legacy_keys = list(self.channel_map.keys())
+            for k in legacy_keys:
+                if k.startswith("role_"):
+                    discord_id = k.replace("role_", "")
+                    self.role_map[discord_id] = self.channel_map.pop(k)
+                    migrated = True
+                elif k.startswith("emoji_"):
+                    discord_id = k.replace("emoji_", "")
+                    self.emoji_map[discord_id] = self.channel_map.pop(k)
+                    migrated = True
+                elif k.startswith("sticker_"):
+                    discord_id = k.replace("sticker_", "")
+                    self.sticker_map[discord_id] = self.channel_map.pop(k)
+                    migrated = True
+            
+            if migrated:
+                self.save()
 
     def save(self):
         data = {
             "channels": self.channel_map,
             "roles": self.role_map,
+            "emojis": self.emoji_map,
+            "stickers": self.sticker_map,
             "users": self.user_map,
-            "messages": self.message_map,
-            "last_message_timestamps": self.last_message_timestamps
+            "last_message_timestamps": self.last_message_timestamps,
+            "messages": self.message_map
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
@@ -57,26 +83,45 @@ class MigrationState:
         self.last_message_timestamps[str(channel_id)] = timestamp
         self.save()
 
+    # --- Type Specific Getters/Setters ---
+
+    def set_role_mapping(self, discord_id: str, fluxer_id: str):
+        self.role_map[str(discord_id)] = str(fluxer_id)
+        self.save()
+
+    def get_fluxer_role_id(self, discord_id: str) -> str | None:
+        return self.role_map.get(str(discord_id))
+
+    def set_emoji_mapping(self, discord_id: str, fluxer_id: str):
+        self.emoji_map[str(discord_id)] = str(fluxer_id)
+        self.save()
+
+    def get_fluxer_emoji_id(self, discord_id: str) -> str | None:
+        return self.emoji_map.get(str(discord_id))
+
+    def set_sticker_mapping(self, discord_id: str, fluxer_id: str):
+        self.sticker_map[str(discord_id)] = str(fluxer_id)
+        self.save()
+
+    def get_fluxer_sticker_id(self, discord_id: str) -> str | None:
+        return self.sticker_map.get(str(discord_id))
+
+    # --- Danger Zone Clearing ---
+
     def clear_channel_mappings(self):
-        """Clears all channel and category mappings (excludes roles/emojis/stickers)."""
-        to_remove = [k for k in self.channel_map.keys() if k.isdigit()]
-        for k in to_remove:
-            del self.channel_map[k]
+        """Clears all channel and category mappings."""
+        self.channel_map.clear()
         self.save()
 
     def clear_role_mappings(self):
         """Clears all role mappings."""
-        to_remove = [k for k in self.channel_map.keys() if k.startswith("role_")]
-        for k in to_remove:
-            del self.channel_map[k]
         self.role_map.clear()
         self.save()
 
     def clear_asset_mappings(self):
         """Clears all emoji and sticker mappings."""
-        to_remove = [k for k in self.channel_map.keys() if k.startswith("emoji_") or k.startswith("sticker_")]
-        for k in to_remove:
-            del self.channel_map[k]
+        self.emoji_map.clear()
+        self.sticker_map.clear()
         self.save()
 
     def clear_message_history(self):

@@ -1,11 +1,46 @@
 import sys
 import asyncio
+import logging
+import re
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from src.config import load_config, save_config
 from src.core.engine import MigrationEngine
+
+class RateLimitHandler(logging.Handler):
+    """Intersects library logs to print clean rate limit messages."""
+    def __init__(self):
+        super().__init__()
+        self._last_print = ""
+
+    def emit(self, record):
+        try:
+            msg = record.getMessage()
+            # Detect rate limit messages from discord.py or fluxer.py
+            if "retry" in msg.lower() and ("rate limit" in msg.lower() or "429" in msg):
+                # Extract seconds using regex: supports "retry in 5.50s" and "Retrying in 5.50 seconds"
+                match = re.search(r"in ([\d.]+)\s*(?:seconds?|s)", msg, re.IGNORECASE)
+                if match:
+                    seconds = match.group(1)
+                    platform = "discord" if "discord" in record.name.lower() else "fluxer"
+                    
+                    # Format the message
+                    new_msg = f"{platform} API rate limit: will retry after {seconds}"
+                    
+                    # Avoid spamming the exact same message if nothing changed
+                    if new_msg == self._last_print:
+                        return
+                    
+                    self._last_print = new_msg
+                    
+                    # Use rich console to print on the same line.
+                    # end="\r" works with rich's internal live-update handling.
+                    # We add some padding to clear old text.
+                    console.print(f"{new_msg}   ", end="\r")
+        except Exception:
+            pass
 
 console = Console()
 
@@ -22,6 +57,11 @@ class MigrationCLI:
         self.engine = MigrationEngine(self.config)
         self.progress_callback_task = None
         self.tokens_valid = False
+
+        # Register rate limit interceptor for both libraries
+        rl_handler = RateLimitHandler()
+        logging.getLogger("discord").addHandler(rl_handler)
+        logging.getLogger("fluxer").addHandler(rl_handler)
 
     async def validate_config(self):
         self.validation_results = {
@@ -249,16 +289,20 @@ class MigrationCLI:
         all_ids = [str(cat.id) for cat in categories] + [str(ch.id) for ch in channels]
         cached_count = sum(1 for k in all_ids if self.engine.state.get_fluxer_channel_id(k))
         
+        # Prompt for confirmation
         force = False
         if cached_count > 0:
             console.print(f"[yellow]\u26a0  {cached_count}/{len(all_ids)} item(s) already in state.json cache.[/yellow]")
             force = Confirm.ask("Force re-clone anyway?", default=False)
-        elif not Confirm.ask("Are you sure you want to clone channels and categories?"):
-            await self.engine.close_connections()
-            return
-
-        if cached_count == 0 or force:
-            if not force and not Confirm.ask("Are you sure you want to clone channels and categories?"):
+            if not force:
+                if not Confirm.ask("Continue with only missing items?", default=True):
+                    await self.engine.close_connections()
+                    return
+        else:
+            if not Confirm.ask("Clone channels and categories?", default=True):
+                await self.engine.close_connections()
+                return
+            if not Confirm.ask("Are you sure?", default=True):
                 await self.engine.close_connections()
                 return
             
@@ -365,24 +409,25 @@ class MigrationCLI:
 
             console.print(f"\n[bold]Custom emojis found: {len(emojis)}[/bold]")
             for e in emojis:
-                already = self.engine.state.get_fluxer_channel_id(f"emoji_{e.id}")
+                already = self.engine.state.get_fluxer_emoji_id(str(e.id))
                 tag = " [dim](already copied)[/dim]" if already else ""
                 console.print(f"  - Emoji: {e.name}{tag}")
 
             console.print(f"[bold]Custom stickers found: {len(stickers)}[/bold]")
             for s in stickers:
-                already = self.engine.state.get_fluxer_channel_id(f"sticker_{s.id}")
+                already = self.engine.state.get_fluxer_sticker_id(str(s.id))
                 tag = " [dim](already copied)[/dim]" if already else ""
                 console.print(f"  - Sticker: {s.name}{tag}")
 
             # Warn if everything is already in the state cache
-            all_ids = ([f"emoji_{e.id}" for e in emojis] +
-                       [f"sticker_{s.id}" for s in stickers])
-            cached_count = sum(
-                1 for k in all_ids if self.engine.state.get_fluxer_channel_id(k)
-            )
+            force = False
+            cached_emojis = sum(1 for e in emojis if self.engine.state.get_fluxer_emoji_id(str(e.id)))
+            cached_stickers = sum(1 for s in stickers if self.engine.state.get_fluxer_sticker_id(str(s.id)))
+            total_items = len(emojis) + len(stickers)
+            cached_count = cached_emojis + cached_stickers
+
             if cached_count > 0:
-                console.print(f"\n[yellow]\u26a0  {cached_count}/{len(all_ids)} item(s) marked as already copied in state.json.[/yellow]")
+                console.print(f"\n[yellow]\u26a0  {cached_count}/{total_items} item(s) marked as already copied in state.json.[/yellow]")
                 console.print("[yellow]   If the target community was reset, choose Force Re-copy.[/yellow]")
 
             console.print("\n(1) Copy Emojis only")
@@ -404,14 +449,11 @@ class MigrationCLI:
                 types_to_include = ["Emoji", "Sticker"]
 
             # Ask about force re-copy only if there are cached items in scope
-            in_scope_keys = []
+            cached_in_scope = 0
             if "Emoji" in types_to_include:
-                in_scope_keys += [f"emoji_{e.id}" for e in emojis]
+                cached_in_scope += sum(1 for e in emojis if self.engine.state.get_fluxer_emoji_id(str(e.id)))
             if "Sticker" in types_to_include:
-                in_scope_keys += [f"sticker_{s.id}" for s in stickers]
-            cached_in_scope = sum(
-                1 for k in in_scope_keys if self.engine.state.get_fluxer_channel_id(k)
-            )
+                cached_in_scope += sum(1 for s in stickers if self.engine.state.get_fluxer_sticker_id(str(s.id)))
 
             force = False
             if cached_in_scope > 0:
@@ -521,8 +563,15 @@ class MigrationCLI:
             for i, ch in enumerate(d_channels):
                 console.print(f"({i+1}) {ch.name}")
             
-            d_choices = [str(i+1) for i in range(len(d_channels))]
-            d_choice = Prompt.ask("Select Discord Channel", choices=d_choices)
+            console.print("(B) Back")
+            d_choices = [str(i+1) for i in range(len(d_channels))] + ["B", "b"]
+            
+            prompt_msg = f"Select Discord Channel [[bold cyan](1-{len(d_channels)})/B[/bold cyan]]"
+            d_choice = Prompt.ask(prompt_msg, choices=d_choices, show_choices=False).upper()
+            
+            if d_choice == "B":
+                return
+            
             source_channel = d_channels[int(d_choice) - 1]
 
             # 2. Select Target Fluxer Channel
@@ -530,14 +579,72 @@ class MigrationCLI:
             if not f_channels:
                 console.print("[yellow]No channels found in Fluxer community.[/yellow]")
                 return
+
+            # Determine recommended channel
+            recommended_channel = None
+            # Priority 1: Check state.json mapping
+            mapped_id = self.engine.state.get_fluxer_channel_id(str(source_channel.id))
+            if mapped_id:
+                recommended_channel = next((c for c in f_channels if str(c.get('id', '')) == mapped_id), None)
+            
+            # Priority 2: Check name match
+            if not recommended_channel:
+                recommended_channel = next((c for c in f_channels if c.get('name') == source_channel.name), None)
                 
             console.print("\n[bold]Select Target Fluxer Channel:[/bold]")
+            
             for i, ch in enumerate(f_channels):
                 console.print(f"({i+1}) {ch.get('name', 'Unnamed Channel')}")
 
-            f_choices = [str(i+1) for i in range(len(f_channels))]
-            f_choice = Prompt.ask("Select Fluxer Channel", choices=f_choices)
-            target_channel = f_channels[int(f_choice) - 1]
+            f_choices = [str(i+1) for i in range(len(f_channels))] + ["B", "b", "N", "n"]
+            
+            if recommended_channel:
+                console.print(f"(Y) [bold green]{recommended_channel.get('name')}[/bold green] (auto-matched)")
+                f_choices += ["Y", "y"]
+
+            console.print("(N) Create new channel")
+            console.print("(B) Back")
+
+            # Build simplified prompt string
+            prompt_parts = [f"(1-{len(f_channels)})", "B", "N"]
+            if recommended_channel:
+                prompt_parts.append("Y")
+            
+            prompt_msg = f"Select Fluxer Channel [[bold cyan]{'/'.join(prompt_parts)}[/bold cyan]]"
+            
+            f_choice = Prompt.ask(prompt_msg, choices=f_choices, show_choices=False, default="Y" if recommended_channel else None).upper()
+            
+            if f_choice == "B":
+                return
+            
+            if f_choice == "Y" and recommended_channel:
+                target_channel = recommended_channel
+            elif f_choice == "N":
+                # Check if a channel with this name already exists
+                target_channel = next((c for c in f_channels if c.get('name') == source_channel.name), None)
+                if not target_channel:
+                    with console.status(f"[yellow]Creating Fluxer channel #{source_channel.name}...[/yellow]"):
+                        parent_id = None
+                        if source_channel.category_id:
+                            parent_id = self.engine.state.get_fluxer_channel_id(str(source_channel.category_id))
+                        
+                        topic = getattr(source_channel, 'topic', "") or ""
+                        new_id = await self.engine.fluxer_writer.create_channel(
+                            name=source_channel.name,
+                            topic=topic,
+                            type=0,
+                            parent_id=parent_id
+                        )
+                        if new_id:
+                            self.engine.state.set_channel_mapping(str(source_channel.id), new_id)
+                            # Refresh list to get the channel object
+                            f_channels = await self.engine.fluxer_writer.get_channels()
+                            target_channel = next((c for c in f_channels if str(c.get('id')) == new_id), None)
+                        else:
+                            console.print("[bold red]Failed to create channel.[/bold red]")
+                            return
+            else:
+                target_channel = f_channels[int(f_choice) - 1]
 
             # 3. Handle Starting Message
             first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
