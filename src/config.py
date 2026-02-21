@@ -17,7 +17,16 @@ class AppConfig(BaseModel):
 def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
     path = Path(config_path)
     if not path.exists():
-        raise FileNotFoundError(f"Configuration file not found: {config_path}")
+        # Create dummy config if missing
+        config = AppConfig(
+            discord_bot_token="YOUR_DISCORD_TOKEN",
+            fluxer_bot_token="YOUR_FLUXER_TOKEN",
+            discord_server_id="000000000000000000",
+            fluxer_community_id="000000000000000000"
+        )
+        save_config(config, path)
+        print(f"Created default configuration: {config_path}")
+        return config
     
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)

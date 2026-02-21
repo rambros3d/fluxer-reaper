@@ -4,31 +4,6 @@ Fluxer Reaper is a simple tool to help you move your Discord server content over
 
 ![Fluxer Reaper](fluxer-reaper.jpg)
 
-## Getting Started
-
-### 1. Prerequisites
-Make sure you have Python installed on your computer.
-
-### 2. Download or Clone
-Clone the repository using git:
-```bash
-git clone https://github.com/rambros3d/fluxer-reaper.git
-cd fluxer-reaper
-```
-Alternatively, you can download the project as a ZIP file and extract its contents.
-
-### 3. Install the tool
-Open your terminal and run:
-```bash
-pip install -r requirements.txt
-```
-
-### 4. Run it!
-Start the tool by running:
-```bash
-python fluxer-reaper.py
-```
-
 
 ## Features
 *   **Clone Server Structure**: Automatically creates all your Discord categories and channels in Fluxer.
@@ -38,3 +13,29 @@ python fluxer-reaper.py
 *   **Server Identity**: Syncs your server name, icon, and banner.
 *   **Danger Zone**: Option to wipe existing channels, roles, and content in the fluxer community.
 
+
+## Getting Started
+
+### 1. Download
+Download the latest executable from the [Releases](https://github.com/rambros3d/fluxer-reaper/releases) page.
+
+### 2. Run
+Simply run the downloaded file to start the tool. No Python installation is required.
+
+
+## Build tool
+To create a standalone executable, simply run:
+
+```bash
+chmod +x build.sh
+./build.sh
+```
+
+The script will automatically set up a virtual environment, install dependencies, and generate the binary in the `dist/` folder.
+
+
+## Vibe Code Notice
+
+Code is provided as is; This tool was developed largely by AI.
+
+Take it, use it, modify it, feel free to whatever you wish.

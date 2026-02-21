@@ -157,7 +157,7 @@ class MigrationCLI:
             
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q").upper()
+            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q").upper()
             
             if choice == "1":
                 await self.clone_server_template()
@@ -272,7 +272,7 @@ class MigrationCLI:
             fluxer_cat_id = self.engine.state.get_fluxer_category_id(cat_id_str)
             
             status = f"[cyan]{fluxer_cat_id}[/cyan]" if fluxer_cat_id else "[bold red]Missing[/bold red]"
-            table.add_row("Category", f"[bold yellow]{cat.name}[/bold yellow]", status)
+            table.add_row("[bold yellow]Category[/bold yellow]", f"[bold yellow]{cat.name}[/bold yellow]", status)
             
             # Show ALL channels under this category
             cat_channels = [ch for ch in channels if str(ch.category_id) == cat_id_str]

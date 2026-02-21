@@ -27,6 +27,7 @@ venv/
 ENV/
 
 # Configuration and Secrets
+config.test.yaml
 config.yaml
 !config.example.yaml
 
