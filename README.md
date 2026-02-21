@@ -24,18 +24,23 @@ Simply run the downloaded file to start the tool. No Python installation is requ
 
 
 ## Build tool
-To create a standalone executable, simply run:
+To create a standalone executable:
 
+### Linux / Mac
 ```bash
 chmod +x build.sh
 ./build.sh
 ```
 
-The script will automatically set up a virtual environment, install dependencies, and generate the binary in the `dist/` folder.
+### Windows
+1. Make sure you have [Python](https://www.python.org/) installed and added to your PATH.
+2. Double-click `build.bat`.
+
+The scripts will automatically set up a virtual environment, install dependencies, and generate the binary in the `dist/` folder.
 
 
 ## Vibe Code Notice
 
 Code is provided as is; This tool was developed largely by AI.
 
-Take it, use it, modify it, feel free to whatever you wish.
+Take it, use it, modify it, feel free to do whatever you wish.

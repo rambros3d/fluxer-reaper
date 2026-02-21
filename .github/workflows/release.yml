@@ -1,0 +1,89 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            artifact_name: fluxer-reaper-linux
+            asset_name: fluxer-reaper-linux.zip
+            executable_path: dist/fluxer-reaper
+          - os: windows-latest
+            artifact_name: fluxer-reaper-windows
+            asset_name: fluxer-reaper-windows.zip
+            executable_path: dist/fluxer-reaper.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build with PyInstaller
+        run: pyinstaller fluxer-reaper.spec
+
+      - name: Prepare Release Asset (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          chmod +x ${{ matrix.executable_path }}
+          # Generate launcher script
+          cat << 'EOF' > dist/Launch-Reaper.sh
+          #!/bin/bash
+          BASEDIR=$(dirname "$0")
+          cd "$BASEDIR"
+          ./fluxer-reaper
+          EOF
+          chmod +x dist/Launch-Reaper.sh
+          zip -j ${{ matrix.asset_name }} ${{ matrix.executable_path }} dist/Launch-Reaper.sh config.example.yaml
+
+      - name: Prepare Release Asset (Windows)
+        if: matrix.os == 'windows-latest'
+        run: |
+          # Generate launcher script
+          echo '@echo off' > dist\Launch-Reaper.bat
+          echo 'cd /d "%~dp0"' >> dist\Launch-Reaper.bat
+          echo 'fluxer-reaper.exe' >> dist\Launch-Reaper.bat
+          powershell Compress-Archive -Path "${{ matrix.executable_path }}", "dist\Launch-Reaper.bat", "config.example.yaml" -DestinationPath "${{ matrix.asset_name }}"
+
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.asset_name }}
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            artifacts/fluxer-reaper-linux/fluxer-reaper-linux.zip
+            artifacts/fluxer-reaper-windows/fluxer-reaper-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
