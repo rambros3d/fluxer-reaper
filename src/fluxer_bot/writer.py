@@ -1,6 +1,6 @@
 import asyncio
 from typing import Optional, List, Dict, Any
-from fluxer import Bot
+from fluxer import Bot, Webhook
 
 class FluxerWriter:
     def __init__(self, token: str, community_id: str):
@@ -9,9 +9,36 @@ class FluxerWriter:
         self.bot: Optional[Bot] = None
         self._bot_task: Optional[asyncio.Task] = None
         self._ready_event = asyncio.Event()
+        self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
+
+    async def _get_or_create_webhook(self, channel_id: str) -> Optional[Webhook]:
+        """Gets an existing webhook for the channel or creates one."""
+        if channel_id in self._webhooks:
+            return self._webhooks[channel_id]
+        
+        assert self.client is not None
+        try:
+            # 1. Try to find existing webhook named "Stoat-Migrator"
+            webhooks_data = await self.client.get_channel_webhooks(channel_id)
+            for w_data in webhooks_data:
+                if w_data.get("name") == "Stoat-Migrator":
+                    w = Webhook.from_data(w_data, self.client)
+                    self._webhooks[channel_id] = w
+                    return w
+            
+            # 2. Create new one if not found
+            w_data = await self.client.create_webhook(channel_id, name="Stoat-Migrator")
+            w = Webhook.from_data(w_data, self.client)
+            self._webhooks[channel_id] = w
+            return w
+        except Exception as e:
+            print(f"Failed to manage webhook for channel {channel_id}: {e}")
+            return None
 
     async def start(self):
-        """Authenticate with Fluxer and start the background bot session."""
+        # ... (lines 14-35)
+        # (I will use multi_replace or just replace_file_content carefully)
+        # Actually I'm using replace_file_content so I need to provide the whole block.
         if self.bot and self._bot_task and not self._bot_task.done():
             return
 
@@ -30,8 +57,6 @@ class FluxerWriter:
         try:
             await asyncio.wait_for(self._ready_event.wait(), timeout=10.0)
         except asyncio.TimeoutError:
-            # If it's not ready, it might still work for some REST calls, 
-            # but send_message might fail later.
             pass
 
     @property
@@ -96,9 +121,10 @@ class FluxerWriter:
         assert self.client is not None
         return await self.client.get_guild_channels(self.community_id)
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, files: Optional[List[Dict[str, Any]]] = None) -> None:
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None) -> None:
         """
         Sends a message to the target channel.
+        Uses a webhook to mimic the original author if possible.
         """
         assert self.client is not None
         
@@ -109,21 +135,42 @@ class FluxerWriter:
             except asyncio.TimeoutError:
                 pass
 
-        prefix = f"**[{timestamp}] {author_name}**:\n"
-        final_content = prefix + content if content else prefix
+        # Use webhook for avatar/username spoofing
+        webhook = await self._get_or_create_webhook(channel_id)
         
+        # Use webhook for avatar/username spoofing
+        webhook = await self._get_or_create_webhook(channel_id)
+        
+        # Prepare content with timestamp (crucial for migration)
+        # We still add the timestamp to the message body so it's searchable and preserved
+        prefix = f"**[{timestamp}]**:\n"
+        final_content = prefix + content if content else prefix
+
         try:
-            await self.client.send_message(
-                channel_id=channel_id,
-                content=final_content,
-                files=files
-            )
+            # Current limitation: fluxer.py execute_webhook doesn't support 'files' yet.
+            # So if we have files, we MUST use the bot's direct send method.
+            if webhook and not files:
+                await webhook.send(
+                    content=final_content,
+                    username=f"{author_name} (via Discord)",
+                    avatar_url=author_avatar_url
+                )
+            else:
+                # Use bot direct message (supports files)
+                # We add the author name to the prefix since bot name won't match
+                bot_prefix = f"**[{timestamp}] {author_name}**:\n"
+                bot_content = bot_prefix + content if content else bot_prefix
+                await self.client.send_message(
+                    channel_id=channel_id,
+                    content=bot_content,
+                    files=files
+                )
         except Exception as e:
-            # Handle empty messages if an attachment is the only content
             err_msg = f"Failed to copy message: {e}"
             if hasattr(e, 'errors') and e.errors:
                 err_msg += f" - Details: {e.errors}"
             print(err_msg)
+
 
     async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool) -> str:
         """

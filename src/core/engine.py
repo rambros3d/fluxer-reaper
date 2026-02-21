@@ -196,6 +196,7 @@ class MigrationEngine:
                 await self.fluxer_writer.send_message(
                     channel_id=target_channel_id,
                     author_name=msg.author.name,
+                    author_avatar_url=str(msg.author.display_avatar.url),
                     content=msg.content,
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     files=files if files else None
