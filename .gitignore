@@ -37,3 +37,5 @@ state.json
 
 # Temporary Test Scripts
 test_*.py
+test_release.zip
+test_release/

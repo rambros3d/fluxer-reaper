@@ -34,7 +34,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller Pillow
+
+      - name: Convert Icon to ICO (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: python
+        run: |
+          from PIL import Image
+          img = Image.open('fluxer-reaper-icon.png')
+          img.save('fluxer-reaper-icon.ico', format='ICO', sizes=[(256, 256)])
 
       - name: Build with PyInstaller
         run: pyinstaller fluxer-reaper.spec
@@ -42,23 +50,55 @@ jobs:
       - name: Prepare Release Asset (Linux)
         if: matrix.os == 'ubuntu-latest'
         run: |
-          chmod +x ${{ matrix.executable_path }}
-          mkdir -p ${{ matrix.artifact_name }}
-          cp ${{ matrix.executable_path }} ${{ matrix.artifact_name }}/
-          zip -r ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
+          mkdir discord-reaper
+          cp ${{ matrix.executable_path }} discord-reaper/
+          chmod +x discord-reaper/fluxer-reaper
+          zip -r ${{ matrix.asset_name }} discord-reaper/
+
+          # Prepare AppImage
+          mkdir -p AppDir/usr/bin
+          cp ${{ matrix.executable_path }} AppDir/usr/bin/fluxer-reaper
+          cp fluxer-reaper-icon.png AppDir/fluxer-reaper.png
+          
+          # Create desktop file
+          cat << 'EOF' > AppDir/fluxer-reaper.desktop
+          [Desktop Entry]
+          Type=Application
+          Name=Discord Reaper
+          Exec=fluxer-reaper
+          Icon=fluxer-reaper
+          Categories=Utility;
+          Terminal=true
+          EOF
+          
+          # Create AppRun script
+          cat << 'EOF' > AppDir/AppRun
+          #!/bin/bash
+          HERE="$(dirname "$(readlink -f "${0}")")"
+          export PATH="${HERE}/usr/bin:${PATH}"
+          exec fluxer-reaper "$@"
+          EOF
+          chmod +x AppDir/AppRun
+          
+          # Download appimagetool
+          curl -LO https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+          ./appimagetool-x86_64.AppImage AppDir fluxer-reaper-x86_64.AppImage
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          mkdir -p ${{ matrix.artifact_name }}
-          cp ${{ matrix.executable_path }} ${{ matrix.artifact_name }}/
-          powershell Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.asset_name }}"
+          mkdir discord-reaper
+          copy ${{ matrix.executable_path }} discord-reaper\
+          powershell Compress-Archive -Path "discord-reaper" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: ${{ matrix.asset_name }}
+          path: |
+            ${{ matrix.asset_name }}
+            fluxer-reaper-x86_64.AppImage
 
   release:
     needs: build
@@ -76,6 +116,7 @@ jobs:
         with:
           files: |
             artifacts/fluxer-reaper-linux/fluxer-reaper-linux.zip
+            artifacts/fluxer-reaper-linux/fluxer-reaper-x86_64.AppImage
             artifacts/fluxer-reaper-windows/fluxer-reaper-windows.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

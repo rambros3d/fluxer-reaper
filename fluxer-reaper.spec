@@ -1,4 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
 from PyInstaller.utils.hooks import collect_submodules
 
 hiddenimports = []
@@ -24,6 +25,7 @@ exe = EXE(
     pyz,
     a.scripts,
     a.binaries,
+    a.zipfiles,
     a.datas,
     [],
     name='fluxer-reaper',
@@ -39,5 +41,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='fluxer-reaper-icon.png',
+    icon='fluxer-reaper-icon.ico' if os.name == 'nt' else 'fluxer-reaper-icon.png',
 )
