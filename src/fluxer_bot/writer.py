@@ -436,15 +436,37 @@ class FluxerWriter:
                 overwrites = ch.get("permission_overwrites", [])
                 for ow in overwrites:
                     try:
-                        await self.client.delete_channel_permission(ch["id"], ow["id"])
-                    except Exception:
-                        pass
+                        await self.client.request(
+                            self.client._route(
+                                "DELETE", 
+                                "/channels/{channel_id}/permissions/{overwrite_id}",
+                                channel_id=ch["id"],
+                                overwrite_id=ow["id"]
+                            )
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to delete overwrite {ow['id']} for channel {ch['id']}: {e}")
                 processed += 1
                 if progress_callback:
                     await progress_callback(ch.get("name", "Unknown"), processed, total)
             except Exception as e:
                 print(f"Failed to reset permissions for channel {ch.get('name')}: {e}")
         return processed
+
+    async def set_channel_permission(self, channel_id: str, overwrite_id: str, allow: int, deny: int, is_role: bool = True):
+        """Sets a permission overwrite for a channel or category."""
+        assert self.client is not None
+        try:
+            await self.client.edit_channel_permissions(
+                channel_id=int(channel_id),
+                overwrite_id=int(overwrite_id),
+                allow=allow,
+                deny=deny,
+                type=0 if is_role else 1
+            )
+        except Exception as e:
+            logger.error(f"Failed to set permission on channel {channel_id} for overwrite {overwrite_id}: {e}")
+
 
     async def delete_all_roles(self, progress_callback=None) -> int:
         """

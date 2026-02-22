@@ -107,6 +107,10 @@ class MigrationState:
     def get_fluxer_role_id(self, discord_id: str) -> str | None:
         return self.role_map.get(str(discord_id))
 
+    def remove_role_mapping(self, discord_id: str):
+        self.role_map.pop(str(discord_id), None)
+        self.save()
+
     def set_emoji_mapping(self, discord_id: str, fluxer_id: str):
         self.emoji_map[str(discord_id)] = str(fluxer_id)
         self.save()

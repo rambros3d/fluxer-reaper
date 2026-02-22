@@ -71,7 +71,8 @@ class MigrationCLI:
             "discord_intents": {}, "discord_permissions": {},
             "fluxer_token": False, "fluxer_bot_name": None,
             "fluxer_community": False, "fluxer_community_name": None,
-            "fluxer_permissions": {}
+            "fluxer_permissions": {},
+            "discord_timeout": False, "fluxer_timeout": False
         }
         self.tokens_valid = False
 
@@ -108,6 +109,7 @@ class MigrationCLI:
                         console.print(f"[bold red]Discord validation failed with error: {e}[/bold red]")
                 else:
                     console.print("[bold red]Discord bot token validation timed out after 10 seconds.[/bold red]")
+                    self.validation_results["discord_timeout"] = True
                     discord_task.cancel()
 
                 # Process Fluxer Result
@@ -130,6 +132,7 @@ class MigrationCLI:
                         console.print(f"[bold red]Fluxer validation failed with error: {e}[/bold red]")
                 else:
                     console.print("[bold red]Fluxer bot token validation timed out after 10 seconds.[/bold red]")
+                    self.validation_results["fluxer_timeout"] = True
                     fluxer_task.cancel()
 
                 # Only tokens and server/community existence are strictly required for 'tokens_valid'
@@ -168,10 +171,10 @@ class MigrationCLI:
             console.print("")
             console.print(Panel.fit("Fluxer Reaper", style="bold blue"))            
             d_name = self.validation_results.get("discord_server_name")
-            d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT SET UP[/bold red]"
+            d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else ("[bold yellow]TIMEOUT ERROR[/bold yellow]" if self.validation_results.get("discord_timeout") else "[bold red]NOT SET UP[/bold red]")
             
             f_name = self.validation_results.get("fluxer_community_name")
-            f_display = f"[bold green]\"{f_name}\"[/bold green]" if f_name else "[bold red]NOT SET UP[/bold red]"
+            f_display = f"[bold green]\"{f_name}\"[/bold green]" if f_name else ("[bold yellow]TIMEOUT ERROR[/bold yellow]" if self.validation_results.get("fluxer_timeout") else "[bold red]NOT SET UP[/bold red]")
             
             console.print(f"[bold cyan]Discord Server:[/bold cyan] {d_display}")
             console.print(f"[bold #4641D9]Fluxer Community:[/bold #4641D9] {f_display}")
@@ -190,7 +193,7 @@ class MigrationCLI:
                 val_status = "[bold green][VALID][/bold green]"
             
             console.print(f"(6) Configuration {val_status}")
-            console.print("(7) [bold red]⚠  Danger Zone[/bold red]")
+            console.print("(7) [red]Danger Zone ⚠[/red]")
             
             console.print("(Q) Exit")
             
@@ -466,6 +469,13 @@ class MigrationCLI:
                         return
                     elif sub_choice == "F":
                         force = True
+                else:
+                    if not Confirm.ask("Clone roles?", default=True):
+                        await self.engine.close_connections()
+                        return
+                    if not Confirm.ask("Are you sure?", default=True):
+                        await self.engine.close_connections()
+                        return
 
                 console.print("\n[bold green]Starting Role Migration...[/bold green]")
                 with Progress(

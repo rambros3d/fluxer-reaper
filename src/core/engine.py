@@ -158,6 +158,36 @@ class MigrationEngine:
         if updates > 0 or removals > 0:
             logger.info(f"Channel sync: {updates} mapped, {removals} stale mappings removed")
 
+    async def sync_roles_state(self):
+        """
+        Scans Fluxer for roles matching Discord names and updates state.json mappings.
+        """
+        discord_roles = await self.discord_reader.get_roles()
+        fluxer_roles = await self.fluxer_writer.client.get_guild_roles(self.config.fluxer_community_id)
+        
+        # Build name -> id maps and ID sets for Fluxer for fast lookup
+        fluxer_role_map = {r.get("name"): str(r.get("id")) for r in fluxer_roles if r.get("name")}
+        fluxer_role_ids = {str(r.get("id")) for r in fluxer_roles}
+        
+        updates = 0
+        removals = 0
+        
+        # Verify and Sync Roles
+        for role in discord_roles:
+            discord_id = str(role.id)
+            fluxer_id = self.state.get_fluxer_role_id(discord_id)
+            
+            if fluxer_id:
+                if fluxer_id not in fluxer_role_ids:
+                    self.state.remove_role_mapping(discord_id)
+                    removals += 1
+            elif role.name in fluxer_role_map:
+                self.state.set_role_mapping(discord_id, fluxer_role_map[role.name])
+                updates += 1
+                
+        if updates > 0 or removals > 0:
+            logger.info(f"Role sync: {updates} mapped, {removals} stale mappings removed")
+
     async def sync_assets_state(self):
         """
         Scans Fluxer for emojis and stickers matching Discord names and updates state.json mappings.
@@ -310,12 +340,38 @@ class MigrationEngine:
         if total == 0:
             return
 
+        async def _sync_overwrites(discord_item, fluxer_id):
+            """Helper to sync role overwrites for a given channel or category."""
+            for target, overwrite in discord_item.overwrites.items():
+                if type(target).__name__ == "Role":
+                    discord_role_id = str(target.id)
+                    # Handle @everyone role special case
+                    if discord_role_id == self.config.discord_server_id:
+                        fluxer_role_id = self.config.fluxer_community_id
+                    else:
+                        fluxer_role_id = self.state.get_fluxer_role_id(discord_role_id)
+                    
+                    if not fluxer_role_id:
+                        continue
+                        
+                    allow_val, deny_val = overwrite.pair()
+                    await self.fluxer_writer.set_channel_permission(
+                        channel_id=fluxer_id,
+                        overwrite_id=fluxer_role_id,
+                        allow=allow_val.value,
+                        deny=deny_val.value,
+                        is_role=True
+                    )
+
         # Sync Category Permissions (Role Overwrites)
         for cat in categories:
             if not self.is_running: break
-            fluxer_id = self.state.get_fluxer_channel_id(str(cat.id))
-            # In a real implementation, we would diff discord perms 
-            # and apply them to fluxer_id using client methods.
+            fluxer_id = self.state.get_fluxer_category_id(str(cat.id))
+            if fluxer_id:
+                try:
+                    await _sync_overwrites(cat, fluxer_id)
+                except Exception as e:
+                    logger.error(f"Failed syncing permissions for category {cat.name}: {e}")
             
             current_idx += 1
             if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
@@ -324,7 +380,11 @@ class MigrationEngine:
         for channel in channels:
             if not self.is_running: break
             fluxer_id = self.state.get_fluxer_channel_id(str(channel.id))
-            # apply perms
+            if fluxer_id:
+                try:
+                    await _sync_overwrites(channel, fluxer_id)
+                except Exception as e:
+                    logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
             
             current_idx += 1
             if progress_callback: await progress_callback(channel.name, current_idx, total)
