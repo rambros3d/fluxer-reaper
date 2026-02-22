@@ -299,14 +299,19 @@ class MigrationEngine:
             if not self.is_running: break
                 
             state_key = str(channel.id)
-            topic = channel.topic if channel.topic else ""
+            topic = getattr(channel, 'topic', "") or ""
+            nsfw = getattr(channel, 'nsfw', False)
+            slowmode = getattr(channel, 'slowmode_delay', 0)
+            
             parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
             
             fluxer_id = await self.fluxer_writer.create_channel(
                 name=channel.name, 
                 topic=topic, 
                 type=0, 
-                parent_id=parent_id
+                parent_id=parent_id,
+                nsfw=nsfw,
+                slowmode_delay=slowmode
             )
             self.state.set_channel_mapping(state_key, fluxer_id)
             
@@ -319,10 +324,18 @@ class MigrationEngine:
             if not self.is_running: break
             
             parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
-            await self.fluxer_writer.move_channel(fluxer_id, parent_id)
+            nsfw = getattr(channel, 'nsfw', False)
+            slowmode = getattr(channel, 'slowmode_delay', 0)
+            
+            await self.fluxer_writer.modify_channel(
+                channel_id=fluxer_id, 
+                parent_id=parent_id,
+                nsfw=nsfw,
+                slowmode_delay=slowmode
+            )
             
             current_idx += 1
-            if progress_callback: await progress_callback(channel.name, "Moving", current_idx, total)
+            if progress_callback: await progress_callback(channel.name, "Syncing", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
     async def sync_permissions(self, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):

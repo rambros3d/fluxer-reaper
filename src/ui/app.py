@@ -800,11 +800,16 @@ class MigrationCLI:
                             parent_id = self.engine.state.get_fluxer_category_id(str(source_channel.category_id))
                         
                         topic = getattr(source_channel, 'topic', "") or ""
+                        nsfw = getattr(source_channel, 'nsfw', False)
+                        slowmode = getattr(source_channel, 'slowmode_delay', 0)
+                        
                         new_id = await self.engine.fluxer_writer.create_channel(
                             name=source_channel.name,
                             topic=topic,
                             type=0,
-                            parent_id=parent_id
+                            parent_id=parent_id,
+                            nsfw=nsfw,
+                            slowmode_delay=slowmode
                         )
                         if new_id:
                             self.engine.state.set_channel_mapping(str(source_channel.id), new_id)

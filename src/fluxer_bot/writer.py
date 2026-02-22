@@ -155,7 +155,7 @@ class FluxerWriter:
             "permissions": permissions
         }
 
-    async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None) -> str:
+    async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0) -> str:
         """
         Creates a new channel in the target Fluxer community.
         Returns the new Fluxer channel ID.
@@ -167,20 +167,32 @@ class FluxerWriter:
             name=name,
             type=type,
             topic=topic or None,
-            parent_id=parent_id
+            parent_id=parent_id,
+            nsfw=nsfw,
+            rate_limit_per_user=slowmode_delay
         )
         return str(guild_channel["id"])
 
-    async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
+    async def modify_channel(self, channel_id: str, parent_id: Optional[str] = None, name: Optional[str] = None, topic: Optional[str] = None, nsfw: Optional[bool] = None, slowmode_delay: Optional[int] = None) -> bool:
         """
-        Updates the parent category of an existing channel.
+        Updates channel properties.
         """
         assert self.client is not None
         await self.client.modify_channel(
             channel_id=channel_id,
-            parent_id=parent_id
+            name=name,
+            topic=topic,
+            parent_id=parent_id,
+            nsfw=nsfw,
+            rate_limit_per_user=slowmode_delay
         )
         return True
+
+    async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
+        """
+        Backward compatibility for moving a channel to a category.
+        """
+        return await self.modify_channel(channel_id, parent_id=parent_id)
 
     async def get_channels(self) -> List[Dict[str, Any]]:
         """Returns all channels in the community."""
