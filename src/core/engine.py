@@ -37,10 +37,13 @@ class MigrationEngine:
                 "discord_bot_name": d_valid.get("bot_name"),
                 "discord_server": d_valid.get("server", False),
                 "discord_server_name": d_valid.get("server_name"),
+                "discord_intents": d_valid.get("intents", {}),
+                "discord_permissions": d_valid.get("permissions", {}),
                 "fluxer_token": f_valid.get("token", False),
                 "fluxer_bot_name": f_valid.get("bot_name"),
                 "fluxer_community": f_valid.get("community", False),
-                "fluxer_community_name": f_valid.get("community_name")
+                "fluxer_community_name": f_valid.get("community_name"),
+                "fluxer_permissions": f_valid.get("permissions", {})
             }
         except Exception as e:
             logger.error(f"Validation failed with exception: {e}")

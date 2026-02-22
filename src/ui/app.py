@@ -68,8 +68,10 @@ class MigrationCLI:
         self.validation_results = {
             "discord_token": False, "discord_bot_name": None,
             "discord_server": False, "discord_server_name": None,
+            "discord_intents": {}, "discord_permissions": {},
             "fluxer_token": False, "fluxer_bot_name": None,
-            "fluxer_community": False, "fluxer_community_name": None
+            "fluxer_community": False, "fluxer_community_name": None,
+            "fluxer_permissions": {}
         }
         self.tokens_valid = False
 
@@ -97,6 +99,11 @@ class MigrationCLI:
                             console.print("[bold red]Discord Token validation failed (Invalid Token).[/bold red]")
                         elif not res.get("server"):
                             console.print("[bold red]Discord Server ID validation failed (Invalid/Inaccessible ID).[/bold red]")
+                        else:
+                            # Store intents & permissions for later UI display
+                            self.validation_results["discord_intents"] = res.get("intents", {})
+                            self.validation_results["discord_permissions"] = res.get("permissions", {})
+
                     except Exception as e:
                         console.print(f"[bold red]Discord validation failed with error: {e}[/bold red]")
                 else:
@@ -115,13 +122,37 @@ class MigrationCLI:
                             console.print("[bold red]Fluxer Token validation failed (Invalid Token).[/bold red]")
                         elif not res.get("community"):
                             console.print("[bold red]Fluxer Community ID validation failed (Invalid/Inaccessible ID).[/bold red]")
+                        else:
+                            # Store permissions
+                            self.validation_results["fluxer_permissions"] = res.get("permissions", {})
+
                     except Exception as e:
                         console.print(f"[bold red]Fluxer validation failed with error: {e}[/bold red]")
                 else:
                     console.print("[bold red]Fluxer bot token validation timed out after 10 seconds.[/bold red]")
                     fluxer_task.cancel()
 
-                self.tokens_valid = all(self.validation_results.values())
+                # Only tokens and server/community existence are strictly required for 'tokens_valid'
+                self.tokens_valid = (
+                    self.validation_results.get("discord_token") and 
+                    self.validation_results.get("discord_server") and 
+                    self.validation_results.get("fluxer_token") and 
+                    self.validation_results.get("fluxer_community")
+                )
+
+                # Check if all permissions are actually granted
+                self.permissions_complete = True
+                if self.tokens_valid:
+                    # Discord
+                    d_intents = self.validation_results.get("discord_intents", {})
+                    d_perms = self.validation_results.get("discord_permissions", {})
+                    if not all([d_intents.get("message_content"), d_perms.get("view_channel"), d_perms.get("read_message_history")]):
+                        self.permissions_complete = False
+                    
+                    # Fluxer
+                    f_perms = self.validation_results.get("fluxer_permissions", {})
+                    if not all(f_perms.values()) if f_perms else True:
+                        self.permissions_complete = False
 
         except Exception as e:
             console.print(f"[bold red]Validation system failure: {e}[/bold red]")
@@ -151,7 +182,13 @@ class MigrationCLI:
             console.print("(4) Sync Server Name, Logo and Banner")
             console.print("(5) Migrate message history")
             
-            val_status = "[bold green][VALID][/bold green]" if self.tokens_valid else "[bold red][INVALID][/bold red]"
+            if not self.tokens_valid:
+                val_status = "[bold red][INVALID][/bold red]"
+            elif not self.permissions_complete:
+                val_status = "[bold yellow][PERMISSION MISSING][/bold yellow]"
+            else:
+                val_status = "[bold green][VALID][/bold green]"
+            
             console.print(f"(6) Configuration {val_status}")
             console.print("(7) [bold red]⚠  Danger Zone[/bold red]")
             
@@ -180,6 +217,34 @@ class MigrationCLI:
 
     async def edit_configuration(self):
         await self.validate_config()
+
+        # Display Required Permissions FIRST
+        def fmt(name, val):
+            if val is None: return f"[dim]{name}[/dim]" # Unknown
+            return f"[green]{name}[/green]" if val else f"[red]{name} [MISSING][/red]"
+
+        d_intents = self.validation_results.get("discord_intents", {})
+        d_perms = self.validation_results.get("discord_permissions", {})
+        f_perms = self.validation_results.get("fluxer_permissions", {})
+
+        perm_table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
+        perm_table.add_column("Bot Type")
+        perm_table.add_column("Required Permissions & Intents")
+        
+        perm_table.add_row(
+            "[bold #5865F2]Discord Bot[/bold #5865F2]", 
+            f"• [bold]Intents:[/bold] Server Members, {fmt('Message Content', d_intents.get('message_content'))}\n"
+            f"• [bold]Permissions:[/bold] {fmt('View Channels', d_perms.get('view_channel'))}, {fmt('Read Message History', d_perms.get('read_message_history'))}"
+        )
+        perm_table.add_row(
+            "[bold #4641D9]Fluxer Bot[/bold #4641D9]", 
+            f"• [bold]Permissions:[/bold] {fmt('Manage Channels', f_perms.get('manage_channels'))}, {fmt('Manage Messages', f_perms.get('manage_messages'))},\n"
+            f"  {fmt('Manage Roles', f_perms.get('manage_roles'))}, {fmt('Manage Emojis/Stickers', f_perms.get('manage_emojis_stickers'))}, {fmt('Manage Webhooks', f_perms.get('manage_webhooks'))}"
+        )
+        
+        console.print("\n") # Add spacing before panel
+        console.print(Panel(perm_table, title="[bold]Required Bot Permissions[/bold]", expand=False, border_style="dim"))
+
         console.print("\n[bold]Configuration Status:[/bold]")
         
         def get_status_str(is_valid, name=None):
@@ -192,8 +257,8 @@ class MigrationCLI:
         console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False), self.validation_results.get('fluxer_bot_name'))}")
         console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False), self.validation_results.get('discord_server_name'))}")
         console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False), self.validation_results.get('fluxer_community_name'))}")
-        
-        if not Confirm.ask("Edit now?"):
+
+        if not Confirm.ask("\nEdit now?"):
             return
             
         console.print("\n[bold]Configuration Editor[/bold] (leave blank to keep current)")

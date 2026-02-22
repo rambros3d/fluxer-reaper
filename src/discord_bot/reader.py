@@ -26,8 +26,15 @@ class DiscordReader:
         self.guild = await self.client.fetch_guild(self.server_id)
 
     async def validate(self) -> Dict[str, Any]:
-        """Validates the token and server ID."""
-        results = {"token": False, "server": False, "bot_name": None, "server_name": None}
+        """Validates the token, server ID, intents, and permissions."""
+        results = {
+            "token": False, 
+            "server": False, 
+            "bot_name": None, 
+            "server_name": None,
+            "intents": {"message_content": False},
+            "permissions": {"view_channel": False, "read_message_history": False}
+        }
         temp_client = self._create_client()
         try:
             await temp_client.login(self.token)
@@ -39,6 +46,20 @@ class DiscordReader:
             if guild is not None:
                 results["server"] = True
                 results["server_name"] = guild.name
+                
+                # Check intents
+                results["intents"]["message_content"] = temp_client.intents.message_content
+                
+                # Check permissions
+                # We need to fetch the member to check permissions
+                try:
+                    member = await guild.fetch_member(temp_client.user.id)
+                    perms = member.guild_permissions
+                    results["permissions"]["view_channel"] = perms.view_channel
+                    results["permissions"]["read_message_history"] = perms.read_message_history
+                except Exception:
+                    # Fallback if member fetch fails, though it shouldn't for the bot itself
+                    pass
         except Exception:
             pass
         finally:
