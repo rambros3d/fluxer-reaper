@@ -43,24 +43,16 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: |
           chmod +x ${{ matrix.executable_path }}
-          # Generate launcher script
-          cat << 'EOF' > dist/Launch-Reaper.sh
-          #!/bin/bash
-          BASEDIR=$(dirname "$0")
-          cd "$BASEDIR"
-          ./fluxer-reaper
-          EOF
-          chmod +x dist/Launch-Reaper.sh
-          zip -j ${{ matrix.asset_name }} ${{ matrix.executable_path }} dist/Launch-Reaper.sh config.example.yaml
+          mkdir -p ${{ matrix.artifact_name }}
+          cp ${{ matrix.executable_path }} ${{ matrix.artifact_name }}/
+          zip -r ${{ matrix.asset_name }} ${{ matrix.artifact_name }}
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          # Generate launcher script
-          echo '@echo off' > dist\Launch-Reaper.bat
-          echo 'cd /d "%~dp0"' >> dist\Launch-Reaper.bat
-          echo 'fluxer-reaper.exe' >> dist\Launch-Reaper.bat
-          powershell Compress-Archive -Path "${{ matrix.executable_path }}", "dist\Launch-Reaper.bat", "config.example.yaml" -DestinationPath "${{ matrix.asset_name }}"
+          mkdir -p ${{ matrix.artifact_name }}
+          cp ${{ matrix.executable_path }} ${{ matrix.artifact_name }}/
+          powershell Compress-Archive -Path "${{ matrix.artifact_name }}" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
