@@ -261,20 +261,14 @@ class MigrationEngine:
         for ch in channels:
             discord_id = str(ch.id)
             fluxer_id = self.state.get_fluxer_channel_id(discord_id)
-            discord_parent_id = str(ch.category_id) if ch.category_id else None
             
             if force or not fluxer_id:
                 # We'll resolve the parent_id in the loop after categories are created
                 channels_to_create.append(ch)
             else:
-                current_fluxer_parent = fluxer_parent_map.get(fluxer_id)
-                # Case A: Its category is being created right now
-                # Case B: It has a category that exists but is not set in Fluxer correctly
-                will_create_parent = discord_parent_id in missing_category_ids
-                expected_parent_fluxer_id = self.state.get_fluxer_category_id(discord_parent_id) if discord_parent_id else None
-                
-                if will_create_parent or current_fluxer_parent != expected_parent_fluxer_id:
-                    channels_to_move.append((ch, fluxer_id))
+                # Always add to move/sync list to ensure properties (topic, nsfw, slowmode) are synced
+                # even if the parent category is already correct.
+                channels_to_move.append((ch, fluxer_id))
 
         total = len(missing_categories) + len(channels_to_create) + len(channels_to_move)
         current_idx = 0
@@ -303,6 +297,8 @@ class MigrationEngine:
             nsfw = getattr(channel, 'nsfw', False)
             slowmode = getattr(channel, 'slowmode_delay', 0)
             
+            logger.debug(f"Creating channel {channel.name}: topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
+            
             parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
             
             fluxer_id = await self.fluxer_writer.create_channel(
@@ -315,21 +311,36 @@ class MigrationEngine:
             )
             self.state.set_channel_mapping(state_key, fluxer_id)
             
+            # Sync again immediately because some properties (like slowmode) are ignored on creation
+            await self.fluxer_writer.modify_channel(
+                channel_id=fluxer_id,
+                parent_id=parent_id,
+                name=channel.name,
+                topic=topic,
+                nsfw=nsfw,
+                slowmode_delay=slowmode
+            )
+            
             current_idx += 1
             if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)
             await asyncio.sleep(self.config.migration.rate_limit_delay_seconds)
 
-        # Move existing channels if needed
+        # Move/Sync existing channels
         for channel, fluxer_id in channels_to_move:
             if not self.is_running: break
             
             parent_id = self.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
             nsfw = getattr(channel, 'nsfw', False)
             slowmode = getattr(channel, 'slowmode_delay', 0)
+            topic = getattr(channel, 'topic', "") or ""
+            
+            logger.debug(f"Syncing existing channel {channel.name} ({fluxer_id}): topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
             
             await self.fluxer_writer.modify_channel(
                 channel_id=fluxer_id, 
                 parent_id=parent_id,
+                name=channel.name,
+                topic=topic,
                 nsfw=nsfw,
                 slowmode_delay=slowmode
             )

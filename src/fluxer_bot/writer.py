@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
-from fluxer import Bot, Webhook
+from fluxer import Bot, Webhook, Forbidden
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,8 @@ class FluxerWriter:
         """
         assert self.client is not None
         
+        logger.debug(f"Fluxer: Creating channel {name} (type {type}) with topic='{topic}', nsfw={nsfw}, slowmode={slowmode_delay}")
+        
         guild_channel = await self.client.create_guild_channel(
             guild_id=self.community_id,
             name=name,
@@ -178,14 +180,23 @@ class FluxerWriter:
         Updates channel properties.
         """
         assert self.client is not None
-        await self.client.modify_channel(
-            channel_id=channel_id,
-            name=name,
-            topic=topic,
-            parent_id=parent_id,
-            nsfw=nsfw,
-            rate_limit_per_user=slowmode_delay
-        )
+        
+        logger.debug(f"Fluxer: Modifying channel {channel_id}: name={name}, topic='{topic}', parent_id={parent_id}, nsfw={nsfw}, slowmode={slowmode_delay}")
+        
+        try:
+            await self.client.modify_channel(
+                channel_id=channel_id,
+                name=name,
+                topic=topic,
+                parent_id=parent_id,
+                nsfw=nsfw,
+                rate_limit_per_user=slowmode_delay
+            )
+        except Forbidden as e:
+            if getattr(e, 'code', None) == "NSFW_CONTENT_AGE_RESTRICTED":
+                logger.warning(f"Fluxer: Could not update certain properties (likely NSFW) on channel {channel_id}: {e.message}")
+                return False
+            raise
         return True
 
     async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
