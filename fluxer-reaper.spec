@@ -1,10 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
 import os
+import sys
 from PyInstaller.utils.hooks import collect_submodules
+
+print(f"DEBUG: os.name = {os.name}")
+print(f"DEBUG: sys.platform = {sys.platform}")
+print(f"DEBUG: Current directory = {os.getcwd()}")
+print(f"DEBUG: Files in current directory = {os.listdir('.')}")
 
 hiddenimports = []
 hiddenimports += collect_submodules('rich._unicode_data')
 
+# Determine the best icon to use
+icon_file = None
+if os.path.exists('fluxer-reaper-icon.ico'):
+    icon_file = 'fluxer-reaper-icon.ico'
+elif os.path.exists('fluxer-reaper-icon.png'):
+    icon_file = 'fluxer-reaper-icon.png'
+
+print(f"DEBUG: Selected icon_file = {icon_file}")
 
 a = Analysis(
     ['fluxer-reaper.py'],
@@ -41,5 +55,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='fluxer-reaper-icon.ico' if os.name == 'nt' else 'fluxer-reaper-icon.png',
+    icon=icon_file,
 )

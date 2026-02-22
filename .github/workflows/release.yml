@@ -45,7 +45,10 @@ jobs:
           img.save('fluxer-reaper-icon.ico', format='ICO', sizes=[(256, 256)])
 
       - name: Build with PyInstaller
-        run: pyinstaller fluxer-reaper.spec
+        run: |
+          echo "Listing directory contents:"
+          ls -R || dir /s
+          pyinstaller fluxer-reaper.spec
 
       - name: Prepare Release Asset (Linux)
         if: matrix.os == 'ubuntu-latest'
