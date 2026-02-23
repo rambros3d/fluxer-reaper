@@ -7,8 +7,14 @@ from rich.prompt import Prompt, Confirm
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
-from src.config import load_config, save_config
-from src.core.engine import MigrationEngine
+from src.core.configuration import load_config, save_config
+from src.core.base import MigrationContext
+from src.core.clone_server import sync_channel_state, migrate_channels
+from src.core.roles_permissions import sync_roles_state, sync_permissions, migrate_roles
+from src.core.emoji_stickers import sync_assets_state, migrate_emojis
+from src.core.server_metadata import sync_server_metadata
+from src.core.migrate_message import analyze_migration, migrate_messages
+from src.core.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
 
 class RateLimitHandler(logging.Handler):
     """Intersects library logs to print clean rate limit messages."""
@@ -55,7 +61,7 @@ class MigrationCLI:
             console.print(f"[bold red]Failed to load config: {e}[/bold red]")
             sys.exit(1)
 
-        self.engine = MigrationEngine(self.config)
+        self.engine = MigrationContext(self.config)
         self.progress_callback_task = None
         self.tokens_valid = False
 
@@ -284,7 +290,7 @@ class MigrationCLI:
             
             save_config(self.config)
             # Recreate engine with new config
-            self.engine = MigrationEngine(self.config)
+            self.engine = MigrationContext(self.config)
             
             # Re-validate
             console.print("[yellow]Validating new configuration...[/yellow]")
@@ -309,7 +315,7 @@ class MigrationCLI:
         try:
             await self.engine.start_connections()
             with console.status("[yellow]Syncing Fluxer channel state...[/yellow]"):
-                await self.engine.sync_channel_state()
+                await sync_channel_state(self.engine)
             categories = await self.engine.discord_reader.get_categories()
             channels = await self.engine.discord_reader.get_channels()
         except Exception as e:
@@ -408,7 +414,7 @@ class MigrationCLI:
                     progress.update(channel_task, total=total, completed=current, description=f"[{color}]{status} Channel: {item_name}")
 
                 self.engine.is_running = True
-                await self.engine.migrate_channels(progress_callback=update_progress, force=force)
+                await migrate_channels(self.engine, progress_callback=update_progress, force=force)
                 
             console.print("[bold green]Server Template cloned![/bold green]")
             
@@ -434,7 +440,7 @@ class MigrationCLI:
                 await self.engine.start_connections()
                 
                 with console.status("[yellow]Checking Fluxer for existing roles...[/yellow]"):
-                    await self.engine.sync_roles_state()
+                    await sync_roles_state(self.engine)
                 
                 roles = await self.engine.discord_reader.get_roles()
                 
@@ -492,7 +498,7 @@ class MigrationCLI:
                         progress.update(role_task, total=total, completed=current, description=f"[cyan]Syncing Role: {item_name}")
     
                     self.engine.is_running = True
-                    await self.engine.migrate_roles(progress_callback=update_progress, force=force)
+                    await migrate_roles(self.engine, progress_callback=update_progress, force=force)
                     
                 console.print("[bold green]Role migration complete![/bold green]")
                 
@@ -538,7 +544,7 @@ class MigrationCLI:
                         progress.update(perm_task, total=total, completed=current, description=f"[cyan]Syncing: {item_name}")
     
                     self.engine.is_running = True
-                    await self.engine.sync_permissions(progress_callback=update_progress)
+                    await sync_permissions(self.engine, progress_callback=update_progress)
                     
                 console.print("[bold green]Permission synchronization complete![/bold green]")
                 
@@ -554,7 +560,7 @@ class MigrationCLI:
             await self.engine.start_connections()
             
             with console.status("[yellow]Checking Fluxer for existing emojis and stickers...[/yellow]"):
-                await self.engine.sync_assets_state()
+                await sync_assets_state(self.engine)
                 
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
@@ -642,7 +648,8 @@ class MigrationCLI:
                     progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying {item_type}: {item_name}")
 
                 self.engine.is_running = True
-                await self.engine.migrate_emojis(
+                await migrate_emojis(
+                    self.engine,
                     progress_callback=update_progress,
                     types_to_include=types_to_include,
                     force=force
@@ -706,7 +713,7 @@ class MigrationCLI:
                 color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
                 console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
 
-            await self.engine.sync_server_metadata(progress_callback, components=components)
+            await sync_server_metadata(self.engine, progress_callback, components=components)
             console.print("[bold green]Server metadata sync finished![/bold green]")
         except Exception as e:
             console.print(f"[bold red]Error during metadata sync: {str(e)}[/bold red]")
@@ -876,7 +883,8 @@ class MigrationCLI:
                     async def update_scan_progress(count: int):
                         progress.update(task, description=f"[cyan]Scanned {count} items...")
                     
-                    stats = await self.engine.analyze_migration(
+                    stats = await analyze_migration(
+                        self.engine,
                         source_channel_id=source_channel.id,
                         after_message_id=after_id,
                         progress_callback=update_scan_progress
@@ -928,7 +936,8 @@ class MigrationCLI:
                 async def update_msg_progress(count: int):
                     progress.update(task, description=f"[cyan]Migrated {count} messages...")
 
-                count = await self.engine.migrate_messages(
+                count = await migrate_messages(
+                    self.engine,
                     source_channel_id=source_channel.id,
                     target_channel_id=target_channel.get("id"),
                     after_message_id=after_id,
@@ -990,7 +999,7 @@ class MigrationCLI:
                         progress.update(del_task, total=total, completed=current,
                                         description=f"[red]Deleting: {name}")
 
-                    count = await self.engine.danger_delete_all_channels(progress_callback=on_channel_deleted)
+                    count = await danger_delete_all_channels(self.engine, progress_callback=on_channel_deleted)
                 console.print(f"[bold green]{count} channels/categories deleted.[/bold green]")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
@@ -1021,7 +1030,7 @@ class MigrationCLI:
                         progress.update(perm_task, total=total, completed=current,
                                         description=f"[red]Resetting: {name}")
 
-                    count = await self.engine.danger_reset_channel_permissions(progress_callback=on_perm_reset)
+                    count = await danger_reset_channel_permissions(self.engine, progress_callback=on_perm_reset)
                 console.print(f"[bold green]Permissions reset on {count} channels/categories.[/bold green]")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
@@ -1053,7 +1062,7 @@ class MigrationCLI:
                         progress.update(role_task, total=total, completed=current,
                                         description=f"[red]Deleting role: {name}")
 
-                    count = await self.engine.danger_delete_all_roles(progress_callback=on_role_deleted)
+                    count = await danger_delete_all_roles(self.engine, progress_callback=on_role_deleted)
                 console.print(f"[bold green]{count} roles deleted.[/bold green]")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
@@ -1084,7 +1093,7 @@ class MigrationCLI:
                         progress.update(asset_task, total=total, completed=current,
                                         description=f"[red]Deleting {asset_type}: {name}")
 
-                    counts = await self.engine.danger_delete_all_emojis_and_stickers(progress_callback=on_asset_deleted)
+                    counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_asset_deleted)
                 console.print(f"[bold green]{counts.get('emojis', 0)} emojis deleted.[/bold green]")
                 console.print(f"[bold green]{counts.get('stickers', 0)} stickers deleted.[/bold green]")
                 console.print("[bold green]Done.[/bold green]")

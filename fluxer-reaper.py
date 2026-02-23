@@ -2,7 +2,7 @@ import sys
 import asyncio
 import logging
 from src.ui.app import run_cli
-from src.config import load_config
+from src.core.configuration import load_config
 
 def setup_logging():
     try:

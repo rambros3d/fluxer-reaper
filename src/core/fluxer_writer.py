@@ -246,7 +246,7 @@ class FluxerWriter:
             if webhook and not files and not reply_to_message_id:
                 msg = await webhook.send(
                     content=final_content,
-                    username=f"{author_name} (via Discord)",
+                    username=f"{author_name} (discord)",
                     avatar_url=author_avatar_url,
                     wait=True
                 )
