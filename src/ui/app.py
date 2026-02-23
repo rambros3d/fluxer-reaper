@@ -845,24 +845,72 @@ class MigrationCLI:
                 first_msg_link = f"https://discord.com/channels/{self.config.discord_server_id}/{source_channel.id}/{first_msg.id}"
                 server_name = self.validation_results.get("discord_server_name", "server")
                 
+                # Check for existing migration
+                last_migrated_id = self.engine.state.get_last_message_id(str(source_channel.id))
+                next_msg = None
+                if last_migrated_id:
+                    try:
+                        # Try to fetch the immediate next message
+                        async for msg in self.engine.discord_reader.fetch_message_history(source_channel.id, limit=1, after_id=int(last_migrated_id)):
+                            next_msg = msg
+                            break
+                    except Exception as e:
+                        # Assuming logger is defined elsewhere, if not, this would be an error.
+                        # For this context, I'll assume it's available or a print is acceptable.
+                        # If not, a simple print(f"Warning: Could not fetch next message after {last_migrated_id}: {e}") could be used.
+                        # As per instructions, I'll use logger.warning.
+                        import logging
+                        logger = logging.getLogger(__name__)
+                        logger.warning(f"Could not fetch next message after {last_migrated_id}: {e}")
+
                 while True:
                     console.print(f"\n[bold green]Channel Found![/bold green]")
-                    console.print(f"Oldest Message Link: {first_msg_link}")
+                    console.print(f"Oldest Message")
+                    console.print(f"Link: {first_msg_link}")
                     console.print(f"Author: [blue]{first_msg.author.name}[/blue]")
-                    console.print(f"Content Preview: {first_msg.content[:100]}...")
+                    console.print(f"Content Preview: {first_msg.content[:100]}")
                     
-                    console.print("\n(Y) [green]Yes, start from oldest message[/green]")
-                    console.print("(M) Provide Specific message link or ID")
-                    console.print("(B) Back")
+                    choices = ["M", "m", "B", "b"]
+                    prompt_str = "Start migration"
                     
-                    start_mode = Prompt.ask("Start migration [Y/M/B]", choices=["Y", "y", "M", "m", "B", "b"], default="Y", show_choices=False).upper()
+                    if next_msg:
+                        next_msg_link = f"https://discord.com/channels/{self.config.discord_server_id}/{source_channel.id}/{next_msg.id}"
+                        console.print(f"\n[bold yellow]Continue Next message[/bold yellow]")
+                        console.print(f"Link: {next_msg_link}")
+                        console.print(f"Author: [blue]{next_msg.author.name}[/blue]")
+                        console.print(f"Content Preview: {next_msg.content[:100]}")
+                        
+                        console.print("\n(F) [red]Force start from oldest message[/red]")
+                        console.print("(M) Provide Specific message link or ID")
+                        console.print("(Y) [green]Continue Migration[/green]")
+                        console.print("(B) Back")
+                        
+                        choices.extend(["Y", "y", "F", "f"])
+                        prompt_str = "Select an option [Y/F/M/B]"
+                        default_choice = "Y"
+                    else:
+                        console.print("\n(Y) [green]Yes, start from oldest message[/green]")
+                        console.print("(M) Provide Specific message link or ID")
+                        console.print("(B) Back")
+                        
+                        choices.extend(["Y", "y"])
+                        prompt_str = "Start migration [Y/M/B]"
+                        default_choice = "Y"
+                    
+                    start_mode = Prompt.ask(prompt_str, choices=choices, default=default_choice, show_choices=False).upper()
                     
                     if start_mode == "B":
                         return
                     elif start_mode == "Y":
+                        if next_msg:
+                            after_id = int(last_migrated_id)
+                        break
+                    elif start_mode == "F":
+                        # User wants to ignore the previous migration and start from beginning
+                        after_id = None
                         break
                     elif start_mode == "M":
-                        prompt_msg = "Enter Discord Message Link"
+                        prompt_msg = "Enter Discord Message Link or Message ID (or 'B' to go back)"
                         valid_message_found = False
                         while True:
                             custom_link = Prompt.ask(prompt_msg)
@@ -880,12 +928,12 @@ class MigrationCLI:
                                     valid_message_found = True
                                     break
                                 else:
-                                    console.print("\n[red]Error parsing link: 404 Not Found (error code: 10008): Unknown Message.[/red]")
-                                    prompt_msg = f"[yellow]Provide a valid Message link or Message ID from \"{server_name}\" (or 'B' to go back)[/yellow]"
+                                    console.print("[red]Could not find message. Ensure it exists in this channel.[/red]")
+                            except ValueError:
+                                console.print("[red]Invalid ID or Link. Please provide a valid numeric ID or Discord Message URL.[/red]")
                             except Exception as e:
-                                console.print(f"\n[red]Error parsing link: {e}[/red]")
-                                prompt_msg = f"[yellow]Provide a valid Message link or Message ID from \"{server_name}\" (or 'B' to go back)[/yellow]"
-                        
+                                console.print(f"[red]Error fetching message: {str(e)}[/red]")
+                                
                         if valid_message_found:
                             break
             else:
@@ -947,6 +995,8 @@ class MigrationCLI:
             console.print("\n[bold green]Starting Migration...[/bold green]")
             self.engine.is_running = True
             
+            total_messages = stats['messages']
+            
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -954,12 +1004,12 @@ class MigrationCLI:
                 TaskProgressColumn(),
                 console=console
             ) as progress:
-                task = progress.add_task("[cyan]Migrating messages...", total=None)
+                task = progress.add_task(f"[cyan]Migrating 0/{total_messages} messages...", total=total_messages)
                 
                 async def update_msg_progress(count: int):
-                    progress.update(task, description=f"[cyan]Migrated {count} messages...")
+                    progress.update(task, completed=count, description=f"[cyan]Migrated {count}/{total_messages} messages...")
 
-                count = await migrate_messages(
+                result_stats = await migrate_messages(
                     self.engine,
                     source_channel_id=source_channel.id,
                     target_channel_id=target_channel.get("id"),
@@ -967,8 +1017,19 @@ class MigrationCLI:
                     progress_callback=update_msg_progress
                 )
                 
-            console.print(f"\n[bold green]Success! {count} messages migrated to {target_channel.get('name')}.[/bold green]")
-            await log_audit_event(self.engine, "Message History Migrated", f"Successfully migrated {count} messages to #{target_channel.get('name')}.")
+            console.print(f"\n[bold green]Success! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold green]")
+            
+            audit_text = (
+                f"**Message info:**\n"
+                f"first message: {result_stats['first_message_url'] or 'N/A'}\n"
+                f"last message: {result_stats['last_message_url'] or 'N/A'}\n"
+                f"**Stats:**\n"
+                f"{stats['messages']} messages\n"
+                f"{stats['attachments']} attachments\n"
+                f"{stats['threads']} threads\n"
+                f"Successfully migrated to <#{target_channel.get('id')}>\n"
+            )
+            await log_audit_event(self.engine, "Message History Migrated", audit_text)
 
         except Exception as e:
             console.print(f"[bold red]Migration encountered an error: {str(e)}[/bold red]")

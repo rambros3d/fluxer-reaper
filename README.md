@@ -28,7 +28,7 @@ Fluxer Reaper is a simple tool to help you move an entire Discord server over to
 ### 5. Migrate Message History
 *   **Masquerade User**: Uses webhooks to mirror original user avatars and nicknames for a seamless transition.
 *   **Contextual Pairing**: Easily map Discord channels to their Fluxer counterparts.
-*   **Flexible Start Points**: Start from the oldest message or a specific custom message ID/link.
+*   **Flexible Start Points**: Start from the oldest message, a specific custom message ID/link, or continue from where you left off.
 *   **Rich History**: Migrates message content, author markers, and attachments.
 *   **Thread Support**: Handles threads with dedicated markers in the target channel.
 
@@ -102,6 +102,9 @@ Simply run the downloaded file to start the tool. No Python installation is requ
 - **linux**: run the **fluxer-reaper** file (bash **./fluxer-reaper** if terminal doesnt open automatically)
 - **windows**: run the **fluxer-reaper.exe** file
 
+
+### Documentation
+Detailed info about the code can be found at https://deepwiki.com/rambros3d/fluxer-reaper
 
 ## Vibe Code Notice
 

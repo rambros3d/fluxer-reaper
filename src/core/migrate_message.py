@@ -1,10 +1,36 @@
 import asyncio
 import logging
-from typing import Callable, Awaitable, Dict
+import re
+from typing import Callable, Awaitable, Dict, Any
 
 from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
+
+def clean_mentions(content: str, guild) -> str:
+    if not content or not guild:
+        return content
+        
+    def replace_user(match):
+        uid = int(match.group(1))
+        member = guild.get_member(uid)
+        return f"@{member.display_name}" if member else match.group(0)
+        
+    def replace_role(match):
+        rid = int(match.group(1))
+        role = guild.get_role(rid)
+        return f"@{role.name}" if role else match.group(0)
+        
+    def replace_channel(match):
+        cid = int(match.group(1))
+        channel = guild.get_channel(cid)
+        return f"#{channel.name}" if channel else match.group(0)
+
+    content = re.sub(r'<@!?([0-9]+)>', replace_user, content)
+    content = re.sub(r'<@&([0-9]+)>', replace_role, content)
+    content = re.sub(r'<#([0-9]+)>', replace_channel, content)
+    return content
+
 
 async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, int]:
     """
@@ -34,9 +60,15 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
     return stats
 
 
-async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None):
-    """Migrate messages for a specific channel."""
-    message_count = 0
+async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, Any]:
+    """Migrate messages for a specific channel and returns detailed statistics."""
+    stats = {
+        "messages": 0,
+        "attachments": 0,
+        "threads": 0,
+        "first_message_url": None,
+        "last_message_url": None
+    }
     async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
         if not context.is_running:
             break
@@ -52,7 +84,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             is_forwarded = msg.flags.forwarded
         
         # If forwarded, the content and attachments might be in message_snapshots (discord.py 2.5+)
-        content = msg.content
+        content = msg.clean_content
         if is_forwarded:
             logger.debug(f"Detected forwarded message: ID={msg.id}, Flags={msg.flags.value}")
             if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
@@ -60,6 +92,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 snapshot = msg.message_snapshots[0]
                 if not content:
                     content = snapshot.content
+                    if hasattr(msg, 'guild') and msg.guild:
+                        content = clean_mentions(content, msg.guild)
                 # Add snapshot attachments to the list to process
                 attachments_to_process.extend(snapshot.attachments)
                 logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")
@@ -68,6 +102,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             try:
                 att_data = await context.discord_reader.download_attachment(att)
                 files.append({"filename": att.filename, "data": att_data})
+                stats["attachments"] += 1
             except Exception as e:
                 logger.error(f"Failed to download attachment {att.filename}: {e}")
             
@@ -97,6 +132,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 logger.info(f"Detected thread '{thread.name}' on message {msg.id}")
                 
                 # Send Start Marker
+                stats["threads"] += 1
                 await context.fluxer_writer.send_marker(
                     channel_id=target_channel_id,
                     content=f"> <<< THREAD: **{thread.name}** >>>"
@@ -105,11 +141,14 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 # Migrate thread messages
                 # We don't pass a progress callback here to avoid confusing the UI
                 # but we do want to track count if possible.
-                await migrate_messages(
+                thread_stats = await migrate_messages(
                     context=context,
                     source_channel_id=thread.id,
                     target_channel_id=target_channel_id
                 )
+                stats["messages"] += thread_stats["messages"]
+                stats["attachments"] += thread_stats["attachments"]
+                stats["threads"] += thread_stats["threads"]
                 
                 # Send End Marker
                 await context.fluxer_writer.send_marker(
@@ -118,9 +157,17 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 )
 
             context.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
-            message_count += 1
+            context.state.update_last_message_id(str(source_channel_id), str(msg.id))
+            stats["messages"] += 1
+            
+            # Update Link Tracking (but prevent threaded messages from overwriting the parent channel pointers)
+            # The 'after_message_id' param usually means it's the main function call and not a thread recursive call
+            if not stats["first_message_url"]:
+                stats["first_message_url"] = msg.jump_url
+            stats["last_message_url"] = msg.jump_url
+            
             if progress_callback:
-                await progress_callback(message_count)
+                await progress_callback(stats["messages"])
         except Exception as e:
             logger.error(f"Failed to process message {msg.id}: {e}")
             import traceback
@@ -129,4 +176,4 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
         # Delay for rate limit safety
         await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
         
-    return message_count
+    return stats

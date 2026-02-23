@@ -22,6 +22,7 @@ class MigrationState:
         # message tracking
         self.message_map: Dict[str, str] = {}
         self.last_message_timestamps: Dict[str, str] = {}
+        self.last_message_ids: Dict[str, str] = {}
         
         self.load()
 
@@ -44,6 +45,7 @@ class MigrationState:
                 if "messages" in data or "last_message_timestamps" in data:
                     self.message_map = data.get("messages", {})
                     self.last_message_timestamps = data.get("last_message_timestamps", {})
+                    self.last_message_ids = data.get("last_message_ids", {})
                     migrated_messages = True # We found legacy data, we should write it out to messages.json later
 
             # Legacy Migration: Move role_, emoji_, sticker_ from channel_map to dedicated maps
@@ -68,6 +70,7 @@ class MigrationState:
                 msg_data = json.load(f)
                 self.message_map = msg_data.get("messages", {})
                 self.last_message_timestamps = msg_data.get("last_message_timestamps", {})
+                self.last_message_ids = msg_data.get("last_message_ids", {})
                 migrated_messages = False # No need to force a migrating save since it already exists
         
         # 3. Save if we migrated any legacy data to separate maps/files
@@ -93,6 +96,7 @@ class MigrationState:
         """Saves only the message tracking data."""
         data = {
             "last_message_timestamps": self.last_message_timestamps,
+            "last_message_ids": self.last_message_ids,
             "messages": self.message_map
         }
         with open(self.messages_file, "w", encoding="utf-8") as f:
@@ -168,6 +172,13 @@ class MigrationState:
         self.last_message_timestamps[str(channel_id)] = timestamp
         self.save_messages()
 
+    def update_last_message_id(self, channel_id: str, message_id: str):
+        self.last_message_ids[str(channel_id)] = message_id
+        self.save_messages()
+        
+    def get_last_message_id(self, channel_id: str) -> str | None:
+        return self.last_message_ids.get(str(channel_id))
+
     # --- Danger Zone Clearing ---
 
     def clear_channel_mappings(self):
@@ -191,4 +202,5 @@ class MigrationState:
         """Clears all message mappings and timestamps."""
         self.message_map.clear()
         self.last_message_timestamps.clear()
+        self.last_message_ids.clear()
         self.save_messages()
