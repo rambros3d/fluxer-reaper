@@ -37,7 +37,7 @@ async def sync_roles_state(context: MigrationContext):
         logger.info(f"Role sync: {updates} mapped, {removals} stale mappings removed")
 
 
-async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None):
+async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
     categories = await context.discord_reader.get_categories()
     channels = await context.discord_reader.get_channels()
@@ -46,11 +46,17 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
     categories = [c for c in categories if context.state.get_fluxer_category_id(str(c.id))]
     channels = [c for c in channels if context.state.get_fluxer_channel_id(str(c.id))]
 
+    synced_info = {
+        "categories_synced": [],
+        "channels_synced": [],
+        "structure": {} # category_name -> [channel_names]
+    }
+
     total = len(categories) + len(channels)
     current_idx = 0
     
     if total == 0:
-        return
+        return synced_info
 
     async def _sync_overwrites(discord_item, fluxer_id):
         """Helper to sync role overwrites for a given channel or category."""
@@ -75,6 +81,10 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
                     is_role=True
                 )
 
+    # Dictionary to map category names to their synced channels
+    # Categorize items as we sync them
+    cat_name_map = {str(cat.id): cat.name for cat in (await context.discord_reader.get_categories())}
+
     # Sync Category Permissions (Role Overwrites)
     for cat in categories:
         if not context.is_running: break
@@ -82,6 +92,9 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
         if fluxer_id:
             try:
                 await _sync_overwrites(cat, fluxer_id)
+                synced_info["categories_synced"].append(cat.name)
+                if cat.name not in synced_info["structure"]:
+                    synced_info["structure"][cat.name] = []
             except Exception as e:
                 logger.error(f"Failed syncing permissions for category {cat.name}: {e}")
         
@@ -95,24 +108,33 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
         if fluxer_id:
             try:
                 await _sync_overwrites(channel, fluxer_id)
+                synced_info["channels_synced"].append(channel.name)
+                
+                parent_name = cat_name_map.get(str(channel.category_id), "No Category") if channel.category_id else "No Category"
+                if parent_name not in synced_info["structure"]:
+                    synced_info["structure"][parent_name] = []
+                synced_info["structure"][parent_name].append(channel.name)
             except Exception as e:
                 logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, current_idx, total)
 
+    return synced_info
 
-async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False):
-    """Copies roles and their baseline permissions."""
+
+async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
+    """Copies roles and their baseline permissions. Returns a list of cloned role names."""
     roles = await context.discord_reader.get_roles()
     
     if not force:
         roles = [r for r in roles if not context.state.get_fluxer_role_id(str(r.id))]
 
     total = len(roles)
+    cloned_role_names = []
     
     if total == 0:
-        return
+        return cloned_role_names
 
     for idx, role in enumerate(roles):
         if not context.is_running: break
@@ -125,6 +147,9 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
         )
         if fluxer_id:
             context.state.set_role_mapping(str(role.id), fluxer_id)
+            cloned_role_names.append(role.name)
         
         if progress_callback: await progress_callback(role.name, idx + 1, total)
         await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
+        
+    return cloned_role_names

@@ -55,11 +55,14 @@ async def sync_assets_state(context: MigrationContext):
         logger.info(f"Asset sync: {updates} mapped, {removals} stale mappings removed")
 
 
-async def migrate_emojis(context: MigrationContext, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"], force: bool = False):
+async def migrate_emojis(context: MigrationContext, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"], force: bool = False) -> dict[str, dict[str, str]]:
     """Copies custom emojis and stickers.
     
     Args:
         force: If True, skip state cache and re-copy even if already migrated.
+        
+    Returns:
+        A dictionary containing dicts of cloned asset names to their new IDs by type: {"Emoji": {"name": "id", ...}, "Sticker": {"name": "id", ...}}
     """
     objs = []
     if "Emoji" in types_to_include:
@@ -75,9 +78,10 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
         )]
 
     total = len(objs)
+    cloned_assets: dict[str, dict[str, str]] = {"Emoji": {}, "Sticker": {}}
     
     if total == 0:
-        return
+        return cloned_assets
 
     for idx, (obj, obj_type) in enumerate(objs):
         if not context.is_running: break
@@ -91,6 +95,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
                 )
                 if fluxer_id:
                     context.state.set_emoji_mapping(str(obj.id), fluxer_id)
+                    cloned_assets["Emoji"][obj.name] = fluxer_id
             else:
                 img_data = await context.discord_reader.download_sticker(obj)
                 fluxer_id = await context.fluxer_writer.create_sticker(
@@ -99,8 +104,11 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
                 )
                 if fluxer_id:
                     context.state.set_sticker_mapping(str(obj.id), fluxer_id)
+                    cloned_assets["Sticker"][obj.name] = fluxer_id
         except Exception as e:
             logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
         
         if progress_callback: await progress_callback(obj.name, obj_type, idx + 1, total)
         await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
+        
+    return cloned_assets

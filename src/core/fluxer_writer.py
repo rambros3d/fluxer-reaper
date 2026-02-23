@@ -279,7 +279,7 @@ class FluxerWriter:
             print(err_msg)
             return None
 
-    async def send_marker(self, channel_id: str, content: str) -> Optional[str]:
+    async def send_marker(self, channel_id: str, content: str, files: list[dict] | None = None) -> Optional[str]:
         """
         Sends a simple marker message (e.g., thread start/end) using the bot directly.
         """
@@ -287,7 +287,8 @@ class FluxerWriter:
         try:
             msg_data = await self.client.send_message(
                 channel_id=channel_id,
-                content=content
+                content=content,
+                files=files
             )
             return str(msg_data["id"]) if msg_data else None
         except Exception as e:

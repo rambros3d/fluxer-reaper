@@ -415,10 +415,26 @@ class MigrationCLI:
                     progress.update(channel_task, total=total, completed=current, description=f"[{color}]{status} Channel: {item_name}")
 
                 self.engine.is_running = True
-                await migrate_channels(self.engine, progress_callback=update_progress, force=force)
+                cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=force)
                 
             console.print("[bold green]Server Template cloned![/bold green]")
-            await log_audit_event(self.engine, "Server Template Cloned", "Successfully cloned channels and categories from Discord.")
+            
+            if cloned_info and cloned_info.get("structure"):
+                lines = ["Successfully cloned channels and categories from Discord:"]
+                # Sort categories but keep "No Category" at the bottom if it exists
+                cats = sorted(cloned_info["structure"].keys(), key=lambda x: (x == "No Category", x))
+                for cat_name in cats:
+                    channel_names = cloned_info["structure"][cat_name]
+                    # Only print if the category itself was created OR it has channels created under it
+                    if cat_name in cloned_info["categories_created"] or channel_names:
+                        lines.append(f"- **{cat_name}**")
+                        for ch_name in sorted(channel_names):
+                            lines.append(f"  - {ch_name}")
+                
+                audit_desc = "\n".join(lines)
+                await log_audit_event(self.engine, "Server Template Cloned", audit_desc)
+            else:
+                await log_audit_event(self.engine, "Server Template Cloned", "No new channels or categories were cloned.")
             
         except Exception as e:
             console.print(f"[bold red]Error during channel clone: {str(e)}[/bold red]")
@@ -500,10 +516,14 @@ class MigrationCLI:
                         progress.update(role_task, total=total, completed=current, description=f"[cyan]Syncing Role: {item_name}")
     
                     self.engine.is_running = True
-                    await migrate_roles(self.engine, progress_callback=update_progress, force=force)
+                    cloned_roles = await migrate_roles(self.engine, progress_callback=update_progress, force=force)
                     
                 console.print("[bold green]Role migration complete![/bold green]")
-                await log_audit_event(self.engine, "Roles Cloned", "Successfully cloned roles and baseline role permissions from Discord.")
+                if cloned_roles:
+                    audit_desc = "Successfully cloned these roles and their baseline permissions:\n" + "\n".join(f"- {r}" for r in cloned_roles)
+                    await log_audit_event(self.engine, "Roles Cloned", audit_desc)
+                else:
+                    await log_audit_event(self.engine, "Roles Cloned", "No new roles were cloned.")
                 
             except Exception as e:
                 console.print(f"[bold red]Error during role migration: {str(e)}[/bold red]")
@@ -547,10 +567,26 @@ class MigrationCLI:
                         progress.update(perm_task, total=total, completed=current, description=f"[cyan]Syncing: {item_name}")
     
                     self.engine.is_running = True
-                    await sync_permissions(self.engine, progress_callback=update_progress)
+                    synced_info = await sync_permissions(self.engine, progress_callback=update_progress)
                     
                 console.print("[bold green]Permission synchronization complete![/bold green]")
-                await log_audit_event(self.engine, "Permissions Synced", "Successfully synchronized channel and category permission overrides.")
+                
+                if synced_info and synced_info.get("structure"):
+                    lines = ["Successfully synchronized channel and category permission overrides:"]
+                    # Sort categories but keep "No Category" at the bottom
+                    cats = sorted(synced_info["structure"].keys(), key=lambda x: (x == "No Category", x))
+                    for cat_name in cats:
+                        channel_names = synced_info["structure"][cat_name]
+                        # For permissions, we show everything that was successfully synced
+                        if cat_name in synced_info["categories_synced"] or channel_names:
+                            lines.append(f"- **{cat_name}**")
+                            for ch_name in sorted(channel_names):
+                                lines.append(f"  - {ch_name}")
+                    
+                    audit_desc = "\n".join(lines)
+                    await log_audit_event(self.engine, "Permissions Synced", audit_desc)
+                else:
+                    await log_audit_event(self.engine, "Permissions Synced", "No permissions were synchronized.")
                 
             except Exception as e:
                 console.print(f"[bold red]Error during permission sync: {str(e)}[/bold red]")
@@ -652,7 +688,7 @@ class MigrationCLI:
                     progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying {item_type}: {item_name}")
 
                 self.engine.is_running = True
-                await migrate_emojis(
+                cloned_assets = await migrate_emojis(
                     self.engine,
                     progress_callback=update_progress,
                     types_to_include=types_to_include,
@@ -660,7 +696,22 @@ class MigrationCLI:
                 )
 
             console.print("[bold green]Migration complete![/bold green]")
-            await log_audit_event(self.engine, "Emojis & Stickers Cloned", "Successfully synchronized emojis and stickers from Discord.")
+            if cloned_assets and (cloned_assets.get("Emoji") or cloned_assets.get("Sticker")):
+                lines = []
+                if cloned_assets.get("Emoji"):
+                    lines.append("Successfully cloned these emojis:")
+                    for name, e_id in cloned_assets["Emoji"].items():
+                        lines.append(f"- {name} <:{name}:{e_id}>")
+                if cloned_assets.get("Sticker"):
+                    if lines: lines.append("")
+                    lines.append("Successfully cloned these stickers:")
+                    for name, s_id in cloned_assets["Sticker"].items():
+                        lines.append(f"- {name}")
+                
+                audit_desc = "\n".join(lines)
+                await log_audit_event(self.engine, "Emojis & Stickers Cloned", audit_desc)
+            else:
+                await log_audit_event(self.engine, "Emojis & Stickers Cloned", "No new emojis or stickers were cloned.")
 
         except Exception as e:
             console.print(f"[bold red]Error during emoji migration: {str(e)}[/bold red]")
@@ -718,9 +769,36 @@ class MigrationCLI:
                 color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
                 console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
 
-            await sync_server_metadata(self.engine, progress_callback, components=components)
-            console.print("[bold green]Server metadata sync finished![/bold green]")
-            await log_audit_event(self.engine, "Server Metadata Synced", "Successfully synchronized the community icon, banner, and name.")
+            cloned_data = await sync_server_metadata(self.engine, progress_callback, components=components)
+            console.print("[bold green]Server profile sync finished![/bold green]")
+
+            audit_lines = ["Successfully synchronized Community profile:"]
+            if "name" in cloned_data:
+                audit_lines.append(f"- **Name**: {cloned_data['name']}")
+            if "icon" in cloned_data:
+                audit_lines.append(f"- **Icon**")
+            if "banner" in cloned_data:
+                audit_lines.append(f"- **Banner**")
+                
+            files = []
+            if "icon" in cloned_data:
+                icon_ext = "gif" if cloned_data["icon"].startswith(b"GIF") else "png"
+                files.append({
+                    "filename": f"icon.{icon_ext}",
+                    "data": cloned_data["icon"]
+                })
+            if "banner" in cloned_data:
+                banner_ext = "gif" if cloned_data["banner"].startswith(b"GIF") else "png"
+                files.append({
+                    "filename": f"banner.{banner_ext}",
+                    "data": cloned_data["banner"]
+                })
+                
+            audit_desc = "\n".join(audit_lines)
+            if cloned_data:
+                await log_audit_event(self.engine, "Server Profile Synced", audit_desc, files=files)
+            else:
+                await log_audit_event(self.engine, "Server Profile Synced", "No profile information was synchronized.")
         except Exception as e:
             console.print(f"[bold red]Error during metadata sync: {str(e)}[/bold red]")
         finally:
@@ -1019,17 +1097,21 @@ class MigrationCLI:
                 
             console.print(f"\n[bold green]Success! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold green]")
             
-            audit_text = (
-                f"**Message info:**\n"
-                f"first message: {result_stats['first_message_url'] or 'N/A'}\n"
-                f"last message: {result_stats['last_message_url'] or 'N/A'}\n"
-                f"**Stats:**\n"
-                f"{stats['messages']} messages\n"
-                f"{stats['attachments']} attachments\n"
-                f"{stats['threads']} threads\n"
-                f"Successfully migrated to <#{target_channel.get('id')}>\n"
-            )
-            await log_audit_event(self.engine, "Message History Migrated", audit_text)
+            lines = [f"Successfully migrated messages from Discord [cyan]#{source_channel.name}[/cyan] to [blue]#{target_channel.get('name')}[/blue]:"]
+            lines.append(f"\n**Stats:**")
+            lines.append(f"- {result_stats['messages']} messages")
+            lines.append(f"- {result_stats['attachments']} attachments")
+            lines.append(f"- {result_stats['threads']} threads")
+            
+            if result_stats.get('first_message_url') or result_stats.get('last_message_url'):
+                lines.append(f"\n**Message Info:**")
+                if result_stats.get('first_message_url'):
+                    lines.append(f"- First message: <{result_stats['first_message_url']}>")
+                if result_stats.get('last_message_url'):
+                    lines.append(f"- Last message: <{result_stats['last_message_url']}>")
+            
+            audit_desc = "\n".join(lines)
+            await log_audit_event(self.engine, "Message History Migrated", audit_desc)
 
         except Exception as e:
             console.print(f"[bold red]Migration encountered an error: {str(e)}[/bold red]")
@@ -1088,7 +1170,7 @@ class MigrationCLI:
 
                     count = await danger_delete_all_channels(self.engine, progress_callback=on_channel_deleted)
                 console.print(f"[bold green]{count} channels/categories deleted.[/bold green]")
-                await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Administrators deleted {count} channels and categories from the community.")
+                await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Deleted {count} channels and categories from the community.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1155,7 +1237,7 @@ class MigrationCLI:
 
                     count = await danger_delete_all_roles(self.engine, progress_callback=on_role_deleted)
                 console.print(f"[bold green]{count} roles deleted.[/bold green]")
-                await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Administrators deleted {count} roles from the community.")
+                await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Deleted {count} roles from the community.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1189,7 +1271,7 @@ class MigrationCLI:
                     counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_asset_deleted)
                 console.print(f"[bold green]{counts.get('emojis', 0)} emojis deleted.[/bold green]")
                 console.print(f"[bold green]{counts.get('stickers', 0)} stickers deleted.[/bold green]")
-                await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Administrators deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
+                await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")

@@ -3,14 +3,27 @@ from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
 
-async def log_audit_event(context: MigrationContext, title: str, description: str) -> None:
+async def log_audit_event(context: MigrationContext, title: str, description: str, files: list[dict] | None = None) -> None:
     """
     Logs an event by sending a summary to the `#fluxer-reaper` audit channel.
     If the channel does not exist, it will dynamically create it and hide it from @everyone.
     """
-    # 1. Initialize channel if not tracked
+    # 1. Initialize or Validate channel
+    channel_id = context.state.audit_log_channel
+    
+    if channel_id:
+        # Verify it still exists in Fluxer to avoid 404 errors
+        try:
+            fluxer_channels = await context.fluxer_writer.get_channels()
+            channel_exists = any(str(ch.get("id")) == str(channel_id) for ch in fluxer_channels)
+            if not channel_exists:
+                logger.info(f"Audit channel {channel_id} no longer exists in Fluxer. Resetting.")
+                context.state.audit_log_channel = None
+        except Exception as e:
+            logger.warning(f"Failed to verify audit channel existence: {e}")
+
     if not context.state.audit_log_channel:
-        logger.info("Audit log channel not found in state. Checking Fluxer community...")
+        logger.info("Audit log channel not found or invalid in state. Checking Fluxer community...")
         try:
             # Check if it already exists in the community but isn't in state
             channels = await context.fluxer_writer.get_channels()
@@ -52,6 +65,6 @@ async def log_audit_event(context: MigrationContext, title: str, description: st
     # 2. Format and send the message natively through FluxerBot (avoiding impersonation webhook for admin logs)
     content = f"**[{title}]**\n{description}"
     try:
-        await context.fluxer_writer.send_marker(context.state.audit_log_channel, content)
+        await context.fluxer_writer.send_marker(context.state.audit_log_channel, content, files=files)
     except Exception as e:
         logger.error(f"Failed to send audit log event: {e}")
