@@ -435,6 +435,12 @@ class FluxerWriter:
         # Delete non-category channels first, then categories
         sorted_channels = sorted(channels, key=lambda c: 0 if c.get("type") == 4 else -1)
         for ch in sorted_channels:
+            name = str(ch.get("name", "")).lower()
+            if name in ["fluxer-reaper", "fluxer_reaper"]:
+                logger.info(f"Danger Zone: Skipping deletion of audit channel {name}")
+                total -= 1
+                continue
+
             try:
                 await self.client.delete_channel(ch["id"])
                 deleted += 1
@@ -454,6 +460,12 @@ class FluxerWriter:
         total = len(channels)
         processed = 0
         for ch in channels:
+            name = str(ch.get("name", "")).lower()
+            if name in ["fluxer-reaper", "fluxer_reaper"]:
+                logger.info(f"Danger Zone: Skipping permission reset for audit channel {name}")
+                total -= 1
+                continue
+
             try:
                 # Fetch existing overwrites and delete each one
                 overwrites = ch.get("permission_overwrites", [])

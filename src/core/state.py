@@ -16,6 +16,9 @@ class MigrationState:
         self.emoji_map: Dict[str, str] = {}
         self.sticker_map: Dict[str, str] = {}
         
+        # audit log tracking
+        self.audit_log_channel: str | None = None
+        
         # message tracking
         self.message_map: Dict[str, str] = {}
         self.last_message_timestamps: Dict[str, str] = {}
@@ -35,6 +38,7 @@ class MigrationState:
                 self.role_map = data.get("roles", {})
                 self.emoji_map = data.get("emojis", {})
                 self.sticker_map = data.get("stickers", {})
+                self.audit_log_channel = data.get("audit_log_channel")
                 
                 # Check for legacy messages in state.json
                 if "messages" in data or "last_message_timestamps" in data:
@@ -79,7 +83,8 @@ class MigrationState:
             "categories": self.category_map,
             "roles": self.role_map,
             "emojis": self.emoji_map,
-            "stickers": self.sticker_map
+            "stickers": self.sticker_map,
+            "audit_log_channel": self.audit_log_channel
         }
         with open(self.state_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)

@@ -15,6 +15,7 @@ from src.core.emoji_stickers import sync_assets_state, migrate_emojis
 from src.core.server_metadata import sync_server_metadata
 from src.core.migrate_message import analyze_migration, migrate_messages
 from src.core.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
+from src.core.audit import log_audit_event
 
 class RateLimitHandler(logging.Handler):
     """Intersects library logs to print clean rate limit messages."""
@@ -417,6 +418,7 @@ class MigrationCLI:
                 await migrate_channels(self.engine, progress_callback=update_progress, force=force)
                 
             console.print("[bold green]Server Template cloned![/bold green]")
+            await log_audit_event(self.engine, "Server Template Cloned", "Successfully cloned channels and categories from Discord.")
             
         except Exception as e:
             console.print(f"[bold red]Error during channel clone: {str(e)}[/bold red]")
@@ -501,6 +503,7 @@ class MigrationCLI:
                     await migrate_roles(self.engine, progress_callback=update_progress, force=force)
                     
                 console.print("[bold green]Role migration complete![/bold green]")
+                await log_audit_event(self.engine, "Roles Cloned", "Successfully cloned roles and baseline role permissions from Discord.")
                 
             except Exception as e:
                 console.print(f"[bold red]Error during role migration: {str(e)}[/bold red]")
@@ -547,6 +550,7 @@ class MigrationCLI:
                     await sync_permissions(self.engine, progress_callback=update_progress)
                     
                 console.print("[bold green]Permission synchronization complete![/bold green]")
+                await log_audit_event(self.engine, "Permissions Synced", "Successfully synchronized channel and category permission overrides.")
                 
             except Exception as e:
                 console.print(f"[bold red]Error during permission sync: {str(e)}[/bold red]")
@@ -656,6 +660,7 @@ class MigrationCLI:
                 )
 
             console.print("[bold green]Migration complete![/bold green]")
+            await log_audit_event(self.engine, "Emojis & Stickers Cloned", "Successfully synchronized emojis and stickers from Discord.")
 
         except Exception as e:
             console.print(f"[bold red]Error during emoji migration: {str(e)}[/bold red]")
@@ -715,6 +720,7 @@ class MigrationCLI:
 
             await sync_server_metadata(self.engine, progress_callback, components=components)
             console.print("[bold green]Server metadata sync finished![/bold green]")
+            await log_audit_event(self.engine, "Server Metadata Synced", "Successfully synchronized the community icon, banner, and name.")
         except Exception as e:
             console.print(f"[bold red]Error during metadata sync: {str(e)}[/bold red]")
         finally:
@@ -962,6 +968,7 @@ class MigrationCLI:
                 )
                 
             console.print(f"\n[bold green]Success! {count} messages migrated to {target_channel.get('name')}.[/bold green]")
+            await log_audit_event(self.engine, "Message History Migrated", f"Successfully migrated {count} messages to #{target_channel.get('name')}.")
 
         except Exception as e:
             console.print(f"[bold red]Migration encountered an error: {str(e)}[/bold red]")
@@ -1020,6 +1027,7 @@ class MigrationCLI:
 
                     count = await danger_delete_all_channels(self.engine, progress_callback=on_channel_deleted)
                 console.print(f"[bold green]{count} channels/categories deleted.[/bold green]")
+                await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Administrators deleted {count} channels and categories from the community.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1052,6 +1060,7 @@ class MigrationCLI:
 
                     count = await danger_reset_channel_permissions(self.engine, progress_callback=on_perm_reset)
                 console.print(f"[bold green]Permissions reset on {count} channels/categories.[/bold green]")
+                await log_audit_event(self.engine, "Danger Zone: Permissions Wiped", f"Administrators reset permissions on {count} channels and categories.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1085,6 +1094,7 @@ class MigrationCLI:
 
                     count = await danger_delete_all_roles(self.engine, progress_callback=on_role_deleted)
                 console.print(f"[bold green]{count} roles deleted.[/bold green]")
+                await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Administrators deleted {count} roles from the community.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
@@ -1118,6 +1128,7 @@ class MigrationCLI:
                     counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_asset_deleted)
                 console.print(f"[bold green]{counts.get('emojis', 0)} emojis deleted.[/bold green]")
                 console.print(f"[bold green]{counts.get('stickers', 0)} stickers deleted.[/bold green]")
+                await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Administrators deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
                 console.print("[bold green]Done.[/bold green]")
             except Exception as e:
                 console.print(f"[bold red]Error: {e}[/bold red]")
