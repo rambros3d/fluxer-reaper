@@ -203,7 +203,7 @@ class MigrationCLI:
             
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q").upper()
+            choice = Prompt.ask("\nSelect an option [1/2/3/4/5/6/7/Q]", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q", show_choices=False).upper()
             
             if choice == "1":
                 await self.clone_server_template()
@@ -381,7 +381,7 @@ class MigrationCLI:
             console.print("[bold red](F) Force re-clone, creates duplicate channels![/bold red]")
             console.print("[bold yellow](B) Back[/bold yellow]")
             
-            choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+            choice = Prompt.ask("Select an option [Y/F/B]", choices=["Y", "y", "F", "f", "B", "b"], default="Y", show_choices=False).upper()
             
             if choice == "B":
                 await self.engine.close_connections()
@@ -430,7 +430,7 @@ class MigrationCLI:
         console.print("(2) Sync Category Permissions & Channel Permissions")
         console.print("(B) Back")
         
-        choice = Prompt.ask("Select an option", choices=["1", "2", "B", "b"], default="B").upper()
+        choice = Prompt.ask("Select an option [1/2/B]", choices=["1", "2", "B", "b"], default="B", show_choices=False).upper()
         
         if choice == "B":
             return
@@ -469,7 +469,7 @@ class MigrationCLI:
                     console.print("[bold red](F) Force Overwrite[/bold red]")
                     console.print("[bold yellow](B) Back[/bold yellow]")
                     
-                    sub_choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+                    sub_choice = Prompt.ask("Select an option [Y/F/B]", choices=["Y", "y", "F", "f", "B", "b"], default="Y", show_choices=False).upper()
                     
                     if sub_choice == "B":
                         return
@@ -524,7 +524,7 @@ class MigrationCLI:
                 console.print("[bold green](Y) Proceed with Permission synchronization[/bold green]")
                 console.print("[bold yellow](B) Back[/bold yellow]")
                 
-                sub_choice = Prompt.ask("Select an option", choices=["Y", "B"], default="Y").upper()
+                sub_choice = Prompt.ask("Select an option [Y/B]", choices=["Y", "y", "B", "b"], default="Y", show_choices=False).upper()
                 
                 if sub_choice == "B":
                     return
@@ -598,7 +598,7 @@ class MigrationCLI:
             console.print("(3) Sync Emojis and Stickers")
             console.print("(B) Back")
 
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "B", "b"], default="B").upper()
+            choice = Prompt.ask("Select an option [1/2/3/B]", choices=["1", "2", "3", "B", "b"], default="B", show_choices=False).upper()
 
             if choice == "B":
                 return
@@ -625,7 +625,7 @@ class MigrationCLI:
                 console.print("[bold red](F) Force Overwrite[/bold red]")
                 console.print("[bold yellow](B) Back[/bold yellow]")
                 
-                choice = Prompt.ask("Select an option", choices=["Y", "F", "B"], default="Y").upper()
+                choice = Prompt.ask("Select an option [Y/F/B]", choices=["Y", "y", "F", "f", "B", "b"], default="Y", show_choices=False).upper()
                 
                 if choice == "B":
                     return
@@ -692,7 +692,7 @@ class MigrationCLI:
             console.print("(4) Sync Everything")
             console.print("(B) Back")
             
-            choice = Prompt.ask("Select an option", choices=["1", "2", "3", "4", "B", "b"], default="B").upper()
+            choice = Prompt.ask("Select an option [1/2/3/4/B]", choices=["1", "2", "3", "4", "B", "b"], default="B", show_choices=False).upper()
             
             if choice == "B":
                 return
@@ -721,7 +721,7 @@ class MigrationCLI:
             await self.engine.close_connections()
 
     async def migrate_message_history(self):
-        console.print("\n[bold]Message History Migration (Manual Selection)[/bold]")
+        console.print("\n[bold]Message History Migration[/bold]")
         
         if not self.tokens_valid:
              console.print("[bold red]Error: You must have a valid configuration (Option 6) to migrate messages.[/bold red]")
@@ -837,34 +837,51 @@ class MigrationCLI:
             if first_msg:
                 # Link format: https://discord.com/channels/GUILD_ID/CHANNEL_ID/MESSAGE_ID
                 first_msg_link = f"https://discord.com/channels/{self.config.discord_server_id}/{source_channel.id}/{first_msg.id}"
-                console.print(f"\n[bold green]Channel Found![/bold green]")
-                console.print(f"Oldest Message Link: {first_msg_link}")
-                console.print(f"Author: [blue]{first_msg.author.name}[/blue]")
-                console.print(f"Content Preview: {first_msg.content[:100]}...")
+                server_name = self.validation_results.get("discord_server_name", "server")
                 
-                console.print("\n(Y) [green]Yes, start from oldest message[/green]")
-                console.print("(M) Provide Specific message link or ID")
-                console.print("(B) Back")
-                
-                start_mode = Prompt.ask("Start migration", choices=["Y", "M", "B"], default="Y").upper()
-                
-                if start_mode == "B":
-                    return
-                elif start_mode == "M":
-                    custom_link = Prompt.ask("Enter Discord Message Link")
-                    try:
-                        # Extract message ID from end of link
-                        custom_id = int(custom_link.split("/")[-1])
-                        # Check if message exists to give feedback
-                        msg = await self.engine.discord_reader.get_message(source_channel.id, custom_id)
-                        if msg:
-                            # To include this message, we start 'after' the ID before it
-                            after_id = custom_id - 1
-                            console.print(f"[green]Confirmed: Starting from {msg.author.name}'s message.[/green]")
-                        else:
-                            console.print("[red]Warning: Message ID not found in this channel. Starting from beginning.[/red]")
-                    except Exception as e:
-                        console.print(f"[red]Error parsing link: {e}. Starting from beginning.[/red]")
+                while True:
+                    console.print(f"\n[bold green]Channel Found![/bold green]")
+                    console.print(f"Oldest Message Link: {first_msg_link}")
+                    console.print(f"Author: [blue]{first_msg.author.name}[/blue]")
+                    console.print(f"Content Preview: {first_msg.content[:100]}...")
+                    
+                    console.print("\n(Y) [green]Yes, start from oldest message[/green]")
+                    console.print("(M) Provide Specific message link or ID")
+                    console.print("(B) Back")
+                    
+                    start_mode = Prompt.ask("Start migration [Y/M/B]", choices=["Y", "y", "M", "m", "B", "b"], default="Y", show_choices=False).upper()
+                    
+                    if start_mode == "B":
+                        return
+                    elif start_mode == "Y":
+                        break
+                    elif start_mode == "M":
+                        prompt_msg = "Enter Discord Message Link"
+                        valid_message_found = False
+                        while True:
+                            custom_link = Prompt.ask(prompt_msg)
+                            if str(custom_link).upper() in ["B", "BACK"]:
+                                break
+                            try:
+                                # Extract message ID from end of link
+                                custom_id = int(str(custom_link).strip().split("/")[-1])
+                                # Check if message exists to give feedback
+                                msg = await self.engine.discord_reader.get_message(source_channel.id, custom_id)
+                                if msg:
+                                    # To include this message, we start 'after' the ID before it
+                                    after_id = custom_id - 1
+                                    console.print(f"\n[green]Confirmed: Starting from {msg.author.name}'s message.[/green]")
+                                    valid_message_found = True
+                                    break
+                                else:
+                                    console.print("\n[red]Error parsing link: 404 Not Found (error code: 10008): Unknown Message.[/red]")
+                                    prompt_msg = f"[yellow]Provide a valid Message link or Message ID from \"{server_name}\" (or 'B' to go back)[/yellow]"
+                            except Exception as e:
+                                console.print(f"\n[red]Error parsing link: {e}[/red]")
+                                prompt_msg = f"[yellow]Provide a valid Message link or Message ID from \"{server_name}\" (or 'B' to go back)[/yellow]"
+                        
+                        if valid_message_found:
+                            break
             else:
                 console.print("[yellow]Source channel appears to be empty. Nothing to migrate.[/yellow]")
                 return
@@ -968,9 +985,10 @@ class MigrationCLI:
         console.print("(B) Back")
 
         choice = Prompt.ask(
-            "Select a Danger Zone option",
+            "Select a Danger Zone option [1/2/3/4/B]",
             choices=["1", "2", "3", "4", "B", "b"],
-            default="B"
+            default="B",
+            show_choices=False
         ).upper()
 
         if choice == "B":
@@ -979,7 +997,8 @@ class MigrationCLI:
         # ---- (1) Delete all Channels & Categories ----
         if choice == "1":
             console.print("")
-            console.print("[bold red]This will DELETE every channel and category in the Fluxer community.[/bold red]")
+            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE every channel and category in the Fluxer community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):
@@ -1010,7 +1029,8 @@ class MigrationCLI:
         # ---- (2) Reset Channel & Category Permissions ----
         elif choice == "2":
             console.print("")
-            console.print("[bold red]This will RESET all permission overwrites on every channel and category.[/bold red]")
+            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            console.print(f"[bold red]This will RESET all permission overwrites on every channel and category in the Fluxer community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 all custom permission overrides will be wiped. Continue?[/bold red]"):
@@ -1041,7 +1061,8 @@ class MigrationCLI:
         # ---- (3) Delete all Roles ----
         elif choice == "3":
             console.print("")
-            console.print("[bold red]This will DELETE all roles in the Fluxer community.[/bold red]")
+            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE all roles in the Fluxer community: \"{community_name}\"[/bold red]")
             console.print("[dim]Managed roles (including the bot's own role) and @everyone are automatically protected.[/dim]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
@@ -1073,7 +1094,8 @@ class MigrationCLI:
         # ---- (4) Delete all Emojis & Stickers ----
         elif choice == "4":
             console.print("")
-            console.print("[bold red]This will DELETE all custom emojis and stickers in the Fluxer community.[/bold red]")
+            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE all custom emojis and stickers in the Fluxer community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):

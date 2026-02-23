@@ -20,7 +20,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-temp.txt
+*.txt
 
 # Virtual Environment
 venv/
@@ -32,8 +32,8 @@ config.yaml
 !config.example.yaml
 
 # Logs and State
-migration.log
-state.json
+*.log
+*.json
 
 # Temporary Test Scripts
 test_*.py
