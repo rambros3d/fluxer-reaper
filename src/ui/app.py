@@ -11,7 +11,8 @@ from src.core.configuration import load_config, save_config
 from src.core.base import MigrationContext
 from src.fluxer.clone_server import sync_channel_state, migrate_channels
 from src.fluxer.roles_permissions import sync_roles_state, sync_permissions, migrate_roles
-from src.fluxer.emoji_stickers import sync_assets_state, migrate_emojis
+import src.fluxer.emoji_stickers as fluxer_emoji_stickers
+import src.stoat.emoji_stickers as stoat_emoji_stickers
 from src.fluxer.server_metadata import sync_server_metadata
 from src.fluxer.migrate_message import analyze_migration, migrate_messages
 from src.fluxer.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
@@ -368,7 +369,7 @@ class MigrationCLI:
             console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False), self.validation_results.get('stoat_bot_name'))}")
             console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False), self.validation_results.get('stoat_server_name'))}")
 
-        console.print("\n(1) Edit tokens")
+        console.print("\n(1) Edit Bot tokens & Community IDs")
         console.print("(2) Edit API url (for self hosted instances)")
         console.print("(B) Back")
         
@@ -721,11 +722,15 @@ class MigrationCLI:
 
     async def copy_emojis(self):
         console.print("\n[yellow]Fetching emojis and stickers...[/yellow]")
+        
+        # Select module based on platform
+        asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
+        
         try:
             await self.engine.start_connections()
             
-            with console.status("[yellow]Checking Fluxer for existing emojis and stickers...[/yellow]"):
-                await sync_assets_state(self.engine)
+            with console.status(f"[yellow]Checking {self.target_platform.capitalize()} for existing emojis and stickers...[/yellow]"):
+                await asset_mod.sync_assets_state(self.engine)
                 
             emojis = await self.engine.discord_reader.get_emojis()
             stickers = await self.engine.discord_reader.get_stickers()
@@ -737,14 +742,14 @@ class MigrationCLI:
 
             cached_emojis = 0
             for e in emojis:
-                already = self.engine.state.get_fluxer_emoji_id(str(e.id))
+                already = self.engine.state.get_target_emoji_id(str(e.id))
                 status = "[dim]already copied[/dim]" if already else "[bold green]NEW[/bold green]"
                 if already: cached_emojis += 1
                 table.add_row("Emoji", e.name, status)
 
             cached_stickers = 0
             for s in stickers:
-                already = self.engine.state.get_fluxer_sticker_id(str(s.id))
+                already = self.engine.state.get_target_sticker_id(str(s.id))
                 status = "[dim]already copied[/dim]" if already else "[bold green]NEW[/bold green]"
                 if already: cached_stickers += 1
                 table.add_row("Sticker", s.name, status)
@@ -779,9 +784,9 @@ class MigrationCLI:
             # Ask about force re-copy only if there are cached items in scope
             cached_in_scope = 0
             if "Emoji" in types_to_include:
-                cached_in_scope += sum(1 for e in emojis if self.engine.state.get_fluxer_emoji_id(str(e.id)))
+                cached_in_scope += sum(1 for e in emojis if self.engine.state.get_target_emoji_id(str(e.id)))
             if "Sticker" in types_to_include:
-                cached_in_scope += sum(1 for s in stickers if self.engine.state.get_fluxer_sticker_id(str(s.id)))
+                cached_in_scope += sum(1 for s in stickers if self.engine.state.get_target_sticker_id(str(s.id)))
 
             force = False
             if cached_in_scope > 0:
@@ -813,7 +818,7 @@ class MigrationCLI:
                     progress.update(emoji_task, total=total, completed=current, description=f"[cyan]Copying {item_type}: {item_name}")
 
                 self.engine.is_running = True
-                cloned_assets = await migrate_emojis(
+                cloned_assets = await asset_mod.migrate_emojis(
                     self.engine,
                     progress_callback=update_progress,
                     types_to_include=types_to_include,
@@ -1245,11 +1250,11 @@ class MigrationCLI:
             await self.engine.close_connections()
 
     async def danger_zone(self):
-        """Danger Zone – irreversible destructive operations on the Fluxer community."""
+        """Danger Zone – irreversible destructive operations on the target community."""
         console.print("")
         console.print(Panel.fit(
             "[bold red]\u26a0  DANGER ZONE \u26a0[/bold red]\n"
-            "[yellow]These actions are PERMANENT and IRREVERSIBLE on your Fluxer community.[/yellow]\n"
+            f"[yellow]These actions are PERMANENT and IRREVERSIBLE on your {self.target_platform.capitalize()} community.[/yellow]\n"
             "[yellow]Always double-check before confirming.[/yellow]",
             style="bold red"
         ))
@@ -1272,8 +1277,8 @@ class MigrationCLI:
         # ---- (1) Delete all Channels & Categories ----
         if choice == "1":
             console.print("")
-            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
-            console.print(f"[bold red]This will DELETE every channel and category in the Fluxer community: \"{community_name}\"[/bold red]")
+            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE every channel and category in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):
@@ -1305,8 +1310,8 @@ class MigrationCLI:
         # ---- (2) Reset Channel & Category Permissions ----
         elif choice == "2":
             console.print("")
-            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
-            console.print(f"[bold red]This will RESET all permission overwrites on every channel and category in the Fluxer community: \"{community_name}\"[/bold red]")
+            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            console.print(f"[bold red]This will RESET all permission overwrites on every channel and category in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 all custom permission overrides will be wiped. Continue?[/bold red]"):
@@ -1338,8 +1343,8 @@ class MigrationCLI:
         # ---- (3) Delete all Roles ----
         elif choice == "3":
             console.print("")
-            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
-            console.print(f"[bold red]This will DELETE all roles in the Fluxer community: \"{community_name}\"[/bold red]")
+            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE all roles in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             console.print("[dim]Managed roles (including the bot's own role) and @everyone are automatically protected.[/dim]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
@@ -1372,8 +1377,8 @@ class MigrationCLI:
         # ---- (4) Delete all Emojis & Stickers ----
         elif choice == "4":
             console.print("")
-            community_name = self.validation_results.get("fluxer_community_name", "Unknown")
-            console.print(f"[bold red]This will DELETE all custom emojis and stickers in the Fluxer community: \"{community_name}\"[/bold red]")
+            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            console.print(f"[bold red]This will DELETE all custom emojis and stickers in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
             if not Confirm.ask("[bold red]Last chance \u2013 this cannot be undone. Continue?[/bold red]"):

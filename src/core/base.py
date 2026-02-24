@@ -15,7 +15,10 @@ class MigrationContext:
     def __init__(self, config: AppConfig, target_platform: str = "fluxer"):
         self.config = config
         self.target_platform = target_platform
-        self.state = MigrationState()
+        self.state = MigrationState(
+            state_file=f"{target_platform}.state.json",
+            messages_file=f"{target_platform}.messages.json"
+        )
         
         self.discord_reader = DiscordReader(
             token=config.discord_bot_token,

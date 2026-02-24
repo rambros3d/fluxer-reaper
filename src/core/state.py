@@ -159,6 +159,44 @@ class MigrationState:
         self.sticker_map.pop(str(discord_id), None)
         self.save_state()
 
+    # --- Generic Aliases for target platform migration ---
+    
+    get_target_channel_id = get_fluxer_channel_id
+    set_channel_mapping = set_channel_mapping # already generic enough in name if we ignore the 'fluxer' in implementation
+    
+    def set_target_channel_mapping(self, discord_id: str, target_id: str):
+        self.set_channel_mapping(discord_id, target_id)
+
+    def get_target_category_id(self, discord_id: str) -> str | None:
+        return self.get_fluxer_category_id(discord_id)
+
+    def set_target_category_mapping(self, discord_id: str, target_id: str):
+        self.set_category_mapping(discord_id, target_id)
+
+    def get_target_role_id(self, discord_id: str) -> str | None:
+        return self.get_fluxer_role_id(discord_id)
+
+    def set_target_role_mapping(self, discord_id: str, target_id: str):
+        self.set_role_mapping(discord_id, target_id)
+
+    def get_target_emoji_id(self, discord_id: str) -> str | None:
+        return self.get_fluxer_emoji_id(discord_id)
+
+    def set_target_emoji_mapping(self, discord_id: str, target_id: str):
+        self.set_emoji_mapping(discord_id, target_id)
+
+    def get_target_sticker_id(self, discord_id: str) -> str | None:
+        return self.get_fluxer_sticker_id(discord_id)
+
+    def set_target_sticker_mapping(self, discord_id: str, target_id: str):
+        self.set_sticker_mapping(discord_id, target_id)
+        
+    def get_target_message_id(self, discord_id: str) -> str | None:
+        return self.get_fluxer_message_id(discord_id)
+
+    def set_target_message_mapping(self, discord_id: str, target_id: str):
+        self.set_message_mapping(discord_id, target_id)
+
     # --- Message Management ---
 
     def set_message_mapping(self, discord_id: str, fluxer_id: str):

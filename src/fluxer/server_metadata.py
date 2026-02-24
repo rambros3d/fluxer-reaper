@@ -14,7 +14,7 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
     if "name" in components:
         try:
             name = metadata.get("name")
-            await context.fluxer_writer.update_guild_metadata(name=name)
+            await context.writer.update_guild_metadata(name=name)
             cloned_data["name"] = name
             await progress_callback("Server Name", "DONE")
         except Exception:
@@ -28,7 +28,7 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
                 icon_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.icon)
             
             if icon_bytes:
-                await context.fluxer_writer.update_guild_metadata(icon=icon_bytes)
+                await context.writer.update_guild_metadata(icon=icon_bytes)
                 cloned_data["icon"] = icon_bytes
                 await progress_callback("Server Icon", "DONE")
             else:
@@ -44,7 +44,7 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
                 banner_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.banner)
             
             if banner_bytes:
-                await context.fluxer_writer.update_guild_metadata(banner=banner_bytes)
+                await context.writer.update_guild_metadata(banner=banner_bytes)
                 cloned_data["banner"] = banner_bytes
                 await progress_callback("Server Banner", "DONE")
             else:

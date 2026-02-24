@@ -11,6 +11,14 @@ class StoatWriter:
 
     async def start(self):
         self.client = stoat.Client(token=self.token, bot=True)
+        # We don't fetch the server here to avoid slowing down startup if not needed
+        # but we might want a helper to get it
+        self._server = None
+
+    async def _get_server(self):
+        if not self._server:
+            self._server = await self.client.fetch_server(self.community_id)
+        return self._server
 
     async def validate(self) -> dict:
         results = {
@@ -103,14 +111,28 @@ class StoatWriter:
     async def create_role(self, **kwargs) -> str:
         return "dummy_stoat_role_id"
 
-    async def create_emoji(self, **kwargs) -> str:
-        return "dummy_stoat_emoji_id"
+    async def create_emoji(self, name: str, image_bytes: bytes, **kwargs) -> str:
+        server = await self._get_server()
+        try:
+            emoji = await server.create_server_emoji(name=name, image=image_bytes)
+            return str(emoji.id)
+        except Exception as e:
+            logger.error(f"Failed to create Stoat emoji {name}: {e}")
+            return ""
 
     async def create_sticker(self, **kwargs) -> str:
         return "dummy_stoat_sticker_id"
 
-    async def update_guild_metadata(self, **kwargs) -> None:
-        pass
+    async def update_guild_metadata(self, name: Optional[str] = None, icon: Optional[bytes] = None, banner: Optional[bytes] = None, **kwargs) -> None:
+        server = await self._get_server()
+        try:
+            await server.edit(
+                name=name if name is not None else stoat.UNDEFINED,
+                icon=icon if icon is not None else stoat.UNDEFINED,
+                banner=banner if banner is not None else stoat.UNDEFINED
+            )
+        except Exception as e:
+            logger.error(f"Failed to update Stoat guild metadata: {e}")
 
     async def remove_community_logo_and_banner(self) -> dict:
         return {"icon": "SKIP", "banner": "SKIP"}
@@ -125,7 +147,17 @@ class StoatWriter:
         return 0
 
     async def delete_all_emojis_and_stickers(self, **kwargs) -> dict:
-        return {"emojis": 0, "stickers": 0}
+        server = await self._get_server()
+        emojis = await server.fetch_emojis()
+        count = 0
+        for emoji in emojis:
+            try:
+                await emoji.delete()
+                count += 1
+            except Exception as e:
+                logger.error(f"Failed to delete Stoat emoji {emoji.name}: {e}")
+        
+        return {"emojis": count, "stickers": 0}
 
     async def close(self):
         pass
