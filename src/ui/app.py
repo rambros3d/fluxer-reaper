@@ -10,10 +10,12 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from src.core.configuration import load_config, save_config
 from src.core.base import MigrationContext
 from src.fluxer.clone_server import sync_channel_state, migrate_channels
-from src.fluxer.roles_permissions import sync_roles_state, sync_permissions, migrate_roles
+import src.fluxer.roles_permissions as fluxer_roles
+import src.stoat.roles_permissions as stoat_roles
 import src.fluxer.emoji_stickers as fluxer_emoji_stickers
 import src.stoat.emoji_stickers as stoat_emoji_stickers
-from src.fluxer.server_metadata import sync_server_metadata
+import src.fluxer.server_metadata as fluxer_metadata
+import src.stoat.server_metadata as stoat_metadata
 from src.fluxer.migrate_message import analyze_migration, migrate_messages
 from src.fluxer.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
 from src.core.audit import log_audit_event
@@ -574,6 +576,9 @@ class MigrationCLI:
         console.print("(2) Sync Category Permissions & Channel Permissions")
         console.print("(B) Back")
         
+        # Select appropriate role module
+        roles_mod = fluxer_roles if self.engine.target_platform == "fluxer" else stoat_roles
+
         choice = Prompt.ask("Select an option [1/2/B]", choices=["1", "2", "B", "b"], default="B", show_choices=False).upper()
         
         if choice == "B":
@@ -583,26 +588,26 @@ class MigrationCLI:
             try:
                 await self.engine.start_connections()
                 
-                with console.status("[yellow]Checking Fluxer for existing roles...[/yellow]"):
-                    await sync_roles_state(self.engine)
+                with console.status(f"[yellow]Checking {self.engine.target_platform.capitalize()} for existing roles...[/yellow]"):
+                    await roles_mod.sync_roles_state(self.engine)
                 
                 roles = await self.engine.discord_reader.get_roles()
                 
                 table = Table(show_header=True, header_style="bold #4641D9")
                 table.add_column("Discord Role")
                 table.add_column("Status", justify="center")
-                table.add_column("Fluxer ID", justify="right")
+                table.add_column(f"{self.engine.target_platform.capitalize()} ID", justify="right")
 
                 cached_count = 0
                 for r in roles:
-                    fluxer_id = self.engine.state.get_fluxer_role_id(str(r.id))
+                    target_id = self.engine.state.get_target_role_id(str(r.id))
                     status = "[bold green]NEW[/bold green]"
-                    fid_str = "[dim]N/A[/dim]"
-                    if fluxer_id:
+                    tid_str = "[dim]N/A[/dim]"
+                    if target_id:
                         status = "[dim]already copied[/dim]"
-                        fid_str = f"[cyan]{fluxer_id}[/cyan]"
+                        tid_str = f"[cyan]{target_id}[/cyan]"
                         cached_count += 1
-                    table.add_row(r.name, status, fid_str)
+                    table.add_row(r.name, status, tid_str)
                 
                 console.print(table)
 
@@ -642,7 +647,7 @@ class MigrationCLI:
                         progress.update(role_task, total=total, completed=current, description=f"[cyan]Syncing Role: {item_name}")
     
                     self.engine.is_running = True
-                    cloned_roles = await migrate_roles(self.engine, progress_callback=update_progress, force=force)
+                    cloned_roles = await roles_mod.migrate_roles(self.engine, progress_callback=update_progress, force=force)
                     
                 console.print("[bold green]Role migration complete![/bold green]")
                 if cloned_roles:
@@ -665,8 +670,8 @@ class MigrationCLI:
                     categories = await self.engine.discord_reader.get_categories()
                     channels = await self.engine.discord_reader.get_channels()
                 
-                mapped_cats = sum(1 for c in categories if self.engine.state.get_fluxer_category_id(str(c.id)))
-                mapped_chs = sum(1 for c in channels if self.engine.state.get_fluxer_channel_id(str(c.id)))
+                mapped_cats = sum(1 for c in categories if self.engine.state.get_target_category_id(str(c.id)))
+                mapped_chs = sum(1 for c in channels if self.engine.state.get_target_channel_id(str(c.id)))
                 total_mapped = mapped_cats + mapped_chs
                 
                 console.print(f"\n[yellow]Ready to sync permissions for {total_mapped} items ({mapped_cats} categories, {mapped_chs} channels).[/yellow]")
@@ -693,7 +698,7 @@ class MigrationCLI:
                         progress.update(perm_task, total=total, completed=current, description=f"[cyan]Syncing: {item_name}")
     
                     self.engine.is_running = True
-                    synced_info = await sync_permissions(self.engine, progress_callback=update_progress)
+                    synced_info = await roles_mod.sync_permissions(self.engine, progress_callback=update_progress)
                     
                 console.print("[bold green]Permission synchronization complete![/bold green]")
                 
@@ -899,7 +904,10 @@ class MigrationCLI:
                 color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
                 console.print(f"{item} [[bold {color}]{status}[/bold {color}]]")
 
-            cloned_data = await sync_server_metadata(self.engine, progress_callback, components=components)
+            # Select appropriate metadata module
+            metadata_mod = fluxer_metadata if self.engine.target_platform == "fluxer" else stoat_metadata
+
+            cloned_data = await metadata_mod.sync_server_metadata(self.engine, progress_callback, components=components)
             console.print("[bold green]Server profile sync finished![/bold green]")
 
             audit_lines = ["Successfully synchronized Community profile:"]

@@ -1,0 +1,157 @@
+import asyncio
+import logging
+from typing import Callable, Awaitable
+
+from src.core.base import MigrationContext
+
+logger = logging.getLogger(__name__)
+
+async def sync_roles_state(context: MigrationContext):
+    """
+    Scans Stoat for roles matching Discord names and updates stoat.state.json mappings.
+    """
+    discord_roles = await context.discord_reader.get_roles()
+    server = await context.stoat_writer._get_server()
+    stoat_roles = list(server.roles.values())
+    
+    # Build name -> id maps and ID sets for Stoat for fast lookup
+    stoat_role_map = {r.name: str(r.id) for r in stoat_roles if r.name}
+    stoat_role_ids = {str(r.id) for r in stoat_roles}
+    
+    updates = 0
+    removals = 0
+    
+    # Verify and Sync Roles
+    for role in discord_roles:
+        discord_id = str(role.id)
+        stoat_id = context.state.get_target_role_id(discord_id)
+        
+        if stoat_id:
+            if stoat_id not in stoat_role_ids:
+                context.state.remove_role_mapping(discord_id)
+                removals += 1
+        elif role.name in stoat_role_map:
+            context.state.set_role_mapping(discord_id, stoat_role_map[role.name])
+            updates += 1
+            
+    if updates > 0 or removals > 0:
+        logger.info(f"Role sync: {updates} mapped, {removals} stale mappings removed")
+
+
+async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
+    """Syncs category and channel role overrides/permissions."""
+    categories = await context.discord_reader.get_categories()
+    channels = await context.discord_reader.get_channels()
+    
+    # Only sync for items that are already mapped
+    categories = [c for c in categories if context.state.get_target_category_id(str(c.id))]
+    channels = [c for c in channels if context.state.get_target_channel_id(str(c.id))]
+
+    synced_info = {
+        "categories_synced": [],
+        "channels_synced": [],
+        "structure": {} # category_name -> [channel_names]
+    }
+
+    total = len(categories) + len(channels)
+    current_idx = 0
+    
+    if total == 0:
+        return synced_info
+
+    async def _sync_overwrites(discord_item, stoat_id):
+        """Helper to sync role overwrites for a given channel or category."""
+        for target, overwrite in discord_item.overwrites.items():
+            if type(target).__name__ == "Role":
+                discord_role_id = str(target.id)
+                # Handle @everyone role special case
+                if discord_role_id == str(context.config.discord_server_id):
+                    # In Stoat, @everyone is usually the community ID
+                    stoat_role_id = str(context.stoat_writer.community_id)
+                    is_role = False # Use set_default_permissions logic
+                else:
+                    stoat_role_id = context.state.get_target_role_id(discord_role_id)
+                    is_role = True
+                
+                if not stoat_role_id:
+                    continue
+                    
+                allow_val, deny_val = overwrite.pair()
+                await context.stoat_writer.set_channel_permission(
+                    channel_id=stoat_id,
+                    overwrite_id=stoat_role_id,
+                    allow=allow_val.value,
+                    deny=deny_val.value,
+                    is_role=is_role
+                )
+
+    # Dictionary to map category names to their synced channels
+    cat_name_map = {str(cat.id): cat.name for cat in (await context.discord_reader.get_categories())}
+
+    # Sync Category Permissions (Role Overwrites)
+    for cat in categories:
+        if not context.is_running: break
+        stoat_id = context.state.get_target_category_id(str(cat.id))
+        if stoat_id:
+            try:
+                await _sync_overwrites(cat, stoat_id)
+                synced_info["categories_synced"].append(cat.name)
+                if cat.name not in synced_info["structure"]:
+                    synced_info["structure"][cat.name] = []
+            except Exception as e:
+                logger.error(f"Failed syncing permissions for category {cat.name}: {e}")
+        
+        current_idx += 1
+        if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
+
+    # Sync Channel Permissions
+    for channel in channels:
+        if not context.is_running: break
+        stoat_id = context.state.get_target_channel_id(str(channel.id))
+        if stoat_id:
+            try:
+                await _sync_overwrites(channel, stoat_id)
+                synced_info["channels_synced"].append(channel.name)
+                
+                parent_name = cat_name_map.get(str(channel.category_id), "No Category") if channel.category_id else "No Category"
+                if parent_name not in synced_info["structure"]:
+                    synced_info["structure"][parent_name] = []
+                synced_info["structure"][parent_name].append(channel.name)
+            except Exception as e:
+                logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
+        
+        current_idx += 1
+        if progress_callback: await progress_callback(channel.name, current_idx, total)
+
+    return synced_info
+
+
+async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
+    """Copies roles and their baseline permissions. Returns a list of cloned role names."""
+    roles = await context.discord_reader.get_roles()
+    
+    if not force:
+        roles = [r for r in roles if not context.state.get_target_role_id(str(r.id))]
+
+    total = len(roles)
+    cloned_role_names = []
+    
+    if total == 0:
+        return cloned_role_names
+
+    for idx, role in enumerate(roles):
+        if not context.is_running: break
+            
+        stoat_id = await context.stoat_writer.create_role(
+            name=role.name,
+            color=role.color.value,
+            hoist=role.hoist
+        )
+        if stoat_id:
+            context.state.set_role_mapping(str(role.id), stoat_id)
+            cloned_role_names.append(role.name)
+        
+        if progress_callback: await progress_callback(role.name, idx + 1, total)
+        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
+        
+    return cloned_role_names
