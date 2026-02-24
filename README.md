@@ -2,7 +2,7 @@
 
 Fluxer Reaper is a simple tool to help you move an entire Discord server over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
 
-![Fluxer Reaper](fluxer-reaper.jpg)
+![Fluxer Reaper](images/fluxer-reaper.jpg)
 
 
 ## Features
@@ -94,13 +94,22 @@ Finally open the **Install link** and add the bot to your Discord server
 
 ## Getting Started
 
-### 1. Download
-Download the latest executable from the [Releases](https://github.com/rambros3d/fluxer-reaper/releases) page & unzip it.
+### Option 1: Using Pre-built Binaries (Easiest)
+1. **Download**: Download the latest executable from the [Releases](https://github.com/rambros3d/fluxer-reaper/releases) page & unzip it.
+2. **Run**: Simply run the downloaded file to start the tool. No Python installation is required.
+   - **Linux**: Run the **fluxer-reaper** file (or `./fluxer-reaper` in terminal).
+   - **Windows**: Run the **fluxer-reaper.exe** file.
 
-### 2. Run
-Simply run the downloaded file to start the tool. No Python installation is required.
-- **linux**: run the **fluxer-reaper** file (bash **./fluxer-reaper** if terminal doesnt open automatically)
-- **windows**: run the **fluxer-reaper.exe** file
+### Option 2: Running from Source
+1. **Clone**: Clone the repository to your local machine:
+   ```bash
+   git clone https://github.com/rambros3d/fluxer-reaper.git
+   cd fluxer-reaper
+   ```
+2. **Launch**: Run the appropriate launcher script for your OS. It will automatically create a virtual environment and install dependencies:
+   - **Linux**: `./launch-reaper-LINUX.sh`
+   - **MacOS**: `./launch-reaper-MAC.sh`
+   - **Windows**: Double-click `launch-reaper-WIN.bat`
 
 
 ### Documentation
