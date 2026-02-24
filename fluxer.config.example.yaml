@@ -1,0 +1,9 @@
+discord_bot_token: DISCORD_BOT_TOKEN # Token used to connect the Discord Bot
+discord_server_id: 'DISCORD_SERVER_ID' # ID of the source Discord Server
+fluxer_bot_token: FLUXER_BOT_TOKEN # Token used to connect the Fluxer Bot
+fluxer_community_id: 'FLUXER_COMMUNITY_ID' # ID of the target Fluxer Community
+fluxer_api_url: 'default' # URL of the Fluxer API (default is https://api.fluxer.app)
+migration:
+  batch_size: 50
+  rate_limit_delay_seconds: 2
+  log_level: INFO

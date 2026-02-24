@@ -8,8 +8,8 @@ logger = logging.getLogger(__name__)
 
 async def sync_channel_state(context: MigrationContext):
     """
-    Scans Fluxer for channels matching Discord names and updates state.json mappings.
-    This prevents duplicate creation when the state.json is empty but channels exist in Fluxer.
+    Scans Fluxer for channels matching Discord names and updates fluxer.state.json mappings.
+    This prevents duplicate creation when the fluxer.state.json is empty but channels exist in Fluxer.
     """
     categories = await context.discord_reader.get_categories()
     channels = await context.discord_reader.get_channels()

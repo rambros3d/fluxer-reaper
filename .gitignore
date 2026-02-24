@@ -27,9 +27,11 @@ venv/
 ENV/
 
 # Configuration and Secrets
-config.test.yaml
-config.yaml
-!config.example.yaml
+configs/
+!fluxer.config.example.yaml
+!stoat.config.example.yaml
+fluxer.config.yaml
+stoat.config.yaml
 
 # Logs and State
 *.log

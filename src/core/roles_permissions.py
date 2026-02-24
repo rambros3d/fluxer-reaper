@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def sync_roles_state(context: MigrationContext):
     """
-    Scans Fluxer for roles matching Discord names and updates state.json mappings.
+    Scans Fluxer for roles matching Discord names and updates fluxer.state.json mappings.
     """
     discord_roles = await context.discord_reader.get_roles()
     fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_community_id)

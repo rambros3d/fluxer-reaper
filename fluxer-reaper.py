@@ -12,7 +12,7 @@ def setup_logging():
     except Exception:
         level = logging.INFO
         
-    handlers = [logging.FileHandler('migration.log', mode='a')]
+    handlers = [logging.FileHandler('fluxer.migration.log', mode='a')]
     if level == logging.DEBUG:
         handlers.append(logging.StreamHandler(sys.stdout))
 

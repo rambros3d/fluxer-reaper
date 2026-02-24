@@ -1,8 +1,0 @@
-discord_bot_token: DISCORD_BOT_TOKEN
-fluxer_bot_token: FLUXER_BOT_TOKEN
-discord_server_id: 'DISCORD_SERVER_ID'
-fluxer_community_id: 'FLUXER_COMMUNITY_ID'
-migration:
-  batch_size: 50
-  rate_limit_delay_seconds: 2
-  log_level: INFO

@@ -268,7 +268,17 @@ class MigrationCLI:
         console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False), self.validation_results.get('discord_server_name'))}")
         console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False), self.validation_results.get('fluxer_community_name'))}")
 
-        if not Confirm.ask("\nEdit now?"):
+        console.print("\n(1) Edit tokens")
+        console.print("(2) Edit API url (for self hosted instances)")
+        console.print("(B) Back")
+        
+        menu_choice = Prompt.ask("\nSelect an option [1/2/B]", choices=["1", "2", "B", "b"], default="B", show_choices=False).upper()
+        
+        if menu_choice == "B":
+            return
+            
+        if menu_choice == "2":
+            console.print("[yellow]Not implemented yet.[/yellow]")
             return
             
         console.print("\n[bold]Configuration Editor[/bold] (leave blank to keep current)")
@@ -302,7 +312,7 @@ class MigrationCLI:
             console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
             console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
             
-            console.print("[bold green]Configuration updated and saved to config.yaml![/bold green]")
+            console.print("[bold green]Configuration updated and saved to fluxer.config.yaml![/bold green]")
         else:
             console.print("[yellow]No changes made.[/yellow]")
 
@@ -375,7 +385,7 @@ class MigrationCLI:
         
         force = False
         if cached_count > 0:
-            console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in state.json cache.[/yellow]")
+            console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in fluxer.state.json cache.[/yellow]")
             # End of table consolidated section, back to standard flow logic.
 
             console.print("[bold green](Y) Continue with only missing items[/bold green]")
