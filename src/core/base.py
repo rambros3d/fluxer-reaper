@@ -4,7 +4,7 @@ from typing import Dict, Any
 from src.core.configuration import AppConfig
 from src.core.state import MigrationState
 from src.core.discord_reader import DiscordReader
-from src.core.fluxer_writer import FluxerWriter
+from src.fluxer.writer import FluxerWriter
 
 logger = logging.getLogger(__name__)
 

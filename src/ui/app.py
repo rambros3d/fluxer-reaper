@@ -9,12 +9,12 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from src.core.configuration import load_config, save_config
 from src.core.base import MigrationContext
-from src.core.clone_server import sync_channel_state, migrate_channels
-from src.core.roles_permissions import sync_roles_state, sync_permissions, migrate_roles
-from src.core.emoji_stickers import sync_assets_state, migrate_emojis
-from src.core.server_metadata import sync_server_metadata
-from src.core.migrate_message import analyze_migration, migrate_messages
-from src.core.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
+from src.fluxer.clone_server import sync_channel_state, migrate_channels
+from src.fluxer.roles_permissions import sync_roles_state, sync_permissions, migrate_roles
+from src.fluxer.emoji_stickers import sync_assets_state, migrate_emojis
+from src.fluxer.server_metadata import sync_server_metadata
+from src.fluxer.migrate_message import analyze_migration, migrate_messages
+from src.fluxer.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
 from src.core.audit import log_audit_event
 
 class RateLimitHandler(logging.Handler):

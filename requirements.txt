@@ -1,4 +1,5 @@
 git+https://github.com/rambros3d/fluxer.py.git # API wrapper for Fluxer
+git+https://github.com/MCausc78/stoat.py # API wrapper for Stoat
 discord.py # API wrapper for Discord
 rich # Terminal formatting and rich text
 PyYAML # YAML parsing and serialization
