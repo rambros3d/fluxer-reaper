@@ -16,7 +16,8 @@ import src.fluxer.emoji_stickers as fluxer_emoji_stickers
 import src.stoat.emoji_stickers as stoat_emoji_stickers
 import src.fluxer.server_metadata as fluxer_metadata
 import src.stoat.server_metadata as stoat_metadata
-from src.fluxer.migrate_message import analyze_migration, migrate_messages
+import src.fluxer.migrate_message as fluxer_migrate
+import src.stoat.migrate_message as stoat_migrate
 
 from src.core.audit import log_audit_event
 
@@ -295,6 +296,9 @@ class MigrationCLI:
             
             choice = Prompt.ask("\nSelect an option [1/2/3/4/5/6/7/Q]", choices=["1", "2", "3", "4", "5", "6", "7", "Q", "q"], default="Q", show_choices=False).upper()
             
+            if choice in ("1", "2", "3", "4", "5", "7") and self.tokens_valid and not self.permissions_complete:
+                console.print("[bold red]Warning:[/bold red][bold yellow] Permission Missing - Check[/bold yellow] [bold blue](6) Configuration[/bold blue] [bold yellow]for more info[/bold yellow]")
+
             if choice == "1":
                 await self.clone_server_template()
             elif choice == "2":
@@ -347,7 +351,9 @@ class MigrationCLI:
             perm_table.add_row(
                 "[bold #FF8C00]Stoat Bot[/bold #FF8C00]", 
                 f"• [bold]Permissions:[/bold] {fmt('Manage Channel', s_perms.get('manage_channels'))}, {fmt('Manage Server', s_perms.get('manage_server'))},\n"
-                f"  {fmt('Manage Permissions', s_perms.get('manage_permissions'))}, {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Customization', s_perms.get('manage_customization'))}"
+                f"  {fmt('Manage Permissions', s_perms.get('manage_permissions'))}, {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Customization', s_perms.get('manage_customization'))},\n"
+                f"  {fmt('Manage Messages', s_perms.get('manage_messages'))}, {fmt('Send Messages', s_perms.get('send_messages'))}, {fmt('Masquerade', s_perms.get('masquerade'))},\n"
+                f"  {fmt('Upload Files', s_perms.get('upload_files'))}, {fmt('React', s_perms.get('react'))}, {fmt('Mention Everyone', s_perms.get('mention_everyone'))}, {fmt('Mention Roles', s_perms.get('mention_roles'))}"
             )
         
         console.print("\n") # Add spacing before panel
@@ -680,7 +686,7 @@ class MigrationCLI:
                 total_mapped = mapped_cats + mapped_chs
                 
                 console.print(f"\n[yellow]Ready to sync permissions for {total_mapped} items ({mapped_cats} categories, {mapped_chs} channels).[/yellow]")
-                console.print("[bold green](Y) Proceed with Permission synchronization[/bold green]")
+                console.print("[bold green](Y) Proceed with Permission sync[/bold green]")
                 console.print("[bold yellow](B) Back[/bold yellow]")
                 
                 sub_choice = Prompt.ask("Select an option [Y/B]", choices=["Y", "y", "B", "b"], default="Y", show_choices=False).upper()
@@ -978,11 +984,15 @@ class MigrationCLI:
             
             source_channel = d_channels[int(d_choice) - 1]
 
-            # 2. Select Target Fluxer Channel
-            with console.status("[yellow]Fetching Fluxer channels...[/yellow]"):
+            # Select appropriate migration module
+            migrate_mod = fluxer_migrate if self.engine.target_platform == "fluxer" else stoat_migrate
+            platform_name = self.engine.target_platform.capitalize()
+
+            # 2. Select Target Channel
+            with console.status(f"[yellow]Fetching {platform_name} channels...[/yellow]"):
                 f_channels = await self.engine.writer.get_channels()
             if not f_channels:
-                console.print("[yellow]No channels found in Fluxer community.[/yellow]")
+                console.print(f"[yellow]No channels found in {platform_name} community.[/yellow]")
                 return
 
             # Determine recommended channel
@@ -996,7 +1006,7 @@ class MigrationCLI:
             if not recommended_channel:
                 recommended_channel = next((c for c in f_channels if c.get('name') == source_channel.name), None)
                 
-            console.print("\n[bold]Select Target Fluxer Channel:[/bold]")
+            console.print(f"\n[bold]Select Target {platform_name} Channel:[/bold]")
             
             for i, ch in enumerate(f_channels):
                 console.print(f"({i+1}) {ch.get('name', 'Unnamed Channel')}")
@@ -1015,7 +1025,7 @@ class MigrationCLI:
             if recommended_channel:
                 prompt_parts.append("Y")
             
-            prompt_msg = f"Select Fluxer Channel [[bold cyan]{'/'.join(prompt_parts)}[/bold cyan]]"
+            prompt_msg = f"Select {platform_name} Channel [[bold cyan]{'/'.join(prompt_parts)}[/bold cyan]]"
             
             f_choice = Prompt.ask(prompt_msg, choices=f_choices, show_choices=False, default="Y" if recommended_channel else None).upper()
             
@@ -1028,7 +1038,7 @@ class MigrationCLI:
                 # Check if a channel with this name already exists
                 target_channel = next((c for c in f_channels if c.get('name') == source_channel.name), None)
                 if not target_channel:
-                    with console.status(f"[yellow]Creating Fluxer channel #{source_channel.name}...[/yellow]"):
+                    with console.status(f"[yellow]Creating {platform_name} channel #{source_channel.name}...[/yellow]"):
                         parent_id = None
                         if source_channel.category_id:
                             parent_id = self.engine.state.get_fluxer_category_id(str(source_channel.category_id))
@@ -1175,7 +1185,7 @@ class MigrationCLI:
                     async def update_scan_progress(count: int):
                         progress.update(task, description=f"[cyan]Scanned {count} items...")
                     
-                    stats = await analyze_migration(
+                    stats = await migrate_mod.analyze_migration(
                         self.engine,
                         source_channel_id=source_channel.id,
                         after_message_id=after_id,
@@ -1209,7 +1219,7 @@ class MigrationCLI:
             console.print("")
             console.print(table)
 
-            if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to Fluxer [#4641D9]#{target_channel.get('name')}[/#4641D9]?"):
+            if not Confirm.ask(f"\nMigrate messages from Discord [cyan]#{source_channel.name}[/cyan] to {platform_name} [#4641D9]#{target_channel.get('name')}[/#4641D9]?"):
                 return
             
             # 5. Migration Execution
@@ -1230,7 +1240,7 @@ class MigrationCLI:
                 async def update_msg_progress(count: int):
                     progress.update(task, completed=count, description=f"[cyan]Migrated {count}/{total_messages} messages...")
 
-                result_stats = await migrate_messages(
+                result_stats = await migrate_mod.migrate_messages(
                     self.engine,
                     source_channel_id=source_channel.id,
                     target_channel_id=target_channel.get("id"),
@@ -1257,7 +1267,16 @@ class MigrationCLI:
             await log_audit_event(self.engine, "Message History Migrated", audit_desc)
 
         except Exception as e:
-            console.print(f"[bold red]Migration encountered an error: {str(e)}[/bold red]")
+            err_str = str(e)
+            if "MissingPermission" in err_str and "Masquerade" in err_str:
+                console.print(f"\n[bold red]Migration stopped: Bot is missing the 'Masquerade' permission.[/bold red]")
+                console.print(f"[yellow]Grant the 'Masquerade' permission to the bot's role in your Stoat server settings, then retry.[/yellow]")
+            elif "MissingPermission" in err_str:
+                console.print(f"\n[bold red]Migration stopped: Bot is missing a required permission.[/bold red]")
+                console.print(f"[yellow]Error: {err_str}[/yellow]")
+                console.print(f"[yellow]Grant the required permission to the bot's role in your Stoat server settings, then retry.[/yellow]")
+            else:
+                console.print(f"[bold red]Migration encountered an error: {err_str}[/bold red]")
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()

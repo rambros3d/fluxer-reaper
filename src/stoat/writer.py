@@ -76,7 +76,14 @@ class StoatWriter:
                         "manage_server": perms.manage_server,
                         "manage_permissions": perms.manage_permissions,
                         "manage_roles": perms.manage_roles,
-                        "manage_customization": perms.manage_customization
+                        "manage_customization": perms.manage_customization,
+                        "manage_messages": perms.manage_messages,
+                        "send_messages": perms.send_messages,
+                        "masquerade": perms.use_masquerade,
+                        "upload_files": perms.upload_files,
+                        "react": perms.react,
+                        "mention_everyone": perms.mention_everyone,
+                        "mention_roles": perms.mention_roles
                     }
                 except stoat.NotFound:
                     logger.error(f"Bot member {current_user.id} not found in Stoat server {self.community_id}.")
@@ -199,15 +206,79 @@ class StoatWriter:
     async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
         return True
 
-    async def send_message(self, **kwargs) -> Optional[str]:
-        return "dummy_stoat_message_id"
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, 
+                           author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, 
+                           reply_to_message_id: Optional[str] = None, is_forwarded: bool = False) -> Optional[str]:
+        """
+        Sends a message to the target channel using Stoat's masquerade feature.
+        Raises on permission errors — caller must handle.
+        """
+        try:
+            channel = await self.client.fetch_channel(channel_id)
+            
+            # Build masquerade to impersonate original author
+            masquerade = stoat.MessageMasquerade(
+                name=f"{author_name} (discord)",
+                avatar=author_avatar_url
+            )
+            
+            # Build content with timestamp prefix
+            prefix = f"##### {timestamp}\n"
+            if is_forwarded:
+                prefix += "##### -->*forwarded*\n"
+            
+            display_content = content
+            if is_forwarded and content:
+                display_content = f"> {content}"
+            
+            final_content = prefix + display_content if display_content else prefix
+            
+            # Build replies list
+            replies = None
+            if reply_to_message_id:
+                replies = [stoat.Reply(id=reply_to_message_id, mention=False)]
+            
+            # Build attachments list using ResolvableResource tuple format: (filename, bytes)
+            attachments = None
+            if files:
+                attachments = []
+                for f in files:
+                    attachments.append((f["filename"], f["data"]))
+            
+            try:
+                msg = await channel.send(
+                    content=final_content,
+                    masquerade=masquerade,
+                    replies=replies,
+                    attachments=attachments
+                )
+                return str(msg.id) if msg else None
+            except Exception as e:
+                # If file type not allowed, skip attachments and still send the message
+                if "FileTypeNotAllowed" in str(e) and attachments:
+                    logger.warning(f"File type blocked by server, sending without attachments: {e}")
+                    filenames = "\n".join(f"- {a[0]}" for a in attachments)
+                    note = f"\n⚠ {len(attachments)} attachment(s) (file type not allowed by stoat)\n{filenames}"
+                    msg = await channel.send(
+                        content=final_content + note,
+                        masquerade=masquerade,
+                        replies=replies
+                    )
+                    return str(msg.id) if msg else None
+                raise  # Re-raise MissingPermission and other errors
+        except Exception as e:
+            logger.error(f"Failed to send Stoat message to {channel_id}: {e}")
+            raise  # Let caller handle (migration loop will stop for permission errors)
 
     async def send_marker(self, channel_id: str, content: str, files: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         try:
             channel = await self.client.fetch_channel(channel_id)
-            # Stoat channel.send takes content
-            # files support might be different, skipping for markers
-            msg = await channel.send(content=content)
+            attachments = None
+            if files:
+                attachments = []
+                for f in files:
+                    attachments.append((f["filename"], f["data"]))
+            msg = await channel.send(content=content, attachments=attachments)
             return str(msg.id)
         except Exception as e:
             logger.error(f"Failed to send Stoat marker to {channel_id}: {e}")
