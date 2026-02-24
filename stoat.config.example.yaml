@@ -1,0 +1,9 @@
+discord_bot_token: DISCORD_BOT_TOKEN # Token used to connect the Discord Bot
+discord_server_id: 'DISCORD_SERVER_ID' # ID of the source Discord Server
+stoat_bot_token: STOAT_BOT_TOKEN # Token used to connect the Stoat Bot
+stoat_server_id: 'STOAT_SERVER_ID' # ID of the target Stoat Server
+stoat_api_url: 'default' # URL of the Stoat API (default is https://api.stoat.chat)
+migration:
+  batch_size: 50
+  rate_limit_delay_seconds: 2
+  log_level: INFO

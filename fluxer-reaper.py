@@ -1,18 +1,71 @@
 import sys
 import asyncio
 import logging
+from pathlib import Path
 from src.ui.app import run_cli
 from src.core.configuration import load_config
 
-def setup_logging():
+def select_config():
+    from rich.console import Console
+    from rich.prompt import Prompt
+    from rich.panel import Panel
+    
+    console = Console()
+    
+    fluxer_exists = Path("fluxer.config.yaml").exists()
+    stoat_exists = Path("stoat.config.yaml").exists()
+    
+    if fluxer_exists and not stoat_exists:
+        return "fluxer.config.yaml"
+    elif stoat_exists and not fluxer_exists:
+        return "stoat.config.yaml"
+    elif fluxer_exists and stoat_exists:
+        console.print(Panel.fit(
+            "[bold]Both Fluxer and Stoat configurations found.[/bold]\n"
+            "Which one do you want to use?",
+            title="[bold cyan]Configuration Selection[/bold cyan]"
+        ))
+        console.print("(1) [bold blue]Fluxer[/bold blue]")
+        console.print("(2) [bold red]Stoat[/bold red]")
+        console.print("(Q) [bold dim]Quit[/bold dim]")
+        console.print("")
+        
+        choice = Prompt.ask("Select an option [[bold cyan]1/2/Q[/bold cyan]]", choices=["1", "2", "Q", "q"], show_choices=False).upper()
+        if choice == "1":
+            return "fluxer.config.yaml"
+        elif choice == "2":
+            return "stoat.config.yaml"
+        else:
+            sys.exit(0)
+    else:
+        console.print(Panel.fit(
+            "[bold]First setup, Tool configuration[/bold]\n"
+            "Which platform do you want to migrate to?",
+            title="[bold cyan]Initial Setup[/bold cyan]"
+        ))
+        console.print("(1) [bold blue]Fluxer[/bold blue]")
+        console.print("(2) [bold red]Stoat[/bold red]")
+        console.print("(Q) [bold dim]Quit[/bold dim]")
+        console.print("")
+        
+        choice = Prompt.ask("Select an option [[bold cyan]1/2/Q[/bold cyan]]", choices=["1", "2", "Q", "q"], show_choices=False).upper()
+        if choice == "1":
+            return "fluxer.config.yaml"
+        elif choice == "2":
+            return "stoat.config.yaml"
+        else:
+            sys.exit(0)
+
+def setup_logging(config_path):
     try:
-        config = load_config()
+        config = load_config(config_path)
         log_level_str = config.migration.log_level.upper()
         level = getattr(logging, log_level_str, logging.INFO)
     except Exception:
         level = logging.INFO
         
-    handlers = [logging.FileHandler('fluxer.migration.log', mode='a')]
+    platform = config_path.split('.')[0]
+    handlers = [logging.FileHandler(f'{platform}.migration.log', mode='a')]
     if level == logging.DEBUG:
         handlers.append(logging.StreamHandler(sys.stdout))
 
@@ -87,9 +140,10 @@ def relaunch_in_terminal():
 
 def main():
     relaunch_in_terminal()
-    setup_logging()
+    config_path = select_config()
+    setup_logging(config_path)
     try:
-        asyncio.run(run_cli())
+        asyncio.run(run_cli(config_path))
     except KeyboardInterrupt:
         print("\nOperation terminated by user.")
         sys.exit(0)

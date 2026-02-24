@@ -55,9 +55,10 @@ console = Console()
 class MigrationCLI:
     """Standard CLI app to manage the Discord to Fluxer migration."""
     
-    def __init__(self):
+    def __init__(self, config_path="fluxer.config.yaml"):
+        self.config_path = config_path
         try:
-            self.config = load_config()
+            self.config = load_config(self.config_path)
         except Exception as e:
             console.print(f"[bold red]Failed to load config: {e}[/bold red]")
             sys.exit(1)
@@ -83,20 +84,38 @@ class MigrationCLI:
         }
         self.tokens_valid = False
 
-        discord_task = asyncio.create_task(self.engine.discord_reader.validate())
-        fluxer_task = asyncio.create_task(self.engine.fluxer_writer.validate())
+        d_token = self.config.discord_bot_token
+        f_token = self.config.fluxer_bot_token
+        
+        discord_dummy = d_token in ["YOUR_DISCORD_TOKEN", "DISCORD_BOT_TOKEN", ""]
+        fluxer_dummy = f_token in ["YOUR_FLUXER_TOKEN", "FLUXER_BOT_TOKEN", "YOUR_STOAT_TOKEN", "STOAT_BOT_TOKEN", ""]
+
+        discord_task = None
+        if not discord_dummy:
+            discord_task = asyncio.create_task(self.engine.discord_reader.validate())
+
+        fluxer_task = None
+        if not fluxer_dummy:
+            fluxer_task = asyncio.create_task(self.engine.fluxer_writer.validate())
+            
+        tasks_to_wait = [t for t in [discord_task, fluxer_task] if t is not None]
 
         try:
             with console.status("[yellow]Validating tokens...[/yellow]"):
                 start_time = asyncio.get_event_loop().time()
-                done, pending = await asyncio.wait(
-                    [discord_task, fluxer_task], 
-                    timeout=10.0,
-                    return_when=asyncio.ALL_COMPLETED
-                )
+                done = set()
+                pending = set()
+                if tasks_to_wait:
+                    done, pending = await asyncio.wait(
+                        tasks_to_wait, 
+                        timeout=10.0,
+                        return_when=asyncio.ALL_COMPLETED
+                    )
 
                 # Process Discord Result
-                if discord_task in done:
+                if discord_dummy:
+                    console.print("[bold yellow]Discord setup incomplete (Using default token).[/bold yellow]")
+                elif discord_task in done:
                     try:
                         res = discord_task.result()
                         self.validation_results["discord_token"] = res.get("token", False)
@@ -120,7 +139,9 @@ class MigrationCLI:
                     discord_task.cancel()
 
                 # Process Fluxer Result
-                if fluxer_task in done:
+                if fluxer_dummy:
+                    console.print("[bold yellow]Target Platform setup incomplete (Using default token).[/bold yellow]")
+                elif fluxer_task in done:
                     try:
                         res = fluxer_task.result()
                         self.validation_results["fluxer_token"] = res.get("token", False)
@@ -169,11 +190,26 @@ class MigrationCLI:
         finally:
             # Ensure tasks are cleaned up
             for t in [discord_task, fluxer_task]:
-                if not t.done(): t.cancel()
+                if t is not None and not t.done(): t.cancel()
 
     async def run(self):
-        await self.validate_config()
-        
+        if self.config.discord_bot_token == "YOUR_DISCORD_TOKEN":
+            console.print("\n[bold yellow]First time setup detected. Redirecting to configuration...[/bold yellow]")
+            self.validation_results = {
+                "discord_token": False, "discord_bot_name": None,
+                "discord_server": False, "discord_server_name": None,
+                "discord_intents": {}, "discord_permissions": {},
+                "fluxer_token": False, "fluxer_bot_name": None,
+                "fluxer_community": False, "fluxer_community_name": None,
+                "fluxer_permissions": {},
+                "discord_timeout": False, "fluxer_timeout": False
+            }
+            self.tokens_valid = False
+            self.permissions_complete = False
+            await self.edit_configuration(skip_validation=True)
+        else:
+            await self.validate_config()
+
         while True:
             console.print("")
             console.print(Panel.fit("Fluxer Reaper", style="bold blue"))            
@@ -225,8 +261,9 @@ class MigrationCLI:
                 await self.engine.close_connections()
                 break
 
-    async def edit_configuration(self):
-        await self.validate_config()
+    async def edit_configuration(self, skip_validation=False):
+        if not skip_validation:
+            await self.validate_config()
 
         # Display Required Permissions FIRST
         def fmt(name, val):
@@ -264,8 +301,8 @@ class MigrationCLI:
             return status
             
         console.print(f"Discord Bot Token {get_status_str(self.validation_results.get('discord_token', False), self.validation_results.get('discord_bot_name'))}")
-        console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False), self.validation_results.get('fluxer_bot_name'))}")
         console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False), self.validation_results.get('discord_server_name'))}")
+        console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False), self.validation_results.get('fluxer_bot_name'))}")
         console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False), self.validation_results.get('fluxer_community_name'))}")
 
         console.print("\n(1) Edit tokens")
@@ -284,8 +321,8 @@ class MigrationCLI:
         console.print("\n[bold]Configuration Editor[/bold] (leave blank to keep current)")
         
         d_token = Prompt.ask("Discord Bot Token", default=self.config.discord_bot_token)
-        f_token = Prompt.ask("Fluxer Bot Token", default=self.config.fluxer_bot_token)
         d_server = Prompt.ask("Discord Server ID", default=self.config.discord_server_id)
+        f_token = Prompt.ask("Fluxer Bot Token", default=self.config.fluxer_bot_token)
         f_comm = Prompt.ask("Fluxer Community ID", default=self.config.fluxer_community_id)
         
         # Only rewrite if changed
@@ -299,7 +336,7 @@ class MigrationCLI:
             self.config.discord_server_id = d_server
             self.config.fluxer_community_id = f_comm
             
-            save_config(self.config)
+            save_config(self.config, self.config_path)
             # Recreate engine with new config
             self.engine = MigrationContext(self.config)
             
@@ -308,11 +345,11 @@ class MigrationCLI:
             await self.update_validation_status()
 
             console.print(f"\nDiscord Bot Token {get_status_str(self.validation_results.get('discord_token', False))}")
-            console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
             console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
+            console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
             console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
             
-            console.print("[bold green]Configuration updated and saved to fluxer.config.yaml![/bold green]")
+            console.print(f"[bold green]Configuration updated and saved to {self.config_path}![/bold green]")
         else:
             console.print("[yellow]No changes made.[/yellow]")
 
@@ -1290,6 +1327,6 @@ class MigrationCLI:
 
 
 
-async def run_cli():
-    cli = MigrationCLI()
+async def run_cli(config_path="fluxer.config.yaml"):
+    cli = MigrationCLI(config_path)
     await cli.run()
