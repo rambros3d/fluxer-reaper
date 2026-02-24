@@ -5,25 +5,45 @@ from pathlib import Path
 from src.ui.app import run_cli
 from src.core.configuration import load_config
 
-def select_config():
+def setup_logging():
+    try:
+        config = load_config()
+        log_level_str = config.migration.log_level.upper()
+        level = getattr(logging, log_level_str, logging.INFO)
+    except Exception:
+        level = logging.INFO
+        
+    handlers = [logging.FileHandler('migration.log', mode='a')]
+    if level == logging.DEBUG:
+        handlers.append(logging.StreamHandler(sys.stdout))
+
+    logging.basicConfig(
+        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+        datefmt='%H:%M:%S',
+        level=level,
+        handlers=handlers
+    )
+
+def select_platform(config):
     from rich.console import Console
     from rich.prompt import Prompt
     from rich.panel import Panel
     
     console = Console()
     
-    fluxer_exists = Path("fluxer.config.yaml").exists()
-    stoat_exists = Path("stoat.config.yaml").exists()
+    fillers = ["YOUR_FLUXER_TOKEN", "FLUXER_BOT_TOKEN", "YOUR_STOAT_TOKEN", "STOAT_BOT_TOKEN", ""]
+    fluxer_set = config.fluxer_bot_token not in fillers
+    stoat_set = config.stoat_bot_token not in fillers
     
-    if fluxer_exists and not stoat_exists:
-        return "fluxer.config.yaml"
-    elif stoat_exists and not fluxer_exists:
-        return "stoat.config.yaml"
-    elif fluxer_exists and stoat_exists:
+    if fluxer_set and not stoat_set:
+        return "fluxer"
+    elif stoat_set and not fluxer_set:
+        return "stoat"
+    elif fluxer_set and stoat_set:
         console.print(Panel.fit(
             "[bold]Both Fluxer and Stoat configurations found.[/bold]\n"
             "Which one do you want to use?",
-            title="[bold cyan]Configuration Selection[/bold cyan]"
+            title="[bold cyan]Platform Selection[/bold cyan]"
         ))
         console.print("(1) [bold blue]Fluxer[/bold blue]")
         console.print("(2) [bold red]Stoat[/bold red]")
@@ -32,12 +52,13 @@ def select_config():
         
         choice = Prompt.ask("Select an option [[bold cyan]1/2/Q[/bold cyan]]", choices=["1", "2", "Q", "q"], show_choices=False).upper()
         if choice == "1":
-            return "fluxer.config.yaml"
+            return "fluxer"
         elif choice == "2":
-            return "stoat.config.yaml"
+            return "stoat"
         else:
             sys.exit(0)
     else:
+        # Both are fillers
         console.print(Panel.fit(
             "[bold]First setup, Tool configuration[/bold]\n"
             "Which platform do you want to migrate to?",
@@ -50,31 +71,11 @@ def select_config():
         
         choice = Prompt.ask("Select an option [[bold cyan]1/2/Q[/bold cyan]]", choices=["1", "2", "Q", "q"], show_choices=False).upper()
         if choice == "1":
-            return "fluxer.config.yaml"
+            return "fluxer"
         elif choice == "2":
-            return "stoat.config.yaml"
+            return "stoat"
         else:
             sys.exit(0)
-
-def setup_logging(config_path):
-    try:
-        config = load_config(config_path)
-        log_level_str = config.migration.log_level.upper()
-        level = getattr(logging, log_level_str, logging.INFO)
-    except Exception:
-        level = logging.INFO
-        
-    platform = config_path.split('.')[0]
-    handlers = [logging.FileHandler(f'{platform}.migration.log', mode='a')]
-    if level == logging.DEBUG:
-        handlers.append(logging.StreamHandler(sys.stdout))
-
-    logging.basicConfig(
-        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-        datefmt='%H:%M:%S',
-        level=level,
-        handlers=handlers
-    )
 
 def relaunch_in_terminal():
     """Detects if running without a terminal on Linux and relaunches in one."""
@@ -140,10 +141,11 @@ def relaunch_in_terminal():
 
 def main():
     relaunch_in_terminal()
-    config_path = select_config()
-    setup_logging(config_path)
+    config = load_config()
+    setup_logging()
+    platform = select_platform(config)
     try:
-        asyncio.run(run_cli(config_path))
+        asyncio.run(run_cli(target_platform=platform))
     except KeyboardInterrupt:
         print("\nOperation terminated by user.")
         sys.exit(0)

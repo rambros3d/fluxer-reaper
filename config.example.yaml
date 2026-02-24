@@ -3,6 +3,9 @@ discord_server_id: 'DISCORD_SERVER_ID' # ID of the source Discord Server
 fluxer_bot_token: FLUXER_BOT_TOKEN # Token used to connect the Fluxer Bot
 fluxer_community_id: 'FLUXER_COMMUNITY_ID' # ID of the target Fluxer Community
 fluxer_api_url: 'default' # URL of the Fluxer API (default is https://api.fluxer.app)
+stoat_bot_token: STOAT_BOT_TOKEN # Token used to connect the Stoat Bot
+stoat_server_id: 'STOAT_SERVER_ID' # ID of the target Stoat Server
+stoat_api_url: 'default' # URL of the Stoat API (default is https://api.stoat.chat)
 migration:
   batch_size: 50
   rate_limit_delay_seconds: 2

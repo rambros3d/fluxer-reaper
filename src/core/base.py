@@ -5,14 +5,16 @@ from src.core.configuration import AppConfig
 from src.core.state import MigrationState
 from src.core.discord_reader import DiscordReader
 from src.fluxer.writer import FluxerWriter
+from src.stoat.writer import StoatWriter
 
 logger = logging.getLogger(__name__)
 
 class MigrationContext:
     """Holds state and connections for reading from Discord and writing to Fluxer."""
     
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, target_platform: str = "fluxer"):
         self.config = config
+        self.target_platform = target_platform
         self.state = MigrationState()
         
         self.discord_reader = DiscordReader(
@@ -24,6 +26,14 @@ class MigrationContext:
             token=config.fluxer_bot_token,
             community_id=config.fluxer_community_id
         )
+        
+        self.stoat_writer = StoatWriter(
+            token=config.stoat_bot_token,
+            community_id=config.stoat_server_id
+        )
+
+        self.writer = self.fluxer_writer if target_platform == "fluxer" else self.stoat_writer
+        
         
         self.is_running = False
 
@@ -56,11 +66,11 @@ class MigrationContext:
 
     async def start_connections(self):
         await self.discord_reader.start()
-        await self.fluxer_writer.start()
+        await self.writer.start()
 
-    async def start_fluxer_only(self):
-        """Starts only the Fluxer writer (used for Danger Zone operations that don't need Discord)."""
-        await self.fluxer_writer.start()
+    async def start_target_only(self):
+        """Starts only the target platform writer (used for Danger Zone operations that don't need Discord)."""
+        await self.writer.start()
 
     async def close_connections(self):
         try:
@@ -68,16 +78,16 @@ class MigrationContext:
         except Exception as e:
             logger.debug(f"Error closing Discord reader: {e}")
         try:
-            await self.fluxer_writer.close()
+            await self.writer.close()
         except Exception as e:
-            logger.debug(f"Error closing Fluxer writer: {e}")
+            logger.debug(f"Error closing target writer: {e}")
 
-    async def close_fluxer_only(self):
-        """Closes only the Fluxer writer. Pair with start_fluxer_only()."""
+    async def close_target_only(self):
+        """Closes only the target platform writer. Pair with start_target_only()."""
         try:
-            await self.fluxer_writer.close()
+            await self.writer.close()
         except Exception as e:
-            logger.debug(f"Error closing Fluxer writer: {e}")
+            logger.debug(f"Error closing target writer: {e}")
 
 
     def stop(self):

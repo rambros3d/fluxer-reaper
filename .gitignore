@@ -28,10 +28,8 @@ ENV/
 
 # Configuration and Secrets
 configs/
-!fluxer.config.example.yaml
-!stoat.config.example.yaml
-fluxer.config.yaml
-stoat.config.yaml
+!config.example.yaml
+config.yaml
 
 # Logs and State
 *.log
