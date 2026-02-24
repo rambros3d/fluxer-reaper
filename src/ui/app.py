@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 from src.core.configuration import load_config, save_config
 from src.core.base import MigrationContext
-from src.fluxer.clone_server import sync_channel_state, migrate_channels
+
 import src.fluxer.roles_permissions as fluxer_roles
 import src.stoat.roles_permissions as stoat_roles
 import src.fluxer.emoji_stickers as fluxer_emoji_stickers
@@ -17,7 +17,7 @@ import src.stoat.emoji_stickers as stoat_emoji_stickers
 import src.fluxer.server_metadata as fluxer_metadata
 import src.stoat.server_metadata as stoat_metadata
 from src.fluxer.migrate_message import analyze_migration, migrate_messages
-from src.fluxer.danger_zone import danger_remove_logo_and_banner, danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
+
 from src.core.audit import log_audit_event
 
 class RateLimitHandler(logging.Handler):
@@ -438,6 +438,11 @@ class MigrationCLI:
         await self.validate_config()
 
     async def clone_server_template(self):
+        if self.target_platform == "fluxer":
+            from src.fluxer.clone_server import sync_channel_state, migrate_channels
+        else:
+            from src.stoat.clone_server import sync_channel_state, migrate_channels
+
         console.print("\n[yellow]Fetching server structure...[/yellow]")
         categories = []
         channels = []
@@ -1259,6 +1264,11 @@ class MigrationCLI:
 
     async def danger_zone(self):
         """Danger Zone – irreversible destructive operations on the target community."""
+        if self.target_platform == "fluxer":
+            from src.fluxer.danger_zone import danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
+        else:
+            from src.stoat.danger_zone import danger_delete_all_channels, danger_reset_channel_permissions, danger_delete_all_roles, danger_delete_all_emojis_and_stickers
+
         console.print("")
         console.print(Panel.fit(
             "[bold red]\u26a0  DANGER ZONE \u26a0[/bold red]\n"
