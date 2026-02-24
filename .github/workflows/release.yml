@@ -10,7 +10,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
             artifact_name: fluxer-reaper-linux
@@ -20,6 +20,10 @@ jobs:
             artifact_name: fluxer-reaper-windows
             asset_name: fluxer-reaper-windows.zip
             executable_path: dist/fluxer-reaper.exe
+          - os: macos-latest
+            artifact_name: fluxer-reaper-macos
+            asset_name: fluxer-reaper-macos.zip
+            executable_path: dist/fluxer-reaper
 
     steps:
       - name: Checkout code
@@ -50,47 +54,13 @@ jobs:
           ls -R || dir /s
           pyinstaller fluxer-reaper.spec
 
-      - name: Prepare Release Asset (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Prepare Release Asset (Linux/MacOS)
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: |
           mkdir discord-reaper
           cp ${{ matrix.executable_path }} discord-reaper/
           chmod +x discord-reaper/fluxer-reaper
           zip -r ${{ matrix.asset_name }} discord-reaper/
-
-          # Prepare AppImage
-          mkdir -p AppDir/usr/bin
-          cp ${{ matrix.executable_path }} AppDir/usr/bin/fluxer-reaper
-          cp fluxer-reaper-icon.png AppDir/fluxer-reaper.png
-          
-          # Create desktop file
-          cat << 'EOF' > AppDir/fluxer-reaper.desktop
-          [Desktop Entry]
-          Type=Application
-          Name=Discord Reaper
-          Exec=fluxer-reaper
-          Icon=fluxer-reaper
-          Categories=Utility;
-          Terminal=true
-          EOF
-          
-          # Create AppRun script
-          cat << 'EOF' > AppDir/AppRun
-          #!/bin/bash
-          HERE="$(dirname "$(readlink -f "${0}")")"
-          export PATH="${HERE}/usr/bin:${PATH}"
-          exec fluxer-reaper "$@"
-          EOF
-          chmod +x AppDir/AppRun
-          
-          # Download appimagetool
-          curl -LO https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
-          chmod +x appimagetool-x86_64.AppImage
-          
-          # Install libfuse2 required for appimagetool to run on newer Ubuntu
-          sudo apt-get update && sudo apt-get install -y libfuse2
-          
-          ./appimagetool-x86_64.AppImage AppDir fluxer-reaper-x86_64.AppImage
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
@@ -103,9 +73,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            ${{ matrix.asset_name }}
-            fluxer-reaper-x86_64.AppImage
+          path: ${{ matrix.asset_name }}
 
   release:
     needs: build
@@ -123,7 +91,7 @@ jobs:
         with:
           files: |
             artifacts/fluxer-reaper-linux/fluxer-reaper-linux.zip
-            artifacts/fluxer-reaper-linux/fluxer-reaper-x86_64.AppImage
             artifacts/fluxer-reaper-windows/fluxer-reaper-windows.zip
+            artifacts/fluxer-reaper-macos/fluxer-reaper-macos.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
