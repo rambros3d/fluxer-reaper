@@ -514,7 +514,7 @@ class MigrationCLI:
         
         force = False
         if cached_count > 0:
-            console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in fluxer.state.json cache.[/yellow]")
+            console.print(f"[yellow]\u26a0  {cached_count}/{all_ids_len} item(s) already in state cache.[/yellow]")
             # End of table consolidated section, back to standard flow logic.
 
             console.print("[bold green](Y) Continue with only missing items[/bold green]")

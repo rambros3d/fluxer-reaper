@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def sync_assets_state(context: MigrationContext):
     """
-    Scans Fluxer for emojis and stickers matching Discord names and updates fluxer.state.json mappings.
+    Scans Fluxer for emojis and stickers matching Discord names and updates state file mappings.
     """
     discord_emojis = await context.discord_reader.get_emojis()
     discord_stickers = await context.discord_reader.get_stickers()

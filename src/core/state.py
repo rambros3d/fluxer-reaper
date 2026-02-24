@@ -5,7 +5,7 @@ from typing import Dict, Any
 class MigrationState:
     """Manages persistence of the migration state to allow resumability."""
     
-    def __init__(self, state_file: str | Path = "fluxer.state.json", messages_file: str | Path = "fluxer.messages.json"):
+    def __init__(self, state_file: str | Path = "default.state.json", messages_file: str | Path = "default.messages.json"):
         self.state_file = Path(state_file)
         self.messages_file = Path(messages_file)
         
@@ -30,7 +30,7 @@ class MigrationState:
         migrated_state = False
         migrated_messages = False
 
-        # 1. Load primary fluxer.state.json
+        # 1. Load primary state file
         if self.state_file.exists():
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -41,12 +41,12 @@ class MigrationState:
                 self.sticker_map = data.get("stickers", {})
                 self.audit_log_channel = data.get("audit_log_channel")
                 
-                # Check for legacy messages in fluxer.state.json
+                # Check for legacy messages in state file
                 if "messages" in data or "last_message_timestamps" in data:
                     self.message_map = data.get("messages", {})
                     self.last_message_ids = data.get("last_message_ids", {})
                     self.last_message_timestamps = data.get("last_message_timestamps", {})
-                    migrated_messages = True # We found legacy data, we should write it out to fluxer.messages.json later
+                    migrated_messages = True # We found legacy data, we should write it out to messages file later
 
             # Legacy Migration: Move role_, emoji_, sticker_ from channel_map to dedicated maps
             legacy_keys = list(self.channel_map.keys())
@@ -64,7 +64,7 @@ class MigrationState:
                     self.sticker_map[discord_id] = self.channel_map.pop(k)
                     migrated_state = True
 
-        # 2. Load separate fluxer.messages.json (overrides legacy fluxer.state.json)
+        # 2. Load separate messages file (overrides legacy state file messages)
         if self.messages_file.exists():
             with open(self.messages_file, "r", encoding="utf-8") as f:
                 msg_data = json.load(f)

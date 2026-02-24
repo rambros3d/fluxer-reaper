@@ -9,8 +9,8 @@ logger = logging.getLogger(__name__)
 
 async def sync_channel_state(context: MigrationContext):
     """
-    Scans Stoat for channels matching Discord names and updates stoat.state.json mappings.
-    This prevents duplicate creation when the stoat.state.json is empty but channels exist in Stoat.
+    Scans Stoat for channels matching Discord names and updates state file mappings.
+    This prevents duplicate creation when the state file is empty but channels exist in Stoat.
     """
     categories = await context.discord_reader.get_categories()
     channels = await context.discord_reader.get_channels()

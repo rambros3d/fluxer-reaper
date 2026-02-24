@@ -15,9 +15,17 @@ class MigrationContext:
     def __init__(self, config: AppConfig, target_platform: str = "fluxer"):
         self.config = config
         self.target_platform = target_platform
+        
+        # Use the target server/community ID for state file naming so each
+        # target server gets its own independent migration history.
+        if target_platform == "stoat":
+            server_id = config.stoat_server_id
+        else:
+            server_id = config.fluxer_community_id
+        
         self.state = MigrationState(
-            state_file=f"{target_platform}.state.json",
-            messages_file=f"{target_platform}.messages.json"
+            state_file=f"{server_id}.state.json",
+            messages_file=f"{server_id}.messages.json"
         )
         
         self.discord_reader = DiscordReader(

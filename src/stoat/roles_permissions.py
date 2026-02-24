@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def sync_roles_state(context: MigrationContext):
     """
-    Scans Stoat for roles matching Discord names and updates stoat.state.json mappings.
+    Scans Stoat for roles matching Discord names and updates state file mappings.
     """
     discord_roles = await context.discord_reader.get_roles()
     server = await context.stoat_writer._get_server()

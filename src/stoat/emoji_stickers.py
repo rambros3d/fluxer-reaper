@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 async def sync_assets_state(context: MigrationContext):
     """
-    Scans Stoat for emojis matching Discord names and updates stoat.state.json mappings.
+    Scans Stoat for emojis matching Discord names and updates state file mappings.
     """
     discord_emojis = await context.discord_reader.get_emojis()
     # Stickers not supported on Stoat based on current library investigation
