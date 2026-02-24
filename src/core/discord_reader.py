@@ -40,7 +40,7 @@ class DiscordReader:
             await temp_client.login(self.token)
             results["token"] = True
             if temp_client.user:
-                results["bot_name"] = temp_client.user.name
+                results["bot_name"] = temp_client.user.display_name
                 
             guild = await temp_client.fetch_guild(self.server_id)
             if guild is not None:

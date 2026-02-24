@@ -215,10 +215,15 @@ class MigrationCLI:
                     if not all([d_intents.get("message_content"), d_perms.get("view_channel"), d_perms.get("read_message_history")]):
                         self.permissions_complete = False
                     
-                    # Fluxer
-                    f_perms = self.validation_results.get("fluxer_permissions", {})
-                    if not all(f_perms.values()) if f_perms else True:
-                        self.permissions_complete = False
+                    # Fluxer or Stoat
+                    if self.target_platform == "fluxer":
+                        f_perms = self.validation_results.get("fluxer_permissions", {})
+                        if not all(f_perms.values()) if f_perms else True:
+                            self.permissions_complete = False
+                    else:
+                        s_perms = self.validation_results.get("stoat_permissions", {})
+                        if not all(s_perms.values()) if s_perms else True:
+                            self.permissions_complete = False
 
         except Exception as e:
             console.print(f"[bold red]Validation system failure: {e}[/bold red]")
@@ -250,7 +255,7 @@ class MigrationCLI:
 
         while True:
             console.print("")
-            console.print(Panel.fit("Fluxer Reaper", style="bold blue"))            
+            console.print(Panel.fit(f"{self.target_platform.capitalize()} Reaper", style="bold blue"))            
             d_name = self.validation_results.get("discord_server_name")
             d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else ("[bold yellow]TIMEOUT ERROR[/bold yellow]" if self.validation_results.get("discord_timeout") else "[bold red]NOT SET UP[/bold red]")
             
@@ -338,8 +343,8 @@ class MigrationCLI:
             s_perms = self.validation_results.get("stoat_permissions", {})
             perm_table.add_row(
                 "[bold #FF8C00]Stoat Bot[/bold #FF8C00]", 
-                f"• [bold]Permissions:[/bold] {fmt('Manage Channels', s_perms.get('manage_channels'))}, {fmt('Manage Messages', s_perms.get('manage_messages'))},\n"
-                f"  {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Emojis/Stickers', s_perms.get('manage_emojis_stickers'))}, {fmt('Manage Webhooks', s_perms.get('manage_webhooks'))}"
+                f"• [bold]Permissions:[/bold] {fmt('Manage Channel', s_perms.get('manage_channels'))}, {fmt('Manage Server', s_perms.get('manage_server'))},\n"
+                f"  {fmt('Manage Permissions', s_perms.get('manage_permissions'))}, {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Customization', s_perms.get('manage_customization'))}"
             )
         
         console.print("\n") # Add spacing before panel

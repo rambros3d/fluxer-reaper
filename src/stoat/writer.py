@@ -1,4 +1,5 @@
 import logging
+import stoat
 from typing import Optional, List, Dict, Any
 
 logger = logging.getLogger(__name__)
@@ -9,22 +10,77 @@ class StoatWriter:
         self.community_id = str(community_id)
 
     async def start(self):
-        logger.info("StoatWriter start (Not implemented)")
+        self.client = stoat.Client(token=self.token, bot=True)
 
     async def validate(self) -> dict:
-        return {
-            "token": True,
-            "community": True,
-            "bot_name": "Stoat Dummy",
-            "community_name": "Stoat Community Dummy",
+        results = {
+            "token": False,
+            "community": False,
+            "bot_name": "N/A",
+            "community_name": "N/A",
             "permissions": {
-                "manage_channels": True,
-                "manage_messages": True,
-                "manage_roles": True,
-                "manage_emojis_stickers": True,
-                "manage_webhooks": True
+                "manage_channels": False,
+                "manage_server": False,
+                "manage_permissions": False,
+                "manage_roles": False,
+                "manage_customization": False
             }
         }
+        
+        # Use a temporary client for validation
+        client = stoat.Client(token=self.token, bot=True)
+        try:
+            # Validate token by fetching current user
+            try:
+                current_user = await client.fetch_user("@me")
+                results["token"] = True
+                results["bot_name"] = current_user.display_name or current_user.name
+            except stoat.Unauthorized:
+                logger.error("Invalid Stoat token.")
+                return results
+            
+            # Validate server access
+            try:
+                server = await client.fetch_server(self.community_id)
+                results["community"] = True
+                results["community_name"] = server.name
+                
+                # Check permissions using effective server permissions for the bot
+                # Use current_user.id since @me might not be supported in all member endpoints
+                try:
+                    me = await server.fetch_member(current_user.id)
+                    # We use server.permissions_for(me) instead of me.server_permissions
+                    # to avoid cache-related NoData exceptions.
+                    # safe=False allows calculating even if some roles aren't in local cache.
+                    perms = server.permissions_for(me, safe=False)
+                    
+                    results["permissions"] = {
+                        "manage_channels": perms.manage_channels,
+                        "manage_server": perms.manage_server,
+                        "manage_permissions": perms.manage_permissions,
+                        "manage_roles": perms.manage_roles,
+                        "manage_customization": perms.manage_customization
+                    }
+                except stoat.NotFound:
+                    logger.error(f"Bot member {current_user.id} not found in Stoat server {self.community_id}.")
+                except stoat.Forbidden:
+                    logger.error(f"Bot lacks permissions to fetch its own member data in Stoat server {self.community_id}.")
+                except Exception as e:
+                    logger.error(f"Error fetching Stoat member permissions: {e}")
+
+            except stoat.NotFound:
+                logger.error(f"Stoat server {self.community_id} not found.")
+            except stoat.Forbidden:
+                logger.error(f"Bot has no access to Stoat server {self.community_id}.")
+            except Exception as e:
+                logger.error(f"Error validating Stoat server: {e}")
+                
+        except Exception as e:
+            logger.error(f"Stoat validation failed: {str(e)}")
+        finally:
+            await client.close()
+            
+        return results
     
     async def get_channels(self) -> List[Dict[str, Any]]:
         return []
