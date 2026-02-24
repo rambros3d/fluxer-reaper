@@ -1,5 +1,6 @@
-git+https://github.com/akarealemil/fluxer.py.git
-discord.py>=2.3.2
-rich>=13.7.0
-PyYAML>=6.0.1
-pydantic>=2.5.3 # Good for configuration validation and mapping
+git+https://github.com/rambros3d/fluxer.py.git # API wrapper for Fluxer
+discord.py # API wrapper for Discord
+rich # Terminal formatting and rich text
+PyYAML # YAML parsing and serialization
+pydantic # Data validation using Python type hints
+

@@ -5,7 +5,7 @@ logger = logging.getLogger(__name__)
 
 async def log_audit_event(context: MigrationContext, title: str, description: str, files: list[dict] | None = None) -> None:
     """
-    Logs an event by sending a summary to the `#fluxer-reaper` audit channel.
+    Logs an event by sending a summary to the `#reaper-logs` audit channel.
     If the channel does not exist, it will dynamically create it and hide it from @everyone.
     """
     # 1. Initialize or Validate channel
@@ -31,16 +31,16 @@ async def log_audit_event(context: MigrationContext, title: str, description: st
             
             for ch in channels:
                 name = str(ch.get("name", "")).lower()
-                if name in ["fluxer-reaper", "fluxer_reaper"]:
+                if name in ["reaper-logs", "reaper_logs"]:
                     channel_id = str(ch.get("id"))
                     logger.info(f"Found existing audit channel: {channel_id}")
                     break
             
             if not channel_id:
-                logger.info("Audit log channel not found. Creating #fluxer-reaper.")
+                logger.info("Audit log channel not found. Creating #reaper-logs.")
                 # Create channel
                 channel_id = await context.fluxer_writer.create_channel(
-                    name="fluxer-reaper",
+                    name="reaper-logs",
                     topic="Fluxer Reaper - Migration audit logs.",
                     type=0
                 )

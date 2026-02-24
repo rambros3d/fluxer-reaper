@@ -241,13 +241,14 @@ class FluxerWriter:
         final_content = prefix + display_content if display_content else prefix
 
         try:
-            # Current limitation: fluxer.py execute_webhook doesn't support 'files' or 'message_reference' yet.
-            # So if we have files OR a reply, we MUST use the bot's direct send method.
-            if webhook and not files and not reply_to_message_id:
+            # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
+            # So if we have a reply, we MUST use the bot's direct send method.
+            if webhook and not reply_to_message_id:
                 msg = await webhook.send(
                     content=final_content,
                     username=f"{author_name} (discord)",
                     avatar_url=author_avatar_url,
+                    files=files,
                     wait=True
                 )
                 return str(msg.id) if msg else None
@@ -437,7 +438,7 @@ class FluxerWriter:
         sorted_channels = sorted(channels, key=lambda c: 0 if c.get("type") == 4 else -1)
         for ch in sorted_channels:
             name = str(ch.get("name", "")).lower()
-            if name in ["fluxer-reaper", "fluxer_reaper"]:
+            if name in ["reaper-logs", "reaper_logs"]:
                 logger.info(f"Danger Zone: Skipping deletion of audit channel {name}")
                 total -= 1
                 continue
@@ -462,7 +463,7 @@ class FluxerWriter:
         processed = 0
         for ch in channels:
             name = str(ch.get("name", "")).lower()
-            if name in ["fluxer-reaper", "fluxer_reaper"]:
+            if name in ["reaper-logs", "reaper_logs"]:
                 logger.info(f"Danger Zone: Skipping permission reset for audit channel {name}")
                 total -= 1
                 continue
