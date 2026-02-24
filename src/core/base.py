@@ -63,12 +63,22 @@ class MigrationContext:
         await self.fluxer_writer.start()
 
     async def close_connections(self):
-        await self.discord_reader.close()
-        await self.fluxer_writer.close()
+        try:
+            await self.discord_reader.close()
+        except Exception as e:
+            logger.debug(f"Error closing Discord reader: {e}")
+        try:
+            await self.fluxer_writer.close()
+        except Exception as e:
+            logger.debug(f"Error closing Fluxer writer: {e}")
 
     async def close_fluxer_only(self):
         """Closes only the Fluxer writer. Pair with start_fluxer_only()."""
-        await self.fluxer_writer.close()
+        try:
+            await self.fluxer_writer.close()
+        except Exception as e:
+            logger.debug(f"Error closing Fluxer writer: {e}")
+
 
     def stop(self):
         self.is_running = False

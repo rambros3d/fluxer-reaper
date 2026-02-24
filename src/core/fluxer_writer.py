@@ -589,7 +589,11 @@ class FluxerWriter:
     async def close(self):
         """Cleanly close connection and stop bot task."""
         if self.bot:
-            await self.bot.close()
+            try:
+                await self.bot.close()
+            except Exception as e:
+                logger.debug(f"Error closing Fluxer bot: {e}")
+                
         if self._bot_task:
             self._bot_task.cancel()
             try:
@@ -597,4 +601,5 @@ class FluxerWriter:
             except asyncio.CancelledError:
                 pass
         self._ready_event.clear()
+
 

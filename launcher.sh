@@ -4,14 +4,31 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 cd "$DIR"
 
-# Check if venv exists
-if [ -d "$DIR/venv" ]; then
-    # Activate virtual environment
+# Check if venv exists, create it if not
+if [ ! -d "$DIR/venv" ]; then
+    echo "Virtual environment not found. Creating one..."
+    python3 -m venv "$DIR/venv"
+    
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to create virtual environment."
+        exit 1
+    fi
+
+    # Activate and install requirements
     source "$DIR/venv/bin/activate"
-    # Run the application
-    python3 fluxer-reaper.py "$@"
+    
+    if [ -f "$DIR/requirements.txt" ]; then
+        echo "Installing requirements..."
+        pip install --upgrade pip
+        pip install -r "$DIR/requirements.txt"
+    else
+        echo "Warning: requirements.txt not found. Skipping dependency installation."
+    fi
 else
-    echo "Error: Virtual environment not found in $DIR/venv"
-    echo "Please ensure you have installed the requirements into a 'venv' folder."
-    exit 1
+    # Activate existing virtual environment
+    source "$DIR/venv/bin/activate"
 fi
+
+# Run the application
+python3 fluxer-reaper.py "$@"
+

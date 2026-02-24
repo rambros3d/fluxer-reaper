@@ -42,7 +42,7 @@ Fluxer Reaper is a simple tool to help you move an entire Discord server over to
 
 ## Notes:
 - The Discord bot has read-only access to the source server. Hence no changes will be made to the source server.
-- Currently Fluxer is unstable probably due to high traffic, migrating servers now will only add to that problem. Only use this for testing purposes for now. [Check status here](https://uptime.reallyaweso.me/status/fluxer)
+- Currently Fluxer is unstable probably due to high traffic, migrating servers now will only add to that problem. Only use this for testing purposes for now. [Check status here](https://fluxerstatus.com)
 
 
 # Bot Setup
