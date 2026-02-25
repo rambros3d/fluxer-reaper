@@ -35,12 +35,14 @@ class MigrationContext:
         
         self.fluxer_writer = FluxerWriter(
             token=config.fluxer_bot_token,
-            community_id=config.fluxer_community_id
+            community_id=config.fluxer_community_id,
+            api_url=config.fluxer_api_url
         )
         
         self.stoat_writer = StoatWriter(
             token=config.stoat_bot_token,
-            community_id=config.stoat_server_id
+            community_id=config.stoat_server_id,
+            api_url=config.stoat_api_url
         )
 
         self.writer = self.fluxer_writer if target_platform == "fluxer" else self.stoat_writer

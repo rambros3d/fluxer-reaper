@@ -3,6 +3,7 @@ import asyncio
 import logging
 import re
 import time
+import aiohttp
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
@@ -337,123 +338,189 @@ class MigrationCLI:
         if not skip_validation:
             await self.validate_config()
 
-        # Display Required Permissions FIRST
-        def fmt(name, val):
-            if val is None: return f"[dim]{name}[/dim]" # Unknown
-            return f"[green]{name}[/green]" if val else f"[red]{name} [MISSING][/red]"
+        while True:
+            console.clear()
+            console.print(Panel(f"[bold blue]Configuration: {self.target_platform.capitalize()}[/bold blue]", expand=False))
+            
+            # Print permissions summary
+            v = self.validation_results
+            s_perms = v.get(f"{self.target_platform}_permissions", {})
+            d_perms = v.get("discord_permissions", {})
+            d_intents = v.get("discord_intents", {})
+            
+            def fmt(name, has):
+                if has is None: return f"[dim]{name}[/dim]"
+                color = "green" if has else "red"
+                symbol = "✔" if has else "✘"
+                return f"[{color}]{symbol} {name}[/{color}]"
 
-        d_intents = self.validation_results.get("discord_intents", {})
-        d_perms = self.validation_results.get("discord_permissions", {})
-        f_perms = self.validation_results.get("fluxer_permissions", {})
-
-        perm_table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
-        perm_table.add_column("Bot Type")
-        perm_table.add_column("Required Permissions & Intents")
-        
-        perm_table.add_row(
-            "[bold #5865F2]Discord Bot[/bold #5865F2]", 
-            f"• [bold]Intents:[/bold] Server Members, {fmt('Message Content', d_intents.get('message_content'))}\n"
-            f"• [bold]Permissions:[/bold] {fmt('View Channels', d_perms.get('view_channel'))}, {fmt('Read Message History', d_perms.get('read_message_history'))}"
-        )
-        if self.target_platform == "fluxer":
+            perm_table = Table(show_header=True, header_style="bold magenta", box=None, padding=(0, 2))
+            perm_table.add_column("Bot Type")
+            perm_table.add_column("Required Permissions & Intents")
+            
             perm_table.add_row(
-                "[bold #4641D9]Fluxer Bot[/bold #4641D9]", 
-                f"• [bold]Permissions:[/bold] {fmt('Manage Channels', f_perms.get('manage_channels'))}, {fmt('Manage Messages', f_perms.get('manage_messages'))},\n"
-                f"  {fmt('Manage Roles', f_perms.get('manage_roles'))}, {fmt('Manage Emojis/Stickers', f_perms.get('manage_emojis_stickers'))}, {fmt('Manage Webhooks', f_perms.get('manage_webhooks'))}"
+                "[bold #5865F2]Discord Bot[/bold #5865F2]", 
+                f"• [bold]Intents:[/bold] Server Members, {fmt('Message Content', d_intents.get('message_content'))}\n"
+                f"• [bold]Permissions:[/bold] {fmt('View Channels', d_perms.get('view_channel'))}, {fmt('Read Message History', d_perms.get('read_message_history'))}"
             )
-        else:
-            s_perms = self.validation_results.get("stoat_permissions", {})
-            perm_table.add_row(
-                "[bold #FF8C00]Stoat Bot[/bold #FF8C00]", 
-                f"• [bold]Permissions:[/bold] {fmt('Manage Channel', s_perms.get('manage_channels'))}, {fmt('Manage Server', s_perms.get('manage_server'))},\n"
-                f"  {fmt('Manage Permissions', s_perms.get('manage_permissions'))}, {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Customization', s_perms.get('manage_customization'))},\n"
-                f"  {fmt('Manage Messages', s_perms.get('manage_messages'))}, {fmt('Send Messages', s_perms.get('send_messages'))}, {fmt('Masquerade', s_perms.get('masquerade'))},\n"
-                f"  {fmt('Upload Files', s_perms.get('upload_files'))}, {fmt('React', s_perms.get('react'))}, {fmt('Mention Everyone', s_perms.get('mention_everyone'))}, {fmt('Mention Roles', s_perms.get('mention_roles'))}"
-            )
-        
-        console.print("\n") # Add spacing before panel
-        console.print(Panel(perm_table, title=f"[bold]Required Bot Permissions (Target: {self.target_platform.capitalize()})[/bold]", expand=False, border_style="dim"))
 
-        console.print("\n[bold]Configuration Status:[/bold]")
-        
-        def get_status_str(is_valid, name=None):
-            status = "[bold green][VALID][/bold green]" if is_valid else "[bold red][INVALID][/bold red]"
-            if is_valid and name:
-                return f"{status} \"{name}\""
-            return status
+            if self.target_platform == "fluxer":
+                perm_table.add_row(
+                    "[bold #4641D9]Fluxer Bot[/bold #4641D9]", 
+                    f"• [bold]Permissions:[/bold] {fmt('Manage Channels', s_perms.get('manage_channels'))}, {fmt('Manage Messages', s_perms.get('manage_messages'))},\n"
+                    f"  {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Emojis/Stickers', s_perms.get('manage_emojis_stickers'))}, {fmt('Manage Webhooks', s_perms.get('manage_webhooks'))}"
+                )
+            else:
+                perm_table.add_row(
+                    "[bold #FF8C00]Stoat Bot[/bold #FF8C00]", 
+                    f"• [bold]Permissions:[/bold] {fmt('Manage Channel', s_perms.get('manage_channels'))}, {fmt('Manage Server', s_perms.get('manage_server'))},\n"
+                    f"  {fmt('Manage Permissions', s_perms.get('manage_permissions'))}, {fmt('Manage Roles', s_perms.get('manage_roles'))}, {fmt('Manage Customization', s_perms.get('manage_customization'))},\n"
+                    f"  {fmt('Manage Messages', s_perms.get('manage_messages'))}, {fmt('Send Messages', s_perms.get('send_messages'))}, {fmt('Masquerade', s_perms.get('masquerade'))},\n"
+                    f"  {fmt('Upload Files', s_perms.get('upload_files'))}, {fmt('React', s_perms.get('react'))}, {fmt('Mention Everyone', s_perms.get('mention_everyone'))}, {fmt('Mention Roles', s_perms.get('mention_roles'))}"
+                )
             
-        console.print(f"Discord Bot Token {get_status_str(self.validation_results.get('discord_token', False), self.validation_results.get('discord_bot_name'))}")
-        console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False), self.validation_results.get('discord_server_name'))}")
-        
-        if self.target_platform == "fluxer":
-            console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False), self.validation_results.get('fluxer_bot_name'))}")
-            console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False), self.validation_results.get('fluxer_community_name'))}")
-        else:
-            console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False), self.validation_results.get('stoat_bot_name'))}")
-            console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False), self.validation_results.get('stoat_server_name'))}")
+            console.print("\n") # Add spacing before panel
+            console.print(Panel(perm_table, title=f"[bold]Required Bot Permissions (Target: {self.target_platform.capitalize()})[/bold]", expand=False, border_style="dim"))
 
-        console.print("\n(1) Edit Bot tokens & Community IDs")
-        console.print("(2) Edit API url (for self hosted instances)")
-        console.print("(B) Back")
-        
-        menu_choice = Prompt.ask("\nSelect an option [1/2/B]", choices=["1", "2", "B", "b"], default="B", show_choices=False).upper()
-        
-        if menu_choice == "B":
-            return
+            console.print("\n[bold]Configuration Status:[/bold]")
             
-        if menu_choice == "2":
-            console.print("[yellow]Not implemented yet.[/yellow]")
-            return
+            def get_status_str(is_valid, name=None):
+                status = "[bold green][VALID][/bold green]" if is_valid else "[bold red][INVALID][/bold red]"
+                if is_valid and name:
+                    return f"{status} \"{name}\""
+                return status
+                
+            console.print(f"Discord Bot Token {get_status_str(v.get('discord_token', False), v.get('discord_bot_name'))}")
+            console.print(f"Discord Server ID {get_status_str(v.get('discord_server', False), v.get('discord_server_name'))}")
             
-        console.print("\n[bold]Configuration Editor[/bold] (leave blank to keep current)")
-        
-        d_token = Prompt.ask("Discord Bot Token", default=self.config.discord_bot_token)
-        d_server = Prompt.ask("Discord Server ID", default=self.config.discord_server_id)
-        
-        if self.target_platform == "fluxer":
-            f_token = Prompt.ask("Fluxer Bot Token", default=self.config.fluxer_bot_token)
-            f_comm = Prompt.ask("Fluxer Community ID", default=self.config.fluxer_community_id)
-            s_token = self.config.stoat_bot_token
-            s_comm = self.config.stoat_server_id
-        else:
-            s_token = Prompt.ask("Stoat Bot Token", default=self.config.stoat_bot_token)
-            s_comm = Prompt.ask("Stoat Server ID", default=self.config.stoat_server_id)
-            f_token = self.config.fluxer_bot_token
-            f_comm = self.config.fluxer_community_id
-        
-        # Only rewrite if changed
-        if (d_token != self.config.discord_bot_token or
-            f_token != self.config.fluxer_bot_token or
-            d_server != self.config.discord_server_id or
-            f_comm != self.config.fluxer_community_id or
-            s_token != self.config.stoat_bot_token or
-            s_comm != self.config.stoat_server_id):
-            
-            self.config.discord_bot_token = d_token
-            self.config.fluxer_bot_token = f_token
-            self.config.discord_server_id = d_server
-            self.config.fluxer_community_id = f_comm
-            self.config.stoat_bot_token = s_token
-            self.config.stoat_server_id = s_comm
-            
-            save_config(self.config, self.config_path)
-            # Recreate engine with new config
-            self.engine = MigrationContext(self.config, self.target_platform)
-            
-            # Re-validate
-            console.print("[yellow]Validating new configuration...[/yellow]")
-            await self.update_validation_status()
+            if self.target_platform == "fluxer":
+                console.print(f"Fluxer Bot Token {get_status_str(v.get('fluxer_token', False), v.get('fluxer_bot_name'))}")
+                console.print(f"Fluxer Community ID {get_status_str(v.get('fluxer_community', False), v.get('fluxer_community_name'))}")
+                console.print(f"Fluxer API URL [dim]({self.config.fluxer_api_url})[/dim]")
+            else:
+                console.print(f"Stoat Bot Token {get_status_str(v.get('stoat_token', False), v.get('stoat_bot_name'))}")
+                console.print(f"Stoat Server ID {get_status_str(v.get('stoat_server', False), v.get('stoat_server_name'))}")
+                console.print(f"Stoat API URL [dim]({self.config.stoat_api_url})[/dim]")
 
-            console.print(f"\nDiscord Bot Token {get_status_str(self.validation_results.get('discord_token', False))}")
-            console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
-            console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
-            console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
-            console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False))}")
-            console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False))}")
+            console.print("\n(1) Edit Bot tokens & Community IDs")
+            console.print("(2) Edit API url (for self hosted instances)")
+            console.print("(B) Back")
             
-            console.print(f"[bold green]Configuration updated and saved to {self.config_path}![/bold green]")
-        else:
-            console.print("[yellow]No changes made.[/yellow]")
+            menu_choice = Prompt.ask("\nSelect an option [1/2/B]", choices=["1", "2", "B", "b"], default="B", show_choices=False).upper()
+            
+            if menu_choice == "B":
+                return
+                
+            if menu_choice == "2":
+                console.print("\n[bold]API URL Editor[/bold] (leave blank to keep current)")
+                
+                if self.target_platform == "fluxer":
+                    f_url = Prompt.ask("Fluxer API URL", default=self.config.fluxer_api_url)
+                    s_url = self.config.stoat_api_url
+                    changed = f_url != self.config.fluxer_api_url
+                else:
+                    s_url = Prompt.ask("Stoat API URL", default=self.config.stoat_api_url)
+                    f_url = self.config.fluxer_api_url
+                    changed = s_url != self.config.stoat_api_url
+                
+                if not changed:
+                    console.print("[yellow]No changes made.[/yellow]")
+                    time.sleep(1)
+                    continue
+
+                # Validation logic
+                all_valid = True
+                with console.status("[bold yellow]Validating API endpoint..."):
+                    async def check_api(url, name):
+                        if url == "default":
+                            return True
+                        try:
+                            # Use a 5 second timeout for validation
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(url.rstrip("/") + "/", timeout=5.0) as resp:
+                                    if resp.status >= 500:
+                                        console.print(f"[red]Error: {name} API returned server error {resp.status}[/red]")
+                                        return False
+                                    return True
+                        except Exception as e:
+                            console.print(f"[red]Error connecting to {name} API ({url}): {e}[/red]")
+                            return False
+
+                    if self.target_platform == "fluxer":
+                        if not await check_api(f_url, "Fluxer"): all_valid = False
+                    else:
+                        if not await check_api(s_url, "Stoat"): all_valid = False
+
+                if all_valid:
+                    console.print("[bold green]API endpoint valid[/bold green]")
+                else:
+                    console.print("[bold red]API validation failed![/bold red]")
+
+                if Confirm.ask("Save config?", default=all_valid):
+                    self.config.fluxer_api_url = f_url
+                    self.config.stoat_api_url = s_url
+                    save_config(self.config, self.config_path)
+                    # Recreate engine with new config
+                    self.engine = MigrationContext(self.config, self.target_platform)
+                    console.print(f"\n[bold green]API URL updated and saved to {self.config_path}![/bold green]")
+                    await self.update_validation_status()
+                else:
+                    console.print("[yellow]Changes discarded.[/yellow]")
+                
+                time.sleep(1)
+                continue
+                
+            console.print("\n[bold]Configuration Editor[/bold] (leave blank to keep current)")
+            
+            d_token = Prompt.ask("Discord Bot Token", default=self.config.discord_bot_token)
+            d_server = Prompt.ask("Discord Server ID", default=self.config.discord_server_id)
+            
+            if self.target_platform == "fluxer":
+                f_token = Prompt.ask("Fluxer Bot Token", default=self.config.fluxer_bot_token)
+                f_comm = Prompt.ask("Fluxer Community ID", default=self.config.fluxer_community_id)
+                s_token = self.config.stoat_bot_token
+                s_comm = self.config.stoat_server_id
+            else:
+                s_token = Prompt.ask("Stoat Bot Token", default=self.config.stoat_bot_token)
+                s_comm = Prompt.ask("Stoat Server ID", default=self.config.stoat_server_id)
+                f_token = self.config.fluxer_bot_token
+                f_comm = self.config.fluxer_community_id
+            
+            # Only rewrite if changed
+            if (d_token != self.config.discord_bot_token or
+                f_token != self.config.fluxer_bot_token or
+                d_server != self.config.discord_server_id or
+                f_comm != self.config.fluxer_community_id or
+                s_token != self.config.stoat_bot_token or
+                s_comm != self.config.stoat_server_id):
+                
+                self.config.discord_bot_token = d_token
+                self.config.fluxer_bot_token = f_token
+                self.config.discord_server_id = d_server
+                self.config.fluxer_community_id = f_comm
+                self.config.stoat_bot_token = s_token
+                self.config.stoat_server_id = s_comm
+                
+                save_config(self.config, self.config_path)
+                # Recreate engine with new config
+                self.engine = MigrationContext(self.config, self.target_platform)
+                
+                # Re-validate
+                console.print("[yellow]Validating new configuration...[/yellow]")
+                await self.update_validation_status()
+
+                console.print(f"\nDiscord Bot Token {get_status_str(self.validation_results.get('discord_token', False))}")
+                console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
+                console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
+                console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
+                console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False))}")
+                console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False))}")
+                
+                console.print(f"[bold green]Configuration updated and saved to {self.config_path}![/bold green]")
+            else:
+                console.print("[yellow]No changes made.[/yellow]")
+            
+            time.sleep(1) # Small delay to see status before refresh
 
     async def update_validation_status(self):
         await self.validate_config()

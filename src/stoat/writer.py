@@ -5,12 +5,17 @@ from typing import Optional, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 class StoatWriter:
-    def __init__(self, token: str, community_id: str):
+    def __init__(self, token: str, community_id: str, api_url: str = "default"):
         self.token = token
         self.community_id = str(community_id)
+        self.api_url = api_url
 
     async def start(self):
-        self.client = stoat.Client(token=self.token, bot=True)
+        client_kwargs = {"token": self.token, "bot": True}
+        if self.api_url and self.api_url != "default":
+            client_kwargs["http_base"] = self.api_url
+            
+        self.client = stoat.Client(**client_kwargs)
         self._server = None
         self._me = None
         try:
@@ -45,7 +50,11 @@ class StoatWriter:
         }
         
         # Use a temporary client for validation
-        client = stoat.Client(token=self.token, bot=True)
+        client_kwargs = {"token": self.token, "bot": True}
+        if self.api_url and self.api_url != "default":
+            client_kwargs["http_base"] = self.api_url
+
+        client = stoat.Client(**client_kwargs)
         try:
             # Validate token by fetching current user
             try:

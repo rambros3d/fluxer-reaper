@@ -6,9 +6,10 @@ from fluxer import Bot, Webhook, Forbidden
 logger = logging.getLogger(__name__)
 
 class FluxerWriter:
-    def __init__(self, token: str, community_id: str):
+    def __init__(self, token: str, community_id: str, api_url: str = "default"):
         self.token = token
         self.community_id = str(community_id)
+        self.api_url = api_url
         self.bot: Optional[Bot] = None
         self._bot_task: Optional[asyncio.Task] = None
         self._ready_event = asyncio.Event()
@@ -45,7 +46,11 @@ class FluxerWriter:
         if self.bot and self._bot_task and not self._bot_task.done():
             return
 
-        self.bot = Bot()
+        bot_kwargs = {}
+        if self.api_url and self.api_url != "default":
+            bot_kwargs["api_url"] = self.api_url
+            
+        self.bot = Bot(**bot_kwargs)
         self._ready_event.clear()
 
         # Define a simple on_ready listener to signal when we're connected
