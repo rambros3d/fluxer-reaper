@@ -2,97 +2,61 @@
 
 Fluxer Reaper is a simple tool to help you move an entire Discord server over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
 
+>Join our [**Reaper Community**](https://fluxer.gg/9KxDP8WH) if you need help or have any questions.
+
 ![Fluxer Reaper](images/fluxer-reaper.jpg)
 
+| Features | Fluxer | Stoat |
+| :--- | :---: | :---: |
+| **Server Template** |  |  |
+| - Copy Categories & Channels | 🟩 | 🟩 |
+| - Category Linking | 🟩 | 🟩 |
+| - Channel Topic/Description | 🟩 | 🟩 |
+| - NSFW Status | 🟩 | 🟩 |
+| - Slowmode | 🟩 | ⚠️ |
+| **Roles & Permissions** |  |  |
+| - Roles Cloning | 🟩 | 🟩 |
+| - Roles Permissions | 🟩 | ⏳ |
+| - Category Permissions | 🟩 | ⚠️ |
+| - Channel Permissions | 🟩 | ⏳ |
+| **Emojis & Stickers** |  |  |
+| - Copy Emojis | 🟩 | 🟩 |
+| - Copy Stickers | 🟩 | ⚠️ |
+| **Server Identity** |  |  |
+| - Server Name | 🟩 | 🟩 |
+| - Server Icon | 🟩 | 🟩 |
+| - Server Banner | 🟩 | 🟩 |
+| **Message Message history** |  |  |
+| - Text Messages | 🟩 | 🟩 |
+| - File Attachments | 🟩 | 🟩 *some file extensions not supported*|
+| - Preserve Reply Links | 🟩 | 🟩 |
+| - Threads | 🟩 | 🟩 |
+| - Forums | ⚠️ | ⚠️ |
 
-## Features
+🟩fully functional | ⏳to be implemented | ⚠️feature not available
 
-### 1. Clone Server Template
-*   **Structure Sync**: Automatically creates all your Discord categories and channels in Fluxer.
-*   **Property Migration**: Copies channel topics, NSFW status, and slowmode settings.
-*   **Deduplication**: Reads Fluxer for existing channels to prevent duplicates.
-*   **Category Linking**: Ensures channels are automatically placed within their correct categories.
+---
 
-### 2. Copy Roles & Permissions
-*   **Role Migration**: Copies roles, colors, and basic permissions.
-*   **Permission Sync**: Mirrors category and channel-specific role overwrites.
-
-### 3. Copy Emojis & Stickers
-*   **Asset Migration**: Downloads and uploads custom emojis and stickers.
-*   **Flexible Sync**: Options to sync emojis only, stickers only, or both.
-
-### 4. Sync Server Identity
-*   **Metadata Sync**: Syncs your server name, icon, and banner.
-*   **Component Selection**: Options to sync only specific components.
-
-### 5. Migrate Message History
-*   **Masquerade User**: Uses webhooks to mirror original user avatars and nicknames for a seamless transition.
-*   **Contextual Pairing**: Easily map Discord channels to their Fluxer counterparts.
+### Other Features
 *   **Flexible Start Points**: Start from the oldest message, a specific custom message ID/link, or continue from where you left off.
-*   **Rich History**: Migrates message content, author markers, and attachments.
-*   **Thread Support**: Handles threads with dedicated markers in the target channel.
+*   **Thread Support**: Copies threads with dedicated markers in the target channel. This is a workaround as the threads feature is not yet natively implemented in Fluxer/Stoat.
+*   **Permission Checks**: Checks if bots have the required Permissions.
+*   **Audit Channel**: Logs migration progress and errors to a logs channel in the target community.
 
-### 6. Configuration & Validation
-*   **Real-time Validation**: Audits bot tokens and IDs for validity.
-*   **Permission Checks**: Checks if bots have the required Intents and Permissions.
-
-### 7. Danger Zone
+### Danger Zone
 *   **Wipe Options**: Irreversibly delete channels, roles, or assets to clear a community.
 *   **Permission Reset**: Batch-wipe all channel permission overwrites.
 
-## Notes:
-- The Discord bot has read-only access to the source server. Hence no changes will be made to the source server.
-- Currently Fluxer is unstable probably due to high traffic, migrating servers now will only add to that problem. Only use this for testing purposes for now. [Check status here](https://fluxerstatus.com)
+The Discord bot has **read-only access** to the Discord server. Hence **no changes** will be made to the source Discord server.
+
+### Notes:
+- Currently Fluxer is unstable probably due to high traffic, migrating servers now will only add to that problem. Only use this for testing purposes for now. Check status on [reallyaweso.me](https://uptime.reallyaweso.me/status/fluxer) or [fluxerstatus(official)](https://fluxerstatus.com)
 
 
-# Bot Setup
 
-# 1) Fluxer Bot
+# Getting Started
 
-Go to your **user settings** in Fluxer (**Ctrl** + **,**) and **Create Application**
-![Fluxer Step 1](images/fluxer-bot-1.png)
-
-**Name your bot**
-![Fluxer Step 2](images/fluxer-bot-2.png)
-
-**Regenerate** & copy the **Bot Token**. Save it somewhere safe, you will need it later for the tool
-![Fluxer Step 3](images/fluxer-bot-3.png)
-
-Scroll down to **Scopes** and select **bot**. Enable **Administrator** under Bot Permissions
-![Fluxer Step 4](images/fluxer-bot-4.png)
-
-Choose your **Fluxer Community** (Preferably create and use a new one)
-![Fluxer Step 5](images/fluxer-bot-5.png)
-
-**Authorize** & Add the bot to your community
-![Fluxer Step 6](images/fluxer-bot-6.png)
-
-
-## 2) Discord Bot
-
-Go to https://discord.com/developers/applications & create **New Application**
-![Discord Step 1](images/discord-bot-1.png)
-
-**Name your bot**
-![Discord Step 2](images/discord-bot-2.png)
-
-In the bot Settings, enable **Message Content Intent**
-![Discord Step 3](images/discord-bot-3.png)
-
-**Regenerate** & copy the **Bot Token**. Save it somewhere safe, you will need it later for the tool
-![Discord Step 4](images/discord-bot-4.png)
-
-Under **Installation** section, enable these:
-- Scopes: **bot**
-- Permissions: **Read Message History** , **View Channels**
-
-![Discord Step 5](images/discord-bot-5.png)
-
-Finally open the **Install link** and add the bot to your Discord server
-![Discord Step 6](images/discord-bot-6.png)
-
-
-## Getting Started
+#### Setup the bots as per this [guide](BOT-SETUP.md)
 
 ### Option 1: Using Pre-built Binaries (Easiest)
 1. **Download**: Download the latest executable from the [Releases](https://github.com/rambros3d/fluxer-reaper/releases) page & unzip it.
@@ -112,10 +76,44 @@ Finally open the **Install link** and add the bot to your Discord server
    - **Windows**: Double-click `launch-reaper-WIN.bat`
 
 
+---
+---
+## Discord Age Verification Misconceptions
+
+Discord’s latest operation just proves they never cared about you or your kids' safety.
+
+### Age verification protect kids
+- Online safety of your kids should be your responsibility.
+- The big tech and especially the government should stay away from the kids. Period. 
+- Do you think they care about your kids' safety, Really?
+
+
+### Its the Law
+>Discord is rolling out age verification in all countries; even when not required by law.
+
+>**Big tech companies didn't comply with the laws when mishandling our data.**
+Now they suddenly seem to care when complying with age verification laws (as they can grab even more data).
+
+- Point being, in either case they never cared about the us. As we are their product anyway
+- I dont expect these companies to stand up for our rights against these dystopian laws.
+
+
+### Discord ID verification "privacy-preserving"
+
+>Discord initially **fooled everyone** that it will be optional and the verification data wont leave the device.
+But now their own website states that **Persona** will be used in some countries, its brought to you by the same guy involved with [**Palantir**](https://corbettreport.com/what-does-palantir-actually-do/).
+
+### **Just say NO** to invasive companies & Move to platforms that respects your privacy.
+
+---
+---
+
 ### Documentation
 Detailed info about the code can be found at https://deepwiki.com/rambros3d/fluxer-reaper
 
-## Vibe Code Notice
+### Vibe Code Notice
 
 - Code is provided as is; This tool was developed with AI.
 - Take it, use it, modify it, feel free to do whatever you wish.
+
+---
