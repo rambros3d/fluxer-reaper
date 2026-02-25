@@ -1335,23 +1335,29 @@ class MigrationCLI:
                     progress_callback=update_msg_progress
                 )
                 
-            console.print(f"\n[bold green]Success! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold green]")
+            if not self.engine.is_running:
+                console.print(f"\n[bold yellow]Migration Interrupted! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold yellow]")
+                event_title = "Message History Migration Interrupted"
+            else:
+                console.print(f"\n[bold green]Success! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold green]")
+                event_title = "Message History Migrated"
             
-            lines = [f"Successfully migrated messages from Discord #{source_channel.name} to {platform_name} #{target_channel.get('name')}:"]
+            lines = [f"Migrated messages from Discord #{source_channel.name} to {platform_name} #{target_channel.get('name')}:"]
             
             if result_stats.get('first_message_url') or result_stats.get('last_message_url'):
                 lines.append(f"**Message Info:**")
                 if result_stats.get('first_message_url'):
-                    lines.append(f"- First message: <{result_stats['first_message_url']}>")
+                    lines.append(f"First message: <{result_stats['first_message_url']}>")
                 if result_stats.get('last_message_url'):
-                    lines.append(f"- Last message: <{result_stats['last_message_url']}>")
+                    lines.append(f"Last message: <{result_stats['last_message_url']}>")
+            
             lines.append(f"**Stats:**")
-            lines.append(f"- {result_stats['messages']} messages")
-            lines.append(f"- {result_stats['attachments']} attachments")
-            lines.append(f"- {result_stats['threads']} threads")
+            lines.append(f"{result_stats['messages']} messages")
+            lines.append(f"{result_stats['attachments']} attachments")
+            lines.append(f"{result_stats['threads']} threads")
             
             audit_desc = "\n".join(lines)
-            await log_audit_event(self.engine, "Message History Migrated", audit_desc)
+            await log_audit_event(self.engine, event_title, audit_desc)
 
         except Exception as e:
             err_str = str(e)
