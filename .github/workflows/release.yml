@@ -57,17 +57,15 @@ jobs:
       - name: Prepare Release Asset (Linux/MacOS)
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: |
-          mkdir discord-reaper
-          cp ${{ matrix.executable_path }} discord-reaper/
-          chmod +x discord-reaper/fluxer-reaper
-          zip -r ${{ matrix.asset_name }} discord-reaper/
+          cp ${{ matrix.executable_path }} fluxer-reaper
+          chmod +x fluxer-reaper
+          zip ${{ matrix.asset_name }} fluxer-reaper
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          mkdir discord-reaper
-          copy ${{ matrix.executable_path }} discord-reaper\
-          powershell Compress-Archive -Path "discord-reaper" -DestinationPath "${{ matrix.asset_name }}"
+          copy ${{ matrix.executable_path }} fluxer-reaper.exe
+          powershell Compress-Archive -Path "fluxer-reaper.exe" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

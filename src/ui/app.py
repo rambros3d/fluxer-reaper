@@ -1250,18 +1250,18 @@ class MigrationCLI:
                 
             console.print(f"\n[bold green]Success! {result_stats['messages']} messages migrated to {target_channel.get('name')}.[/bold green]")
             
-            lines = [f"Successfully migrated messages from Discord [cyan]#{source_channel.name}[/cyan] to [blue]#{target_channel.get('name')}[/blue]:"]
-            lines.append(f"\n**Stats:**")
-            lines.append(f"- {result_stats['messages']} messages")
-            lines.append(f"- {result_stats['attachments']} attachments")
-            lines.append(f"- {result_stats['threads']} threads")
+            lines = [f"Successfully migrated messages from Discord #{source_channel.name} to {platform_name} #{target_channel.get('name')}:"]
             
             if result_stats.get('first_message_url') or result_stats.get('last_message_url'):
-                lines.append(f"\n**Message Info:**")
+                lines.append(f"**Message Info:**")
                 if result_stats.get('first_message_url'):
                     lines.append(f"- First message: <{result_stats['first_message_url']}>")
                 if result_stats.get('last_message_url'):
                     lines.append(f"- Last message: <{result_stats['last_message_url']}>")
+            lines.append(f"**Stats:**")
+            lines.append(f"- {result_stats['messages']} messages")
+            lines.append(f"- {result_stats['attachments']} attachments")
+            lines.append(f"- {result_stats['threads']} threads")
             
             audit_desc = "\n".join(lines)
             await log_audit_event(self.engine, "Message History Migrated", audit_desc)
@@ -1314,7 +1314,10 @@ class MigrationCLI:
         # ---- (1) Delete all Channels & Categories ----
         if choice == "1":
             console.print("")
-            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            if self.target_platform == "fluxer":
+                community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            else:
+                community_name = self.validation_results.get("stoat_server_name", "Unknown")
             console.print(f"[bold red]This will DELETE every channel and category in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
@@ -1347,7 +1350,10 @@ class MigrationCLI:
         # ---- (2) Reset Channel & Category Permissions ----
         elif choice == "2":
             console.print("")
-            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            if self.target_platform == "fluxer":
+                community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            else:
+                community_name = self.validation_results.get("stoat_server_name", "Unknown")
             console.print(f"[bold red]This will RESET all permission overwrites on every channel and category in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
@@ -1380,7 +1386,10 @@ class MigrationCLI:
         # ---- (3) Delete all Roles ----
         elif choice == "3":
             console.print("")
-            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            if self.target_platform == "fluxer":
+                community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            else:
+                community_name = self.validation_results.get("stoat_server_name", "Unknown")
             console.print(f"[bold red]This will DELETE all roles in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             console.print("[dim]Managed roles (including the bot's own role) and @everyone are automatically protected.[/dim]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
@@ -1414,7 +1423,10 @@ class MigrationCLI:
         # ---- (4) Delete all Emojis & Stickers ----
         elif choice == "4":
             console.print("")
-            community_name = self.validation_results.get(f"{self.target_platform}_community_name", "Unknown")
+            if self.target_platform == "fluxer":
+                community_name = self.validation_results.get("fluxer_community_name", "Unknown")
+            else:
+                community_name = self.validation_results.get("stoat_server_name", "Unknown")
             console.print(f"[bold red]This will DELETE all custom emojis and stickers in the {self.target_platform.capitalize()} community: \"{community_name}\"[/bold red]")
             if not Confirm.ask("[bold red]Are you absolutely sure?[/bold red]"):
                 return
