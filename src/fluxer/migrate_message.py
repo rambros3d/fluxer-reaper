@@ -8,19 +8,28 @@ from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild) -> str:
+def clean_mentions(content: str, guild, mentions=None) -> str:
     if not content or not guild:
         return content
         
     def replace_user(match):
         uid = int(match.group(1))
+        # Try guild cache first
         member = guild.get_member(uid)
-        return f"@{member.display_name}" if member else match.group(0)
+        if member:
+            return f"`@{member.display_name}`"
+        # Try message mentions list
+        if mentions:
+            for user in mentions:
+                if user.id == uid:
+                    name = getattr(user, 'display_name', user.name)
+                    return f"`@{name}`"
+        return match.group(0)
         
     def replace_role(match):
         rid = int(match.group(1))
         role = guild.get_role(rid)
-        return f"@{role.name}" if role else match.group(0)
+        return f"`@{role.name}`" if role else match.group(0)
         
     def replace_channel(match):
         cid = int(match.group(1))
@@ -30,6 +39,7 @@ def clean_mentions(content: str, guild) -> str:
     content = re.sub(r'<@!?([0-9]+)>', replace_user, content)
     content = re.sub(r'<@&([0-9]+)>', replace_role, content)
     content = re.sub(r'<#([0-9]+)>', replace_channel, content)
+    content = content.replace("@everyone", "`@everyone`").replace("@here", "`@here`")
     return content
 
 
@@ -111,8 +121,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     )
                 continue
             else:
-                # Get clean content
-                content = msg.clean_content
+                # Use custom clean_mentions with msg.mentions for accuracy
+                content = clean_mentions(msg.content, msg.guild, msg.mentions)
                 
             # Process attachments
             files = []
@@ -134,7 +144,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     if not content: # Only update content if it wasn't already set (e.g., by thread_starter_message)
                         content = snapshot.content
                         if hasattr(msg, 'guild') and msg.guild:
-                            content = clean_mentions(content, msg.guild)
+                            content = clean_mentions(content, msg.guild, snapshot.mentions if hasattr(snapshot, 'mentions') else None)
                     # Add snapshot attachments to the list to process
                     attachments_to_process.extend(snapshot.attachments)
                     logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")
