@@ -8,28 +8,50 @@ from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, mentions=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None) -> str:
     if not content or not guild:
         return content
         
     def replace_user(match):
         uid = int(match.group(1))
-        # Try guild cache first
+        # 1. Try provided guild
         member = guild.get_member(uid)
         if member:
             return f"`@{member.display_name}`"
-        # Try message mentions list
-        if mentions:
-            for user in mentions:
-                if user.id == uid:
-                    name = getattr(user, 'display_name', user.name)
-                    return f"`@{name}`"
+        # 2. Try message's user_mentions
+        if user_mentions:
+            for u in user_mentions:
+                if u.id == uid:
+                    return f"`@{getattr(u, 'display_name', u.name)}`"
+        # 3. Try global cache via guild.client
+        if hasattr(guild, 'client'):
+            user = guild.client.get_user(uid)
+            if user:
+                return f"`@{user.name}`"
         return match.group(0)
         
     def replace_role(match):
         rid = int(match.group(1))
-        role = guild.get_role(rid)
-        return f"`@{role.name}`" if role else match.group(0)
+        # 1. Try provided guild cache/list
+        role = guild.get_role(rid) or discord.utils.get(guild.roles, id=rid)
+        # 2. Try message's role_mentions
+        if not role and role_mentions:
+            role = discord.utils.get(role_mentions, id=rid)
+        
+        # 3. Try all guilds the client is aware of (fallback for cache issues)
+        if not role and hasattr(guild, 'client'):
+            for g in guild.client.guilds:
+                role = g.get_role(rid)
+                if role: break
+        
+        if role and role.name:
+            return f"`@{role.name}`"
+            
+        # 4. Try provided role map
+        if role_map and rid in role_map:
+            return f"`@{role_map[rid]}`"
+            
+        return match.group(0)
         
     def replace_channel(match):
         cid = int(match.group(1))
@@ -121,8 +143,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     )
                 continue
             else:
-                # Use custom clean_mentions with msg.mentions for accuracy
-                content = clean_mentions(msg.content, msg.guild, msg.mentions)
+                # Use custom clean_mentions with msg mentions for accuracy
+                content = clean_mentions(msg.content, msg.guild, msg.mentions, msg.role_mentions, context.discord_reader.role_map)
                 
             # Process attachments
             files = []
@@ -144,7 +166,13 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     if not content: # Only update content if it wasn't already set (e.g., by thread_starter_message)
                         content = snapshot.content
                         if hasattr(msg, 'guild') and msg.guild:
-                            content = clean_mentions(content, msg.guild, snapshot.mentions if hasattr(snapshot, 'mentions') else None)
+                            content = clean_mentions(
+                                content, 
+                                msg.guild, 
+                                snapshot.mentions if hasattr(snapshot, 'mentions') else None,
+                                snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
+                                context.discord_reader.role_map
+                            )
                     # Add snapshot attachments to the list to process
                     attachments_to_process.extend(snapshot.attachments)
                     logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")

@@ -12,6 +12,7 @@ class DiscordReader:
         
         self.guild: discord.Guild | None = None
         self.client: discord.Client | None = None
+        self.role_map: Dict[int, str] = {}
 
     def _create_client(self):
         intents = discord.Intents.default()
@@ -24,10 +25,16 @@ class DiscordReader:
         """Starts the Discord client to fetch metadata."""
         if not self.client or self.client.is_closed():
             self.client = self._create_client()
-            
+        
+        # login() initializes the internal HTTP session needed for API calls
         await self.client.login(self.token)
-        # In a real app we'd wait until ready, here we simulate fetching the guild
+        
+        # Use fetch methods specifically to bypass dependency on gateway cache
         self.guild = await self.client.fetch_guild(self.server_id)
+        
+        # Pre-fetch roles via API
+        roles = await self.guild.fetch_roles()
+        self.role_map = {r.id: r.name for r in roles}
 
     async def validate(self) -> Dict[str, Any]:
         """Validates the token, server ID, intents, and permissions."""
