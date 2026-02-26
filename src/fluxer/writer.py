@@ -122,10 +122,16 @@ class FluxerWriter:
                         # Calculate total permissions
                         # In Discord/Fluxer, permissions are additive
                         total_perms = 0
+                        fluxer_guild_id = 0
+                        try:
+                            fluxer_guild_id = int(self.community_id)
+                        except (ValueError, TypeError):
+                            pass
+
                         for r_data in all_roles_data:
                             r_id = int(r_data["id"])
                             # Add @everyone permissions (role ID same as guild ID)
-                            if r_id == int(self.community_id) or r_id in member_role_ids:
+                            if r_id == fluxer_guild_id or r_id in member_role_ids:
                                 total_perms |= int(r_data.get("permissions", 0))
                         
                         # Debugging
@@ -510,9 +516,16 @@ class FluxerWriter:
         """Sets a permission overwrite for a channel or category."""
         assert self.client is not None
         try:
+            target_channel_id = int(channel_id)
+            target_overwrite_id = int(overwrite_id)
+        except (ValueError, TypeError):
+            logger.warning(f"Fluxer: Skipping permission set for non-numeric ID: channel={channel_id}, overwrite={overwrite_id}")
+            return
+
+        try:
             await self.client.edit_channel_permissions(
-                channel_id=int(channel_id),
-                overwrite_id=int(overwrite_id),
+                channel_id=target_channel_id,
+                overwrite_id=target_overwrite_id,
                 allow=allow,
                 deny=deny,
                 type=0 if is_role else 1

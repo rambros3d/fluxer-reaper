@@ -1,3 +1,4 @@
+from typing import Optional, Union
 import yaml
 from pathlib import Path
 from pydantic import BaseModel, Field
@@ -10,26 +11,26 @@ class MigrationSettings(BaseModel):
 class AppConfig(BaseModel):
     discord_bot_token: str
     discord_server_id: str
-    fluxer_bot_token: str
-    fluxer_community_id: str
-    fluxer_api_url: str = Field(default="default")
-    stoat_bot_token: str
-    stoat_server_id: str
-    stoat_api_url: str = Field(default="default")
+    fluxer_bot_token: Optional[str] = Field(default=None)
+    fluxer_community_id: Optional[str] = Field(default=None)
+    fluxer_api_url: Optional[str] = Field(default=None)
+    stoat_bot_token: Optional[str] = Field(default=None)
+    stoat_server_id: Optional[str] = Field(default=None)
+    stoat_api_url: Optional[str] = Field(default=None)
     migration: MigrationSettings = Field(default_factory=MigrationSettings)
 
-def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
+def load_config(config_path: Union[str, Path] = "config.yaml") -> AppConfig:
     path = Path(config_path)
     if not path.exists():
         # Create dummy config if missing
         config = AppConfig(
-            discord_bot_token="YOUR_DISCORD_TOKEN",
-            discord_server_id="000000000000000000",
-            fluxer_bot_token="YOUR_FLUXER_TOKEN",
-            fluxer_community_id="000000000000000000",
+            discord_bot_token="DISCORD_BOT_TOKEN",
+            discord_server_id="DISCORD_SERVER_ID",
+            fluxer_bot_token="FLUXER_BOT_TOKEN",
+            fluxer_community_id="FLUXER_COMMUNITY_ID",
             fluxer_api_url="default",
-            stoat_bot_token="YOUR_STOAT_TOKEN",
-            stoat_server_id="000000000000000000",
+            stoat_bot_token="STOAT_BOT_TOKEN",
+            stoat_server_id="STOAT_SERVER_ID",
             stoat_api_url="default"
         )
         save_config(config, path)
@@ -44,9 +45,9 @@ def load_config(config_path: str | Path = "config.yaml") -> AppConfig:
         
     return AppConfig(**data)
 
-def save_config(config: AppConfig, config_path: str | Path = "config.yaml"):
+def save_config(config: AppConfig, config_path: Union[str, Path] = "config.yaml"):
     path = Path(config_path)
-    # Dump model to dictionary
-    data = config.model_dump()
+    # Dump model to dictionary, excluding None values to keep the YAML clean
+    data = config.model_dump(exclude_none=True)
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)

@@ -4,7 +4,11 @@ from typing import AsyncGenerator, Dict, Any
 class DiscordReader:
     def __init__(self, token: str, server_id: str):
         self.token = token
-        self.server_id = int(server_id)
+        try:
+            self.server_id = int(server_id)
+        except (ValueError, TypeError):
+            # Fallback for placeholder strings like 'DISCORD_SERVER_ID'
+            self.server_id = 0
         
         self.guild: discord.Guild | None = None
         self.client: discord.Client | None = None

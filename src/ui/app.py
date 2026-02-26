@@ -112,9 +112,13 @@ class MigrationCLI:
         f_token = self.config.fluxer_bot_token
         s_token = self.config.stoat_bot_token
         
-        discord_dummy = d_token in ["YOUR_DISCORD_TOKEN", "DISCORD_BOT_TOKEN", ""]
-        fluxer_dummy = f_token in ["YOUR_FLUXER_TOKEN", "FLUXER_BOT_TOKEN", "YOUR_STOAT_TOKEN", "STOAT_BOT_TOKEN", ""]
-        stoat_dummy = s_token in ["YOUR_STOAT_TOKEN", "STOAT_BOT_TOKEN", "YOUR_FLUXER_TOKEN", "FLUXER_BOT_TOKEN", ""]
+        fillers = ["DISCORD_BOT_TOKEN", "FLUXER_BOT_TOKEN", "STOAT_BOT_TOKEN",
+            "000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID", "STOAT_SERVER_ID",
+            "", None
+        ]
+        discord_dummy = d_token in fillers or self.config.discord_server_id in fillers
+        fluxer_dummy = f_token in fillers or self.config.fluxer_community_id in fillers
+        stoat_dummy = s_token in fillers or self.config.stoat_server_id in fillers
 
         discord_task = None
         if not discord_dummy:
@@ -144,7 +148,7 @@ class MigrationCLI:
 
                 # Process Discord Result
                 if discord_dummy:
-                    console.print("[bold yellow]Discord setup incomplete (Using default token).[/bold yellow]")
+                    console.print("[bold yellow]Discord setup incomplete.[/bold yellow]")
                 elif discord_task in done:
                     try:
                         res = discord_task.result()
@@ -171,7 +175,7 @@ class MigrationCLI:
                 # Process Fluxer Result
                 if self.target_platform == "fluxer":
                     if fluxer_dummy:
-                        console.print("[dim yellow]Fluxer platform setup incomplete (Using default token).[/dim yellow]")
+                        console.print("[dim yellow]Fluxer platform setup incomplete.[/dim yellow]")
                     elif fluxer_task in done:
                         try:
                             res = fluxer_task.result()
@@ -195,7 +199,7 @@ class MigrationCLI:
                 # Process Stoat Result
                 if self.target_platform == "stoat":
                     if stoat_dummy:
-                        console.print("[dim yellow]Stoat platform setup incomplete (Using default token).[/dim yellow]")
+                        console.print("[dim yellow]Stoat platform setup incomplete.[/dim yellow]")
                     elif stoat_task in done:
                         try:
                             res = stoat_task.result()
@@ -253,7 +257,7 @@ class MigrationCLI:
                 if t is not None and not t.done(): t.cancel()
 
     async def run(self):
-        if self.config.discord_bot_token == "YOUR_DISCORD_TOKEN":
+        if self.config.discord_bot_token in ["YOUR_DISCORD_TOKEN", "DISCORD_BOT_TOKEN"]:
             console.print("\n[bold yellow]First time setup detected. Redirecting to configuration...[/bold yellow]")
             self.validation_results = {
                 "discord_token": False, "discord_bot_name": None,
@@ -486,7 +490,6 @@ class MigrationCLI:
                 f_token = self.config.fluxer_bot_token
                 f_comm = self.config.fluxer_community_id
             
-            # Only rewrite if changed
             if (d_token != self.config.discord_bot_token or
                 f_token != self.config.fluxer_bot_token or
                 d_server != self.config.discord_server_id or
@@ -494,12 +497,13 @@ class MigrationCLI:
                 s_token != self.config.stoat_bot_token or
                 s_comm != self.config.stoat_server_id):
                 
-                self.config.discord_bot_token = d_token
-                self.config.fluxer_bot_token = f_token
-                self.config.discord_server_id = d_server
-                self.config.fluxer_community_id = f_comm
-                self.config.stoat_bot_token = s_token
-                self.config.stoat_server_id = s_comm
+                # Treat empty string as None to unconfigure
+                self.config.discord_bot_token = d_token if d_token != "" else None
+                self.config.discord_server_id = d_server if d_server != "" else None
+                self.config.fluxer_bot_token = f_token if f_token != "" else None
+                self.config.fluxer_community_id = f_comm if f_comm != "" else None
+                self.config.stoat_bot_token = s_token if s_token != "" else None
+                self.config.stoat_server_id = s_comm if s_comm != "" else None
                 
                 save_config(self.config, self.config_path)
                 # Recreate engine with new config

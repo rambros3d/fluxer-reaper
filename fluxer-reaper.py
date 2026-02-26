@@ -31,9 +31,14 @@ def select_platform(config):
     
     console = Console()
     
-    fillers = ["YOUR_FLUXER_TOKEN", "FLUXER_BOT_TOKEN", "YOUR_STOAT_TOKEN", "STOAT_BOT_TOKEN", ""]
-    fluxer_set = config.fluxer_bot_token not in fillers
-    stoat_set = config.stoat_bot_token not in fillers
+    fillers = [    "DISCORD_BOT_TOKEN", "FLUXER_BOT_TOKEN", "STOAT_BOT_TOKEN",
+        "000000000000000000",
+        "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID", "STOAT_SERVER_ID",
+        "", None
+    ]
+    
+    fluxer_set = config.fluxer_bot_token not in fillers and config.fluxer_community_id not in fillers
+    stoat_set = config.stoat_bot_token not in fillers and config.stoat_server_id not in fillers
     
     if fluxer_set and not stoat_set:
         return "fluxer"

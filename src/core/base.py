@@ -23,6 +23,12 @@ class MigrationContext:
         else:
             server_id = config.fluxer_community_id
         
+        # Fallback for unconfigured platforms
+        if not server_id or server_id in [
+            "000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID", "STOAT_SERVER_ID"
+        ]:
+            server_id = "unconfigured"
+        
         self.state = MigrationState(
             state_file=f"{server_id}.state.json",
             messages_file=f"{server_id}.messages.json"
@@ -34,15 +40,15 @@ class MigrationContext:
         )
         
         self.fluxer_writer = FluxerWriter(
-            token=config.fluxer_bot_token,
-            community_id=config.fluxer_community_id,
-            api_url=config.fluxer_api_url
+            token=config.fluxer_bot_token or "",
+            community_id=config.fluxer_community_id or "",
+            api_url=config.fluxer_api_url or "default"
         )
         
         self.stoat_writer = StoatWriter(
-            token=config.stoat_bot_token,
-            community_id=config.stoat_server_id,
-            api_url=config.stoat_api_url
+            token=config.stoat_bot_token or "",
+            community_id=config.stoat_server_id or "",
+            api_url=config.stoat_api_url or "default"
         )
 
         self.writer = self.fluxer_writer if target_platform == "fluxer" else self.stoat_writer
