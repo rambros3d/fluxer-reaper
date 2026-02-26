@@ -294,7 +294,7 @@ class StoatWriter:
             return None
 
 
-    async def create_role(self, name: str, color: int = 0, hoist: bool = False, **kwargs) -> str:
+    async def create_role(self, name: str, color: int = 0, hoist: bool = False, permissions: int = 0, **kwargs) -> str:
         server = await self._get_server()
         try:
             # Create role first (Stoat create_role only takes name and rank)
@@ -310,10 +310,73 @@ class StoatWriter:
                 color=hex_color if hex_color is not None else stoat.UNDEFINED,
                 hoist=hoist
             )
+            
+            # Set permissions
+            if permissions != 0:
+                s_perms = self._map_permissions(permissions)
+                await server.set_role_permissions(role, allow=s_perms)
+                
             return str(role.id)
         except Exception as e:
             logger.error(f"Failed to create Stoat role {name}: {e}")
             return ""
+
+    def _map_permissions(self, discord_perms_int: int) -> stoat.Permissions:
+        import discord
+        d_perms = discord.Permissions(discord_perms_int)
+        
+        s_perms = stoat.Permissions.none()
+        
+        mapping = {
+            "manage_channels": "manage_channels",
+            "manage_guild": "manage_server",
+            "manage_roles": "manage_roles",
+            "kick_members": "kick_members",
+            "ban_members": "ban_members",
+            "view_channel": "view_channel",
+            "send_messages": "send_messages",
+            "manage_messages": "manage_messages",
+            "embed_links": "send_embeds",
+            "attach_files": "upload_files",
+            "read_message_history": "read_message_history",
+            "mention_everyone": "mention_everyone",
+            "add_reactions": "react",
+            "connect": "connect",
+            "speak": "speak",
+            "stream": "video",
+            "mute_members": "mute_members",
+            "deafen_members": "deafen_members",
+            "move_members": "move_members",
+            "manage_nicknames": "manage_nicknames",
+            "manage_webhooks": "manage_webhooks",
+            "manage_emojis": "manage_customization",
+            "manage_stickers": "manage_customization",
+            "moderate_members": "timeout_members",
+        }
+        
+        for d_name, s_name in mapping.items():
+            if getattr(d_perms, d_name, False):
+                try:
+                    setattr(s_perms, s_name, True)
+                except Exception:
+                    pass
+                
+        if d_perms.administrator:
+            return stoat.Permissions.all()
+            
+        return s_perms
+
+    async def update_default_role_permissions(self, permissions: int):
+        """Sets the default server permissions from a Discord permissions bitfield."""
+        server = await self._get_server()
+        try:
+            s_perms = self._map_permissions(permissions)
+            await server.set_default_permissions(s_perms)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to update Stoat default permissions: {e}")
+            return False
+
 
     async def create_emoji(self, name: str, image_bytes: bytes, **kwargs) -> str:
         server = await self._get_server()
@@ -437,9 +500,9 @@ class StoatWriter:
         try:
             channel = await self.client.fetch_channel(channel_id)
             
-            # Stoat Permissions objects are created from raw integers
-            allow_perms = stoat.Permissions(allow)
-            deny_perms = stoat.Permissions(deny)
+            # Stoat Permissions objects MUST be mapped from Discord bitfields
+            allow_perms = self._map_permissions(allow)
+            deny_perms = self._map_permissions(deny)
             
             # If overwrite_id is the community_id, it refers to the default permissions (@everyone)
             if str(overwrite_id) == self.community_id:
@@ -449,11 +512,11 @@ class StoatWriter:
                 # Stoat uses set_role_permissions(role_id, allow=..., deny=...)
                 await channel.set_role_permissions(overwrite_id, allow=allow_perms, deny=deny_perms)
             else:
-                # This case might not be directly supported for individual users in the same way
-                # but we'll try something if needed.
+                # User-specific overrides are currently skipped for Stoat
                 pass
         except Exception as e:
              logger.error(f"Failed to set Stoat channel permission for {overwrite_id} on {channel_id}: {e}")
+
 
     async def delete_all_roles(self, **kwargs) -> int:
         server = await self._get_server()

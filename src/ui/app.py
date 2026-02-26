@@ -739,7 +739,7 @@ class MigrationCLI:
                     role_task = progress.add_task("[cyan]Syncing Roles...", total=100)
                     
                     async def update_progress(item_name: str, current: int, total: int):
-                        progress.update(role_task, total=total, completed=current, description=f"[cyan]Syncing Role: {item_name}")
+                        progress.update(role_task, total=total, completed=current, description=f"[cyan]Copying Role: {item_name}")
     
                     self.engine.is_running = True
                     cloned_roles = await roles_mod.migrate_roles(self.engine, progress_callback=update_progress, force=force)

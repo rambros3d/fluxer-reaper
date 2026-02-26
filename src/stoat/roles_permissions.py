@@ -128,6 +128,17 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 
 async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
     """Copies roles and their baseline permissions. Returns a list of cloned role names."""
+    
+    # 1. Sync default permissions (@everyone)
+    try:
+        guild = context.discord_reader.guild
+        if guild:
+            default_role = guild.default_role
+            await context.stoat_writer.update_default_role_permissions(default_role.permissions.value)
+            logger.info("Synced default server permissions (@everyone).")
+    except Exception as e:
+        logger.error(f"Failed to sync default permissions: {e}")
+
     roles = await context.discord_reader.get_roles()
     
     if not force:
@@ -145,7 +156,8 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
         stoat_id = await context.stoat_writer.create_role(
             name=role.name,
             color=role.color.value,
-            hoist=role.hoist
+            hoist=role.hoist,
+            permissions=role.permissions.value
         )
         if stoat_id:
             context.state.set_role_mapping(str(role.id), stoat_id)
@@ -155,3 +167,4 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
         await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
         
     return cloned_role_names
+
