@@ -1,4 +1,5 @@
 import asyncio
+import discord
 import logging
 import re
 from typing import Callable, Awaitable, Dict, Any
@@ -73,6 +74,17 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             if not context.is_running:
                 break
                 
+            # Skip system messages like "pinned a message", etc.
+            # We treat thread_starter_message (type 21) as our thread marker.
+            content = "" # Initialize content
+            if msg.type == discord.MessageType.thread_starter_message:
+                content = f"> <<< THREAD: **{msg.channel.name}** >>>"
+            elif msg.type not in [discord.MessageType.default, discord.MessageType.reply]:
+                continue
+            else:
+                # Get clean content
+                content = msg.clean_content
+                
             # Process attachments
             files = []
             attachments_to_process = list(msg.attachments)
@@ -82,8 +94,6 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             if hasattr(msg.flags, 'forwarded'):
                 is_forwarded = msg.flags.forwarded
             
-            # Get clean content
-            content = msg.clean_content
             if is_forwarded:
                 logger.debug(f"Detected forwarded message: ID={msg.id}, Flags={msg.flags.value}")
                 if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
@@ -127,13 +137,6 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread
                     logger.info(f"Detected thread '{thread.name}' on message {msg.id}")
-                    
-                    # Send Start Marker
-                    stats["threads"] += 1
-                    await context.stoat_writer.send_marker(
-                        channel_id=target_channel_id,
-                        content=f"> <<< THREAD: **{thread.name}** >>>"
-                    )
                     
                     # Migrate thread messages recursively
                     thread_stats = await migrate_messages(

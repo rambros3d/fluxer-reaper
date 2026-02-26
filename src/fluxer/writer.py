@@ -1,7 +1,8 @@
 import asyncio
+import io
 import logging
 from typing import Optional, List, Dict, Any
-from fluxer import Bot, Webhook, Forbidden
+from fluxer import Bot, Webhook, Forbidden, File
 
 logger = logging.getLogger(__name__)
 
@@ -245,6 +246,11 @@ class FluxerWriter:
             
         final_content = prefix + display_content if display_content else prefix
 
+        # Convert files to fluxer.File objects
+        fluxer_files = None
+        if files:
+            fluxer_files = [File(io.BytesIO(f["data"]), filename=f["filename"]) for f in files]
+
         try:
             # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
             # So if we have a reply, we MUST use the bot's direct send method.
@@ -253,7 +259,7 @@ class FluxerWriter:
                     content=final_content,
                     username=f"{author_name} (discord)",
                     avatar_url=author_avatar_url,
-                    files=files,
+                    files=fluxer_files,
                     wait=True
                 )
                 return str(msg.id) if msg else None
@@ -274,7 +280,7 @@ class FluxerWriter:
                 msg_data = await self.client.send_message(
                     channel_id=channel_id,
                     content=final_bot_content,
-                    files=files,
+                    files=fluxer_files,
                     message_reference=message_reference
                 )
                 return str(msg_data["id"]) if msg_data else None
@@ -290,11 +296,16 @@ class FluxerWriter:
         Sends a simple marker message (e.g., thread start/end) using the bot directly.
         """
         assert self.client is not None
+        
+        fluxer_files = None
+        if files:
+            fluxer_files = [File(io.BytesIO(f["data"]), filename=f["filename"]) for f in files]
+            
         try:
             msg_data = await self.client.send_message(
                 channel_id=channel_id,
                 content=content,
-                files=files
+                files=fluxer_files
             )
             return str(msg_data["id"]) if msg_data else None
         except Exception as e:

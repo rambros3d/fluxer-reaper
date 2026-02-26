@@ -1,4 +1,5 @@
 import asyncio
+import discord
 import logging
 import re
 from typing import Callable, Awaitable, Dict, Any
@@ -74,6 +75,16 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             if not context.is_running:
                 break
                 
+            # Skip system messages like "pinned a message", etc.
+            # We treat thread_starter_message (type 21) as our thread marker.
+            if msg.type == discord.MessageType.thread_starter_message:
+                content = f"> <<< THREAD: **{msg.channel.name}** >>>"
+            elif msg.type not in [discord.MessageType.default, discord.MessageType.reply]:
+                continue
+            else:
+                # Get clean content
+                content = msg.clean_content
+                
             # Process attachments
             files = []
             attachments_to_process = list(msg.attachments)
@@ -85,13 +96,13 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 is_forwarded = msg.flags.forwarded
             
             # If forwarded, the content and attachments might be in message_snapshots (discord.py 2.5+)
-            content = msg.clean_content
+            # Note: If content was set by thread_starter_message, we don't overwrite it.
             if is_forwarded:
                 logger.debug(f"Detected forwarded message: ID={msg.id}, Flags={msg.flags.value}")
                 if hasattr(msg, 'message_snapshots') and msg.message_snapshots:
                     # For now we handle the first snapshot
                     snapshot = msg.message_snapshots[0]
-                    if not content:
+                    if not content: # Only update content if it wasn't already set (e.g., by thread_starter_message)
                         content = snapshot.content
                         if hasattr(msg, 'guild') and msg.guild:
                             content = clean_mentions(content, msg.guild)
@@ -131,13 +142,6 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread
                     logger.info(f"Detected thread '{thread.name}' on message {msg.id}")
-                    
-                    # Send Start Marker
-                    stats["threads"] += 1
-                    await context.fluxer_writer.send_marker(
-                        channel_id=target_channel_id,
-                        content=f"> <<< THREAD: **{thread.name}** >>>"
-                    )
                     
                     # Migrate thread messages
                     # We don't pass a progress callback here to avoid confusing the UI
