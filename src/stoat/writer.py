@@ -515,7 +515,12 @@ class StoatWriter:
                 # User-specific overrides are currently skipped for Stoat
                 pass
         except Exception as e:
+             err_msg = str(e)
+             if "MissingPermission" in err_msg and "ViewChannel" in err_msg:
+                 logger.error(f"Stoat LOCKOUT: Bot lacks 'ViewChannel' to edit {channel_id}. "
+                             "Ensure the bot has 'Manage Server' or a role with 'Allow View Channel' rank higher than @everyone.")
              logger.error(f"Failed to set Stoat channel permission for {overwrite_id} on {channel_id}: {e}")
+
 
 
     async def delete_all_roles(self, **kwargs) -> int:

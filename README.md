@@ -16,9 +16,9 @@ Fluxer Reaper is a simple tool to help you move an entire Discord server over to
 | - Slowmode | 🟩 | ⚠️ |
 | **Roles & Permissions** |  |  |
 | - Roles Cloning | 🟩 | 🟩 |
-| - Roles Permissions | 🟩 | ⏳ |
+| - Roles Permissions | 🟩 | 🟩 |
 | - Category Permissions | 🟩 | ⚠️ |
-| - Channel Permissions | 🟩 | ⏳ |
+| - Channel Permissions | 🟩 | ⏳to be done |
 | **Emojis & Stickers** |  |  |
 | - Copy Emojis | 🟩 | 🟩 |
 | - Copy Stickers | 🟩 | ⚠️ |
@@ -33,14 +33,17 @@ Fluxer Reaper is a simple tool to help you move an entire Discord server over to
 | - Threads | 🟩 | 🟩 |
 | - Forums | ⚠️ | ⚠️ |
 
-🟩fully functional | ⏳to be implemented | ⚠️feature not available
+- ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels.
+- ⚠️**Stoat**: doesnt have features like Category Permissions, Slowmode setting for channels.
+- ⏳**Stoat**: permission sync for channels is not yet implemented since its permission management vastly different compared to Discord & Fluxer.
 
 ---
 
-### Other Features
+### Notable Features
 *   **Flexible Start Points**: Start from the oldest message, a specific custom message ID/link, or continue from where you left off.
 *   **Thread Support**: Copies threads with dedicated markers in the target channel. This is a workaround as the threads feature is not yet natively implemented in Fluxer/Stoat.
 *   **Permission Checks**: Checks if bots have the required Permissions.
+*   **Self-Hosted Instance Support**: Supports custom API url endpoint to use with your own Fluxer/Stoat instance.
 *   **Audit Channel**: Logs migration progress and errors to a logs channel in the target community.
 
 ### Danger Zone

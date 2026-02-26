@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import discord
 from typing import Callable, Awaitable
 
 from src.core.base import MigrationContext
@@ -40,88 +41,124 @@ async def sync_roles_state(context: MigrationContext):
 
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
-    categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    discord_categories = await context.discord_reader.get_categories()
+    discord_channels = await context.discord_reader.get_channels()
     
     # Only sync for items that are already mapped
-    categories = [c for c in categories if context.state.get_target_category_id(str(c.id))]
-    channels = [c for c in channels if context.state.get_target_channel_id(str(c.id))]
-
+    mapped_categories = [c for c in discord_categories if context.state.get_target_category_id(str(c.id))]
+    mapped_channels = [c for c in discord_channels if context.state.get_target_channel_id(str(c.id))]
+    
     synced_info = {
         "categories_synced": [],
         "channels_synced": [],
         "structure": {} # category_name -> [channel_names]
     }
-
-    total = len(categories) + len(channels)
+    
+    total = len(mapped_categories) + len(mapped_channels)
     current_idx = 0
     
     if total == 0:
         return synced_info
 
-    async def _sync_overwrites(discord_item, stoat_id):
-        """Helper to sync role overwrites for a given channel or category."""
-        for target, overwrite in discord_item.overwrites.items():
-            if type(target).__name__ == "Role":
-                discord_role_id = str(target.id)
-                # Handle @everyone role special case
-                if discord_role_id == str(context.config.discord_server_id):
-                    # In Stoat, @everyone is usually the community ID
-                    stoat_role_id = str(context.stoat_writer.community_id)
-                    is_role = False # Use set_default_permissions logic
-                else:
-                    stoat_role_id = context.state.get_target_role_id(discord_role_id)
-                    is_role = True
-                
-                if not stoat_role_id:
-                    continue
-                    
-                allow_val, deny_val = overwrite.pair()
-                await context.stoat_writer.set_channel_permission(
-                    channel_id=stoat_id,
-                    overwrite_id=stoat_role_id,
-                    allow=allow_val.value,
-                    deny=deny_val.value,
-                    is_role=is_role
-                )
+    cat_map = {cat.id: cat for cat in discord_categories}
+    cat_names = {cat.id: cat.name for cat in discord_categories}
 
-    # Dictionary to map category names to their synced channels
-    cat_name_map = {str(cat.id): cat.name for cat in (await context.discord_reader.get_categories())}
-
-    # Sync Category Permissions (Role Overwrites)
-    for cat in categories:
+    # 1. Sync Categories (In Stoat, categories/folders don't have permissions, so we just track them for structure)
+    for cat in mapped_categories:
         if not context.is_running: break
-        stoat_id = context.state.get_target_category_id(str(cat.id))
-        if stoat_id:
-            try:
-                await _sync_overwrites(cat, stoat_id)
-                synced_info["categories_synced"].append(cat.name)
-                if cat.name not in synced_info["structure"]:
-                    synced_info["structure"][cat.name] = []
-            except Exception as e:
-                logger.error(f"Failed syncing permissions for category {cat.name}: {e}")
+        
+        synced_info["categories_synced"].append(cat.name)
+        if cat.name not in synced_info["structure"]:
+            synced_info["structure"][cat.name] = []
         
         current_idx += 1
         if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
 
-    # Sync Channel Permissions
-    for channel in channels:
+    # 2. Sync Channel Permissions with Category Inheritance logic
+    for channel in mapped_channels:
         if not context.is_running: break
-        stoat_id = context.state.get_target_channel_id(str(channel.id))
-        if stoat_id:
-            try:
-                await _sync_overwrites(channel, stoat_id)
-                synced_info["channels_synced"].append(channel.name)
-                
-                parent_name = cat_name_map.get(str(channel.category_id), "No Category") if channel.category_id else "No Category"
-                if parent_name not in synced_info["structure"]:
-                    synced_info["structure"][parent_name] = []
-                synced_info["structure"][parent_name].append(channel.name)
-            except Exception as e:
-                logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
+        
+        stoat_channel_id = context.state.get_target_channel_id(str(channel.id))
+        if not stoat_channel_id:
+            current_idx += 1
+            continue
+
+        # Flatten overwrites: start with category, then overlay channel overrides
+        final_overwrites = {} # role_id -> PermissionOverwrite
+        
+        # A. Start with Category overwrites (Inheritance)
+        if channel.category_id and channel.category_id in cat_map:
+            cat = cat_map[channel.category_id]
+            for target, ow in cat.overwrites.items():
+                if type(target).__name__ == "Role":
+                    # We store it by target.id to easily merge later
+                    final_overwrites[target.id] = ow
+
+        # B. Apply Channel overrides on top (Merge)
+        for target, ow in channel.overwrites.items():
+            if type(target).__name__ == "Role":
+                if target.id in final_overwrites:
+                    # Merge logic: channel overwrites specific settings, but 
+                    # keeps inherited settings for any permission marked as 'None' in channel
+                    cat_ow = final_overwrites[target.id]
+                    merged = discord.PermissionOverwrite()
+                    # Apply category settings
+                    for name, value in cat_ow:
+                        setattr(merged, name, value)
+                    # Overwrite with channel settings
+                    for name, value in ow:
+                        if value is not None:
+                            setattr(merged, name, value)
+                    final_overwrites[target.id] = merged
+                else:
+                    # Brand new override for this channel
+                    final_overwrites[target.id] = ow
+
+        # C. Apply the merged overwrites to Stoat
+        try:
+            # Sort overrides to ensure @everyone (Community ID) is processed LAST.
+            # This prevents the bot from accidentally locking itself out of the channel
+            # (due to default denys) before it finishes setting other role permissions.
+            sorted_overrides = sorted(
+                final_overwrites.items(),
+                key=lambda x: str(x[0]) == str(context.discord_reader.server_id)
+            )
+
+            for d_role_id, merged_ov in sorted_overrides:
+                # Map Discord role to Stoat role
+                if str(d_role_id) == str(context.discord_reader.server_id):
+                    # @everyone
+                    stoat_id = str(context.stoat_writer.community_id)
+                    is_role = False # set_default_permissions path
+                else:
+                    stoat_id = context.state.get_target_role_id(str(d_role_id))
+                    is_role = True
+                    
+                if not stoat_id:
+                    continue
+                    
+                allow_val, deny_val = merged_ov.pair()
+                await context.stoat_writer.set_channel_permission(
+                    channel_id=stoat_channel_id,
+                    overwrite_id=stoat_id,
+                    allow=allow_val.value,
+                    deny=deny_val.value,
+                    is_role=is_role
+                )
+            
+            synced_info["channels_synced"].append(channel.name)
+            parent_name = cat_names.get(channel.category_id, "No Category")
+            if parent_name not in synced_info["structure"]:
+                synced_info["structure"][parent_name] = []
+            synced_info["structure"][parent_name].append(channel.name)
+            
+        except Exception as e:
+            logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, current_idx, total)
+        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
+
 
     return synced_info
 
