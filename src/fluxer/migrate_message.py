@@ -43,10 +43,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
         if not context.is_running:
             break
         
-        stats["messages"] += 1
-        stats["attachments"] += len(msg.attachments)
-        
-        # Count thread messages and markers
+        # Count thread messages and markers even if parent is skipped
         if hasattr(msg, 'thread') and msg.thread:
             stats["threads"] += 1
             # Recursively count thread content
@@ -54,6 +51,13 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             stats["messages"] += thread_stats["messages"]
             stats["attachments"] += thread_stats["attachments"]
             stats["threads"] += thread_stats["threads"] # Nested threads (rare in Discord but possible in forum channels)
+
+        # Consistent filtering with migrate_messages
+        if msg.type not in [discord.MessageType.default, discord.MessageType.reply, discord.MessageType.thread_starter_message]:
+            continue
+
+        stats["messages"] += 1
+        stats["attachments"] += len(msg.attachments)
 
         if progress_callback and stats["messages"] % 10 == 0:
             await progress_callback(stats["messages"])
@@ -75,11 +79,36 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
             if not context.is_running:
                 break
                 
+
+
             # Skip system messages like "pinned a message", etc.
             # We treat thread_starter_message (type 21) as our thread marker.
             if msg.type == discord.MessageType.thread_starter_message:
                 content = f"> <<< THREAD: **{msg.channel.name}** >>>"
             elif msg.type not in [discord.MessageType.default, discord.MessageType.reply]:
+                # If we are skipping the parent, we STILL need to check for a thread!
+                if hasattr(msg, 'thread') and msg.thread:
+                    thread = msg.thread
+                    logger.info(f"Detected thread '{thread.name}' on skipped message {msg.id}")
+                    
+                    # Track thread entry
+                    stats["threads"] += 1
+                    
+                    # Migrate thread messages recursively
+                    thread_stats = await migrate_messages(
+                        context=context,
+                        source_channel_id=thread.id,
+                        target_channel_id=target_channel_id
+                    )
+                    stats["messages"] += thread_stats["messages"]
+                    stats["attachments"] += thread_stats["attachments"]
+                    stats["threads"] += thread_stats["threads"]
+
+                    # Send End Marker
+                    await context.fluxer_writer.send_marker(
+                        channel_id=target_channel_id,
+                        content=f"> <<< END OF THREAD >>>"
+                    )
                 continue
             else:
                 # Get clean content
@@ -138,14 +167,19 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 if fluxer_msg_id:
                     context.state.set_message_mapping(str(msg.id), fluxer_msg_id)
 
-                # Check for associated thread
+                context.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
+                context.state.update_last_message_id(str(source_channel_id), str(msg.id))
+                stats["messages"] += 1
+
+                # Check for associated thread (Normal case: parent message is migrated)
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread
                     logger.info(f"Detected thread '{thread.name}' on message {msg.id}")
                     
-                    # Migrate thread messages
-                    # We don't pass a progress callback here to avoid confusing the UI
-                    # but we do want to track count if possible.
+                    # Track thread entry
+                    stats["threads"] += 1
+                    
+                    # Migrate thread messages recursively
                     thread_stats = await migrate_messages(
                         context=context,
                         source_channel_id=thread.id,
@@ -160,10 +194,6 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                         channel_id=target_channel_id,
                         content=f"> <<< END OF THREAD >>>"
                     )
-
-                context.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
-                context.state.update_last_message_id(str(source_channel_id), str(msg.id))
-                stats["messages"] += 1
                 
                 # Update Link Tracking (but prevent threaded messages from overwriting the parent channel pointers)
                 # The 'after_message_id' param usually means it's the main function call and not a thread recursive call
