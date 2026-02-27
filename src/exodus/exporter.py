@@ -475,6 +475,49 @@ class DiscordExporter:
                 "count": r.count
             })
 
+        # Process Stickers (Download and Metadata)
+        stickers = []
+        for s in msg.stickers:
+            sticker_filename = f"sticker_{s.id}"
+            # Extension mapping based on format
+            ext = "png"
+            if str(s.format).endswith("apng"): ext = "apng"
+            elif str(s.format).endswith("lottie"): ext = "json"
+            elif str(s.format).endswith("gif"): ext = "gif"
+            
+            sticker_filename += f".{ext}"
+            sticker_path = asset_dir / sticker_filename
+            
+            try:
+                if not sticker_path.exists():
+                    # Handle Lottie stickers manually since discord.py Refuses to save them
+                    if str(s.format).endswith("lottie"):
+                        # Use the name-mangled internal session from the client
+                        session = self.reader.client.http._HTTPClient__session
+                        async with session.get(s.url) as resp:
+                            if resp.status == 200:
+                                with open(sticker_path, "wb") as f:
+                                    f.write(await resp.read())
+                            else:
+                                raise Exception(f"HTTP {resp.status}")
+                    else:
+                        await s.save(sticker_path)
+                
+                stickers.append({
+                    "id": str(s.id),
+                    "name": s.name,
+                    "format": str(s.format).split(".")[-1],
+                    "localPath": f"{asset_prefix}/{sticker_filename}"
+                })
+            except Exception as e:
+                logger.error(f"Failed to download sticker {s.name} ({s.id}): {e}")
+                # Fallback to minimal metadata if download fails
+                stickers.append({
+                    "id": str(s.id),
+                    "name": s.name,
+                    "format": str(s.format).split(".")[-1]
+                })
+
         # Determine message type (Override if it's a thread starter)
         msg_type = str(msg.type).split(".")[-1].capitalize()
         if msg.thread:
@@ -488,8 +531,8 @@ class DiscordExporter:
             "content": msg.content,
             "userID": user_id,
             "attachments": attachments,
-            "embeds": [e.to_dict() for e in msg.embeds], # simplified
-            "stickers": [],
+            "embeds": [e.to_dict() for e in msg.embeds],
+            "stickers": stickers,
             "reactions": reactions
         }
 
