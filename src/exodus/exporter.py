@@ -314,7 +314,7 @@ class DiscordExporter:
             except Exception:
                 self.user_cache = {}
 
-        base_filename = f"{safe_name}-{channel_id}"
+        base_filename = str(channel_id)
         json_file = backup_dir / f"{base_filename}.json"
         asset_dir = backup_dir / base_filename
         asset_dir.mkdir(exist_ok=True)
@@ -359,16 +359,20 @@ class DiscordExporter:
         # 2. Handle Threads and collect counts accurately
         all_threads = []
         try:
-            # Active threads: fetch_active_threads() is needed because channel.threads is a cache property
-            # and might be empty when running via API without gateway.
+            # Active threads: Use active_threads() coroutine for 2.6.4
             if self.reader.guild:
-                active_threads_data = await self.reader.guild.fetch_active_threads()
-                all_threads.extend([t for t in active_threads_data.threads if t.parent_id == channel_id])
+                threads = await self.reader.guild.active_threads()
+                all_threads.extend([t for t in threads if t.parent_id == channel_id])
             
-            # Archived threads
-            if hasattr(channel, "archived_threads"):
-                async for thread in channel.archived_threads(limit=None):
-                    all_threads.append(thread)
+            # Archived threads: Use the consolidated archived_threads() iterator
+            try:
+                if hasattr(channel, "archived_threads"):
+                    async for thread in channel.archived_threads(limit=None):
+                        all_threads.append(thread)
+            except discord.Forbidden:
+                logger.warning(f"403 Forbidden: Cannot fetch archived threads in {channel_name}")
+            except Exception as e:
+                logger.warning(f"Error fetching archived threads: {e}")
         except Exception as e:
             logger.warning(f"Failed to fetch threads for count in {channel_name}: {e}")
 
@@ -389,7 +393,6 @@ class DiscordExporter:
 
         if is_thread:
             output_data["parentID"] = str(channel.parent_id)
-            output_data["parentName"] = getattr(channel.parent, "name", "Unknown")
         
         # Save channel messages
         with open(json_file, "w", encoding="utf-8") as f:
@@ -513,24 +516,32 @@ class DiscordExporter:
     async def export_threads(self, channel_id: int):
         """Exports active and archived threads for a channel."""
         channel = await self.reader.get_channel(channel_id)
-        if not hasattr(channel, "threads") and not hasattr(channel, "archived_threads"):
+        if not hasattr(channel, "threads") and not hasattr(channel, "public_archived_threads"):
             return 0
         
         all_threads = []
         try:
             # Active threads
             if self.reader.guild:
-                active_threads_data = await self.reader.guild.fetch_active_threads()
-                all_threads.extend([t for t in active_threads_data.threads if t.parent_id == channel_id])
+                threads = await self.reader.guild.active_threads()
+                all_threads.extend([t for t in threads if t.parent_id == channel_id])
             
-            # Archived threads (can be private or public)
-            if hasattr(channel, "archived_threads"):
-                async for thread in channel.archived_threads(limit=None):
-                    all_threads.append(thread)
+            # Archived threads
+            try:
+                if hasattr(channel, "archived_threads"):
+                    async for thread in channel.archived_threads(limit=None):
+                        all_threads.append(thread)
+            except discord.Forbidden:
+                logger.warning(f"403 Forbidden: Cannot fetch archived threads in {channel.name}")
+            except Exception as e:
+                logger.warning(f"Error fetching archived threads: {e}")
         except Exception as e:
             logger.error(f"Failed to fetch threads for {channel.name}: {e}")
 
         thread_count = 0
+        if all_threads:
+            logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
+        
         for thread in all_threads:
             await self.export_channel_messages(thread.id)
             thread_count += 1
