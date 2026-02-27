@@ -177,12 +177,49 @@ class ExodusCLI:
             with console.status("[yellow]Exporting channel structure...[/yellow]"):
                 await self.exporter.export_channels_structure()
             
-            # 2. Export messages
-            channels = await self.engine.discord_reader.get_channels()
-            console.print(f"\n[yellow]Found {len(channels)} channels to backup.[/yellow]")
-            if not Confirm.ask("Start message backup? This may take a while.", default=True):
+            # 2. Select Channels
+            all_channels = await self.engine.discord_reader.get_channels()
+            # Filter for exportable channels
+            eligible_channels = [
+                c for c in all_channels 
+                if c.type in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.voice]
+            ]
+            
+            if not eligible_channels:
+                console.print("[yellow]No text/news channels found to backup.[/yellow]")
                 return
 
+            console.print(f"\n[bold]Select Channels to Backup ({len(eligible_channels)} total):[/bold]")
+            for i, chan in enumerate(eligible_channels):
+                console.print(f"({i+1}) {chan.name}")
+            
+            console.print("(A) [bold green]All Channels[/bold green]")
+            console.print("(B) Back")
+
+            choices = [str(i+1) for i in range(len(eligible_channels))] + ["A", "B", "a", "b"]
+            selection_input = Prompt.ask("\nSelect option or indices (e.g. 1,2,5)", default="B")
+            
+            if selection_input.upper() == "B":
+                return
+            
+            selected_channels = []
+            if selection_input.upper() == "A":
+                selected_channels = eligible_channels
+            else:
+                try:
+                    # Handle multiple indices like '1,2,5'
+                    indices = [int(i.strip()) - 1 for i in selection_input.split(",") if i.strip().isdigit()]
+                    selected_channels = [eligible_channels[i] for i in indices if 0 <= i < len(eligible_channels)]
+                except Exception:
+                    console.print("[red]Invalid selection. Aborting.[/red]")
+                    return
+
+            if not selected_channels:
+                console.print("[yellow]No valid channels selected.[/yellow]")
+                return
+
+            console.print(f"\n[yellow]Starting backup for {len(selected_channels)} channels...[/yellow]")
+            
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -190,11 +227,8 @@ class ExodusCLI:
                 TaskProgressColumn(),
                 console=console
             ) as progress:
-                overall_task = progress.add_task("[cyan]Exporting Channels...", total=len(channels))
-                for chan in channels:
-                    if chan.type not in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.voice]:
-                        progress.advance(overall_task)
-                        continue
+                overall_task = progress.add_task("[cyan]Exporting Channels...", total=len(selected_channels))
+                for chan in selected_channels:
                     progress.update(overall_task, description=f"[cyan]Backing up: {chan.name}")
                     await self.exporter.export_channel_messages(chan.id)
                     await self.exporter.export_threads(chan.id)
