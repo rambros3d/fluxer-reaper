@@ -77,10 +77,14 @@ class ExodusCLI:
             d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT CONNECTED[/bold red]"
             console.print(f"[bold cyan]Source Server:[/bold cyan] {d_display}")
             
+            b_name = self.validation_results.get("discord_bot_name")
+            b_display = f"[bold green]\"{b_name}\"[/bold green]" if b_name else "[bold red]UNKNOWN[/bold red]"
+            console.print(f"[bold cyan]Bot name:[/bold cyan] {b_display}")
+            
             console.print("\n[bold]Main Menu[/bold]")
-            console.print("(1) Backup Basic Server Profile")
-            console.print("(2) Backup User Names & Avatars, other customization")
-            console.print("(3) Backup Message")
+            console.print("(1) Backup Server Profile")
+            console.print("(2) Backup User Names & Avatars")
+            console.print("(3) Backup Messages")
             console.print("(4) Update & Sync Backup")
             console.print("(C) Configuration")
             console.print("(Q) Exit")
@@ -102,48 +106,63 @@ class ExodusCLI:
                 break
 
     async def backup_server_profile(self):
-        """Option 1: Backup name, banner, logo and roles (with permissions)"""
+        """Option 1: Backup name, banner, logo, roles, structure, and custom assets."""
         if not self.tokens_valid: return
         try:
             await self.engine.discord_reader.start()
-            # setup folder
             meta = await self.exporter.setup()
             
-            # Export metadata & assets
-            with console.status("[yellow]Backing up server profile & assets...[/yellow]"):
+            with console.status("[yellow]Backing up server profile & skeleton...[/yellow]"):
+                # 1. Profile & Assets
                 await self.exporter.export_metadata()
                 await self.exporter.download_server_assets()
-            
-            # export roles separately to handle 403 gracefully
-            try:
-                with console.status("[yellow]Backing up roles...[/yellow]"):
-                    await self.exporter.export_roles()
-            except discord.Forbidden:
-                console.print("[yellow]Warning: 403 Forbidden. Could not backup roles (Missing Access).[/yellow]")
+                
+                # 2. Roles
+                try:
+                    role_data = await self.exporter.export_roles()
+                    r_count = len(role_data)
+                except discord.Forbidden:
+                    r_count = 0
+                    console.print("[yellow]Warning: Could not backup roles (Missing Access).[/yellow]")
+                
+                # 3. Structure
+                _, cat_count, chan_count = await self.exporter.export_channels_structure()
+                
+                # 4. Emojis & Stickers
+                e_count, s_count = await self.exporter.export_assets()
 
-            console.print(f"[bold green]Basic Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+            console.print(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+            console.print("\n[bold]Profile Backup Stats:[/bold]")
+            console.print("- name, logo & banner")
+            console.print(f"- {cat_count} categories & {chan_count} channels")
+            console.print(f"- {r_count} roles")
+            console.print(f"- {e_count} emojis, {s_count} stickers.")
         except discord.Forbidden as e:
             console.print(f"[bold red]Backup failed: {e}[/bold red]")
-            console.print("[yellow]Hint: This is a 'Missing Access' error. Check if your bot has 'Guilds' permissions enabled.[/yellow]")
+            console.print("[yellow]Hint: Missing permissions. Check bot 'Guilds' and 'Channel' access.[/yellow]")
         except Exception as e:
             console.print(f"[bold red]Backup failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
 
     async def backup_customization(self):
-        """Option 2: Backup User Names & Avatars, Emojis, Stickers, etc."""
+        """Option 2: Backup User Names & Avatars (Members)."""
         if not self.tokens_valid: return
         try:
             await self.engine.discord_reader.start()
             await self.exporter.setup()
-            with console.status("[yellow]Backing up customization (Members, Emojis & Stickers)...[/yellow]"):
-                e_count, s_count, m_count = await self.exporter.export_customization()
-            console.print(f"[bold green]Backup complete: {m_count} members, {e_count} emojis and {s_count} stickers saved to customization.json[/bold green]")
+            with console.status("[yellow]Backing up members and names...[/yellow]"):
+                m_count = await self.exporter.export_members()
+            
+            if m_count > 0:
+                console.print(f"[bold green]Backup complete: {m_count} members and avatars saved to customization.json[/bold green]")
+            else:
+                console.print("[yellow]No members exported. Ensure 'Server Members Intent' is enabled.[/yellow]")
         except discord.Forbidden as e:
-            console.print(f"[bold red]Customization backup failed: {e}[/bold red]")
-            console.print("[yellow]Hint: Missing Access. Ensure 'Server Members Intent' is enabled in the Discord Developer Portal.[/yellow]")
+            console.print(f"[bold red]Member backup failed: {e}[/bold red]")
+            console.print("[yellow]Hint: Missing Access. Ensure 'Server Members Intent' is enabled in the Developer Portal.[/yellow]")
         except Exception as e:
-            console.print(f"[bold red]Customization backup failed: {e}[/bold red]")
+            console.print(f"[bold red]Member backup failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
 

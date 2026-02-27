@@ -1,5 +1,8 @@
 import discord
+import logging
 from typing import AsyncGenerator, Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class DiscordReader:
     def __init__(self, token: str, server_id: str):
@@ -31,11 +34,11 @@ class DiscordReader:
         
         # Use fetch methods specifically to bypass dependency on gateway cache
         try:
-            logging.info(f"Fetching guild {self.server_id}...")
+            logger.info(f"Fetching guild {self.server_id}...")
             self.guild = await self.client.fetch_guild(self.server_id)
-            logging.info(f"Successfully fetched guild: {self.guild.name}")
+            logger.info(f"Successfully fetched guild: {self.guild.name}")
         except discord.Forbidden:
-            logging.error(f"403 Forbidden: Missing Access to fetch guild {self.server_id}.")
+            logger.error(f"403 Forbidden: Missing Access to fetch guild {self.server_id}.")
             raise
         
         # Pre-fetch roles via API - Handle Forbidden gracefully
@@ -43,10 +46,10 @@ class DiscordReader:
             roles = await self.guild.fetch_roles()
             self.role_map = {r.id: r.name for r in roles}
         except discord.Forbidden:
-            logging.warning("403 Forbidden: Missing Access to fetch roles. Continuing without role mapping.")
+            logger.warning("403 Forbidden: Missing Access to fetch roles. Continuing without role mapping.")
             self.role_map = {}
         except Exception as e:
-            logging.error(f"Failed to fetch roles: {e}")
+            logger.error(f"Failed to fetch roles: {e}")
             self.role_map = {}
 
     async def validate(self) -> Dict[str, Any]:

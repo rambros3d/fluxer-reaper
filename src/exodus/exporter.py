@@ -120,9 +120,8 @@ class DiscordExporter:
         else:
             logger.info("No server banner found to download.")
 
-    async def export_customization(self):
-        """Exports all emojis, stickers, members, plus server icon/banner, to server_media folder."""
-        # Ensure icon/banner are downloaded
+    async def export_assets(self):
+        """Exports emojis, stickers, and server media to server_assets.json and server_media/."""
         await self.download_server_assets()
         
         emojis = await self.reader.get_emojis()
@@ -174,6 +173,23 @@ class DiscordExporter:
             except Exception as ex:
                 logger.error(f"Failed to download sticker {s.name}: {ex}")
 
+        # Try to load existing customization to merge (if it exists)
+        custom_file = self.export_path / "server_assets.json"
+        customization = {"emojis": emoji_data, "stickers": sticker_data, "members": []}
+        if custom_file.exists():
+            try:
+                with open(custom_file, "r", encoding="utf-8") as f:
+                    old_data = json.load(f)
+                    customization["members"] = old_data.get("members", [])
+            except Exception: pass
+
+        with open(custom_file, "w", encoding="utf-8") as f:
+            json.dump(customization, f, indent=4, ensure_ascii=False)
+            
+        return len(emoji_data), len(sticker_data)
+
+    async def export_members(self):
+        """Exports server members to server_assets.json."""
         member_data = []
         logger.info("Attempting to export members (requires Server Members Intent)...")
         try:
@@ -190,20 +206,27 @@ class DiscordExporter:
                 })
             logger.info(f"Successfully exported {len(member_data)} members.")
         except discord.Forbidden:
-            logger.warning("403 Forbidden: Missing Access to fetch members. Skipping members export. Ensure 'Server Members Intent' is enabled in Discord Dev Portal.")
+            logger.warning("403 Forbidden: Missing Access to fetch members. Skipping members export.")
+            return 0
         except Exception as e:
             logger.error(f"Failed to fetch members: {e}")
+            return 0
 
-        customization = {
-            "emojis": emoji_data,
-            "stickers": sticker_data,
-            "members": member_data
-        }
-        
-        with open(self.export_path / "customization.json", "w", encoding="utf-8") as f:
+        # Merge with existing assets
+        custom_file = self.export_path / "server_assets.json"
+        customization = {"emojis": [], "stickers": [], "members": member_data}
+        if custom_file.exists():
+            try:
+                with open(custom_file, "r", encoding="utf-8") as f:
+                    old_data = json.load(f)
+                    customization["emojis"] = old_data.get("emojis", [])
+                    customization["stickers"] = old_data.get("stickers", [])
+            except Exception: pass
+
+        with open(custom_file, "w", encoding="utf-8") as f:
             json.dump(customization, f, indent=4, ensure_ascii=False)
             
-        return len(emoji_data), len(sticker_data), len(member_data)
+        return len(member_data)
 
     async def export_channels_structure(self):
         """Exports categories and channels hierarchy."""
@@ -211,30 +234,39 @@ class DiscordExporter:
         channels = await self.reader.get_channels()
         
         structure = []
+        chan_count = 0
+        cat_count = len(categories)
+        
         for cat in categories:
             cat_channels = [c for c in channels if c.category_id == cat.id]
+            formatted_channels = [self._format_channel(c) for c in cat_channels]
+            chan_count += len(formatted_channels)
             structure.append({
                 "type": "category",
                 "id": str(cat.id),
                 "name": cat.name,
                 "position": cat.position,
-                "channels": [self._format_channel(c) for c in cat_channels]
+                "channels": formatted_channels
             })
             
         # Uncategorized
         uncategorized = [c for c in channels if not c.category_id]
         if uncategorized:
+            formatted_uncat = [self._format_channel(c) for c in uncategorized]
+            chan_count += len(formatted_uncat)
             structure.append({
                 "type": "category",
                 "id": "uncategorized",
                 "name": "Uncategorized",
-                "channels": [self._format_channel(c) for c in uncategorized]
+                "channels": formatted_uncat
             })
+            # No need to increment cat_count for 'Uncategorized' usually, 
+            # but let's see if the user wants it. For now, cat_count is real Discord categories.
             
-        output_file = self.export_path / "channels_structure.json"
+        output_file = self.export_path / "server_structure.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(structure, f, indent=4, ensure_ascii=False)
-        return structure
+        return structure, cat_count, chan_count
 
     def _format_channel(self, c):
         return {
