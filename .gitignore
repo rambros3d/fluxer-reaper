@@ -25,6 +25,7 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+reference/
 
 # Configuration and Secrets
 configs/
@@ -39,3 +40,5 @@ config.yaml
 test_*.py
 test_release.zip
 test_release/
+
+EXPORT-*/
