@@ -1,5 +1,6 @@
 import sys
 import asyncio
+import discord
 import logging
 import time
 from rich.console import Console
@@ -77,94 +78,90 @@ class ExodusCLI:
             console.print(f"[bold cyan]Source Server:[/bold cyan] {d_display}")
             
             console.print("\n[bold]Main Menu[/bold]")
-            console.print("(1) Setup Export Folder & Metadata")
-            console.print("(2) Export Roles")
-            console.print("(3) Export Emojis & Stickers")
-            console.print("(4) Export Channels Structure")
-            console.print("(5) Export All Message History (Long operation)")
+            console.print("(1) Backup Basic Server Profile")
+            console.print("(2) Backup User Names & Avatars, other customization")
+            console.print("(3) Backup Message")
+            console.print("(4) Update & Sync Backup")
             console.print("(C) Configuration")
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "5", "C", "Q"], default="Q", show_choices=False).upper()
+            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "C", "Q"], default="Q", show_choices=False).upper()
             
             if choice == "1":
-                await self.setup_export()
+                await self.backup_server_profile()
             elif choice == "2":
-                await self.export_roles()
+                await self.backup_customization()
             elif choice == "3":
-                await self.export_assets()
+                await self.backup_messages()
             elif choice == "4":
-                await self.export_structure()
-            elif choice == "5":
-                await self.export_messages()
+                await self.sync_backup()
             elif choice == "C":
                 await self.edit_configuration()
             elif choice == "Q":
                 await self.engine.close_connections()
                 break
 
-    async def setup_export(self):
+    async def backup_server_profile(self):
+        """Option 1: Backup name, banner, logo and roles (with permissions)"""
         if not self.tokens_valid: return
         try:
             await self.engine.discord_reader.start()
-            with console.status("[yellow]Setting up export directory...[/yellow]"):
-                meta = await self.exporter.setup()
-                await self.exporter.export_metadata()
-            console.print(f"[bold green]Export directory ready: {self.exporter.export_path}[/bold green]")
-            console.print(f"Server: [bold]{meta['name']}[/bold] ({meta['id']})")
-        except Exception as e:
-            console.print(f"[bold red]Setup failed: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-
-    async def export_roles(self):
-        if not self.tokens_valid: return
-        try:
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-            with console.status("[yellow]Exporting roles...[/yellow]"):
-                roles = await self.exporter.export_roles()
-            console.print(f"[bold green]Exported {len(roles)} roles to roles.json[/bold green]")
-        except Exception as e:
-            console.print(f"[bold red]Role export failed: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-
-    async def export_assets(self):
-        if not self.tokens_valid: return
-        try:
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-            with console.status("[yellow]Exporting emojis and stickers...[/yellow]"):
-                e_count, s_count = await self.exporter.export_emojis_stickers()
-            console.print(f"[bold green]Exported {e_count} emojis and {s_count} stickers.[/bold green]")
-        except Exception as e:
-            console.print(f"[bold red]Asset export failed: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-
-    async def export_structure(self):
-        if not self.tokens_valid: return
-        try:
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-            with console.status("[yellow]Exporting channel structure...[/yellow]"):
-                struct = await self.exporter.export_channels_structure()
-            console.print(f"[bold green]Exported channel hierarchy to channels_structure.json[/bold green]")
-        except Exception as e:
-            console.print(f"[bold red]Structure export failed: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-
-    async def export_messages(self):
-        if not self.tokens_valid: return
-        try:
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-            channels = await self.engine.discord_reader.get_channels()
+            # setup folder
+            meta = await self.exporter.setup()
             
-            console.print(f"\n[yellow]Found {len(channels)} channels to export.[/yellow]")
-            if not Confirm.ask("Start message export? This may take a while.", default=True):
+            # Export metadata & assets
+            with console.status("[yellow]Backing up server profile & assets...[/yellow]"):
+                await self.exporter.export_metadata()
+                await self.exporter.download_server_assets()
+            
+            # export roles separately to handle 403 gracefully
+            try:
+                with console.status("[yellow]Backing up roles...[/yellow]"):
+                    await self.exporter.export_roles()
+            except discord.Forbidden:
+                console.print("[yellow]Warning: 403 Forbidden. Could not backup roles (Missing Access).[/yellow]")
+
+            console.print(f"[bold green]Basic Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+        except discord.Forbidden as e:
+            console.print(f"[bold red]Backup failed: {e}[/bold red]")
+            console.print("[yellow]Hint: This is a 'Missing Access' error. Check if your bot has 'Guilds' permissions enabled.[/yellow]")
+        except Exception as e:
+            console.print(f"[bold red]Backup failed: {e}[/bold red]")
+        finally:
+            await self.engine.close_connections()
+
+    async def backup_customization(self):
+        """Option 2: Backup User Names & Avatars, Emojis, Stickers, etc."""
+        if not self.tokens_valid: return
+        try:
+            await self.engine.discord_reader.start()
+            await self.exporter.setup()
+            with console.status("[yellow]Backing up customization (Members, Emojis & Stickers)...[/yellow]"):
+                e_count, s_count, m_count = await self.exporter.export_customization()
+            console.print(f"[bold green]Backup complete: {m_count} members, {e_count} emojis and {s_count} stickers saved to customization.json[/bold green]")
+        except discord.Forbidden as e:
+            console.print(f"[bold red]Customization backup failed: {e}[/bold red]")
+            console.print("[yellow]Hint: Missing Access. Ensure 'Server Members Intent' is enabled in the Discord Developer Portal.[/yellow]")
+        except Exception as e:
+            console.print(f"[bold red]Customization backup failed: {e}[/bold red]")
+        finally:
+            await self.engine.close_connections()
+
+    async def backup_messages(self):
+        """Option 3: Backup Channels structure and all message history."""
+        if not self.tokens_valid: return
+        try:
+            await self.engine.discord_reader.start()
+            await self.exporter.setup()
+            
+            # 1. Export structure first
+            with console.status("[yellow]Exporting channel structure...[/yellow]"):
+                await self.exporter.export_channels_structure()
+            
+            # 2. Export messages
+            channels = await self.engine.discord_reader.get_channels()
+            console.print(f"\n[yellow]Found {len(channels)} channels to backup.[/yellow]")
+            if not Confirm.ask("Start message backup? This may take a while.", default=True):
                 return
 
             with Progress(
@@ -174,25 +171,28 @@ class ExodusCLI:
                 TaskProgressColumn(),
                 console=console
             ) as progress:
-                
                 overall_task = progress.add_task("[cyan]Exporting Channels...", total=len(channels))
-                
                 for chan in channels:
                     if chan.type not in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.voice]:
                         progress.advance(overall_task)
                         continue
-                        
-                    progress.update(overall_task, description=f"[cyan]Exporting: {chan.name}")
+                    progress.update(overall_task, description=f"[cyan]Backing up: {chan.name}")
                     await self.exporter.export_channel_messages(chan.id)
-                    # Also export threads for this channel
                     await self.exporter.export_threads(chan.id)
                     progress.advance(overall_task)
 
-            console.print("[bold green]Message export complete![/bold green]")
+            console.print("[bold green]Message backup complete![/bold green]")
         except Exception as e:
-            console.print(f"[bold red]Message export failed: {e}[/bold red]")
+            console.print(f"[bold red]Message backup failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
+
+    async def sync_backup(self):
+        """Option 4: Update & Sync Backup (Runs a full pass but overwrites where needed)."""
+        console.print("[yellow]Syncing backup... (Re-validating all data)[/yellow]")
+        await self.backup_server_profile()
+        await self.backup_customization()
+        await self.backup_messages()
 
     async def edit_configuration(self):
         # reuse or implement simplified version of edit_configuration from app.py

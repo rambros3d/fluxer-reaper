@@ -30,11 +30,24 @@ class DiscordReader:
         await self.client.login(self.token)
         
         # Use fetch methods specifically to bypass dependency on gateway cache
-        self.guild = await self.client.fetch_guild(self.server_id)
+        try:
+            logging.info(f"Fetching guild {self.server_id}...")
+            self.guild = await self.client.fetch_guild(self.server_id)
+            logging.info(f"Successfully fetched guild: {self.guild.name}")
+        except discord.Forbidden:
+            logging.error(f"403 Forbidden: Missing Access to fetch guild {self.server_id}.")
+            raise
         
-        # Pre-fetch roles via API
-        roles = await self.guild.fetch_roles()
-        self.role_map = {r.id: r.name for r in roles}
+        # Pre-fetch roles via API - Handle Forbidden gracefully
+        try:
+            roles = await self.guild.fetch_roles()
+            self.role_map = {r.id: r.name for r in roles}
+        except discord.Forbidden:
+            logging.warning("403 Forbidden: Missing Access to fetch roles. Continuing without role mapping.")
+            self.role_map = {}
+        except Exception as e:
+            logging.error(f"Failed to fetch roles: {e}")
+            self.role_map = {}
 
     async def validate(self) -> Dict[str, Any]:
         """Validates the token, server ID, intents, and permissions."""
@@ -118,6 +131,16 @@ class DiscordReader:
         if not self.guild:
             return []
         return await self.guild.fetch_stickers()
+
+    async def get_members(self):
+        """Returns all members in the server."""
+        if not self.guild:
+            return []
+        # Use a list to hold all members
+        members = []
+        async for member in self.guild.fetch_members(limit=None):
+            members.append(member)
+        return members
 
     async def get_channels(self, category_id: int | None = None):
         """Yields all non-category channels."""

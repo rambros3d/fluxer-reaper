@@ -33,18 +33,34 @@ class DiscordExporter:
         self.media_path.mkdir(exist_ok=True)
         
         logger.info(f"Export directory set to: {self.export_path}")
+        logger.info(f"Targeting server: {self.server_name} ({self.server_id})")
         return metadata
 
     async def export_metadata(self):
         """Saves server metadata to a JSON file."""
         metadata = await self.reader.get_server_metadata()
-        output_file = self.export_path / "server_metadata.json"
+        
+        # Add relative paths to local assets
+        if self.reader.guild:
+            if self.reader.guild.icon:
+                ext = "gif" if self.reader.guild.icon.is_animated() else "png"
+                metadata["icon"] = f"server_media/server_icon.{ext}"
+            else:
+                metadata["icon"] = None
+                
+            if self.reader.guild.banner:
+                ext = "gif" if self.reader.guild.banner.is_animated() else "png"
+                metadata["banner"] = f"server_media/server_banner.{ext}"
+            else:
+                metadata["banner"] = None
+
+        output_file = self.export_path / "server_profile.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
         return metadata
 
     async def export_roles(self):
-        """Exports all roles to roles.json."""
+        """Exports all roles to server_roles.json."""
         roles = await self.reader.get_roles()
         role_data = []
         for r in roles:
@@ -58,43 +74,62 @@ class DiscordExporter:
                 "mentionable": r.mentionable
             })
         
-        output_file = self.export_path / "roles.json"
+        output_file = self.export_path / "server_roles.json"
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(role_data, f, indent=4, ensure_ascii=False)
         return role_data
 
-    async def export_emojis_stickers(self):
-        """Exports all emojis and stickers, plus server icon/banner, to server_media folder."""
-        emojis = await self.reader.get_emojis()
-        stickers = await self.reader.get_stickers()
+    async def download_server_assets(self):
+        """Downloads server icon and banner to media folder."""
         metadata = await self.reader.get_server_metadata()
-        
         # Download Server Icon
         if metadata.get("icon_url"):
             try:
-                # We need a way to download from URL directly or use reader
-                # Since DiscordReader doesn't have a direct "download from URL" we might need one
-                # but for guild icon/banner we can use guild object if available in reader.
                 if self.reader.guild and self.reader.guild.icon:
+                    logger.info(f"Downloading server icon: {self.reader.guild.icon.url}")
                     data = await self.reader.download_asset(self.reader.guild.icon)
                     ext = "gif" if self.reader.guild.icon.is_animated() else "png"
-                    with open(self.media_path / f"server_icon.{ext}", "wb") as f:
+                    icon_path = self.media_path / f"server_icon.{ext}"
+                    with open(icon_path, "wb") as f:
                         f.write(data)
+                    logger.info(f"Saved server icon to {icon_path}")
+                else:
+                    logger.warning("Icon URL found in metadata but guild icon asset is missing.")
+            except discord.Forbidden:
+                logger.error("403 Forbidden: Missing Access to download server icon.")
             except Exception as e:
                 logger.error(f"Failed to download server icon: {e}")
+        else:
+            logger.info("No server icon found to download.")
 
         # Download Server Banner
         if metadata.get("banner_url"):
             try:
                 if self.reader.guild and self.reader.guild.banner:
+                    logger.info(f"Downloading server banner: {self.reader.guild.banner.url}")
                     data = await self.reader.download_asset(self.reader.guild.banner)
                     ext = "gif" if self.reader.guild.banner.is_animated() else "png"
-                    with open(self.media_path / f"server_banner.{ext}", "wb") as f:
+                    banner_path = self.media_path / f"server_banner.{ext}"
+                    with open(banner_path, "wb") as f:
                         f.write(data)
+                    logger.info(f"Saved server banner to {banner_path}")
+            except discord.Forbidden:
+                logger.error("403 Forbidden: Missing Access to download server banner.")
             except Exception as e:
                 logger.error(f"Failed to download server banner: {e}")
+        else:
+            logger.info("No server banner found to download.")
 
+    async def export_customization(self):
+        """Exports all emojis, stickers, members, plus server icon/banner, to server_media folder."""
+        # Ensure icon/banner are downloaded
+        await self.download_server_assets()
+        
+        emojis = await self.reader.get_emojis()
+        stickers = await self.reader.get_stickers()
+        
         emoji_data = []
+        logger.info(f"Exporting {len(emojis)} emojis...")
         for e in emojis:
             ext = "gif" if e.animated else "png"
             filename = f"emoji_{e.name}_{e.id}.{ext}"
@@ -109,10 +144,13 @@ class DiscordExporter:
                     "animated": e.animated,
                     "filename": filename
                 })
+            except discord.Forbidden:
+                logger.error(f"403 Forbidden: Missing Access to download emoji {e.name}")
             except Exception as ex:
                 logger.error(f"Failed to download emoji {e.name}: {ex}")
 
         sticker_data = []
+        logger.info(f"Exporting {len(stickers)} stickers...")
         for s in stickers:
             ext = "png"
             if s.url:
@@ -131,15 +169,41 @@ class DiscordExporter:
                     "name": s.name,
                     "filename": filename
                 })
+            except discord.Forbidden:
+                logger.error(f"403 Forbidden: Missing Access to download sticker {s.name}")
             except Exception as ex:
                 logger.error(f"Failed to download sticker {s.name}: {ex}")
 
-        with open(self.export_path / "emojis.json", "w", encoding="utf-8") as f:
-            json.dump(emoji_data, f, indent=4, ensure_ascii=False)
-        with open(self.export_path / "stickers.json", "w", encoding="utf-8") as f:
-            json.dump(sticker_data, f, indent=4, ensure_ascii=False)
+        member_data = []
+        logger.info("Attempting to export members (requires Server Members Intent)...")
+        try:
+            members = await self.reader.get_members()
+            for m in members:
+                member_data.append({
+                    "id": str(m.id),
+                    "name": m.name,
+                    "display_name": m.display_name,
+                    "discriminator": m.discriminator,
+                    "avatar_url": str(m.avatar.url) if m.avatar else None,
+                    "bot": m.bot,
+                    "roles": [str(r.id) for r in m.roles if not r.is_default()]
+                })
+            logger.info(f"Successfully exported {len(member_data)} members.")
+        except discord.Forbidden:
+            logger.warning("403 Forbidden: Missing Access to fetch members. Skipping members export. Ensure 'Server Members Intent' is enabled in Discord Dev Portal.")
+        except Exception as e:
+            logger.error(f"Failed to fetch members: {e}")
+
+        customization = {
+            "emojis": emoji_data,
+            "stickers": sticker_data,
+            "members": member_data
+        }
+        
+        with open(self.export_path / "customization.json", "w", encoding="utf-8") as f:
+            json.dump(customization, f, indent=4, ensure_ascii=False)
             
-        return len(emoji_data), len(sticker_data)
+        return len(emoji_data), len(sticker_data), len(member_data)
 
     async def export_channels_structure(self):
         """Exports categories and channels hierarchy."""
