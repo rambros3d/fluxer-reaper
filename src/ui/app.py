@@ -230,6 +230,20 @@ class MigrationCLI:
                 
                 self.tokens_valid = discord_valid and target_valid
 
+                if self.tokens_valid:
+                    if self.target_platform == "fluxer":
+                        srv_id = self.config.fluxer_community_id
+                        srv_name = self.validation_results.get("fluxer_community_name", "unknown")
+                    else:
+                        srv_id = self.config.stoat_server_id
+                        srv_name = self.validation_results.get("stoat_server_name", "unknown")
+                    
+                    if srv_id and srv_name and srv_id not in ["000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID", "STOAT_SERVER_ID", "unconfigured", ""]:
+                        import re
+                        safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', srv_name)
+                        self.engine.state.set_folder(str(srv_id), safe_name)
+
+
                 # Check if all permissions are actually granted
                 self.permissions_complete = True
                 if self.tokens_valid:

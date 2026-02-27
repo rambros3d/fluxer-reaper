@@ -1,13 +1,16 @@
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any
+
+logger = logging.getLogger(__name__)
 
 class MigrationState:
     """Manages persistence of the migration state to allow resumability."""
     
-    def __init__(self, state_file: str | Path = "default.state.json", messages_file: str | Path = "default.messages.json"):
-        self.state_file = Path(state_file)
-        self.messages_file = Path(messages_file)
+    def __init__(self, state_file: str | Path = "", messages_file: str | Path = ""):
+        self.state_file: Path | None = Path(state_file) if state_file else None
+        self.messages_file: Path | None = Path(messages_file) if messages_file else None
         
         # mappings: discord_id -> fluxer_id
         self.channel_map: Dict[str, str] = {}
@@ -31,7 +34,7 @@ class MigrationState:
         migrated_messages = False
 
         # 1. Load primary state file
-        if self.state_file.exists():
+        if self.state_file and self.state_file.exists():
             with open(self.state_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 self.channel_map = data.get("channels", {})
@@ -40,47 +43,21 @@ class MigrationState:
                 self.emoji_map = data.get("emojis", {})
                 self.sticker_map = data.get("stickers", {})
                 self.audit_log_channel = data.get("audit_log_channel")
-                
-                # Check for legacy messages in state file
-                if "messages" in data or "last_message_timestamps" in data:
-                    self.message_map = data.get("messages", {})
-                    self.last_message_ids = data.get("last_message_ids", {})
-                    self.last_message_timestamps = data.get("last_message_timestamps", {})
-                    migrated_messages = True # We found legacy data, we should write it out to messages file later
 
-            # Legacy Migration: Move role_, emoji_, sticker_ from channel_map to dedicated maps
-            legacy_keys = list(self.channel_map.keys())
-            for k in legacy_keys:
-                if k.startswith("role_"):
-                    discord_id = k.replace("role_", "")
-                    self.role_map[discord_id] = self.channel_map.pop(k)
-                    migrated_state = True
-                elif k.startswith("emoji_"):
-                    discord_id = k.replace("emoji_", "")
-                    self.emoji_map[discord_id] = self.channel_map.pop(k)
-                    migrated_state = True
-                elif k.startswith("sticker_"):
-                    discord_id = k.replace("sticker_", "")
-                    self.sticker_map[discord_id] = self.channel_map.pop(k)
-                    migrated_state = True
-
-        # 2. Load separate messages file (overrides legacy state file messages)
-        if self.messages_file.exists():
+        # 2. Load separate messages file
+        if self.messages_file and self.messages_file.exists():
             with open(self.messages_file, "r", encoding="utf-8") as f:
                 msg_data = json.load(f)
                 self.message_map = msg_data.get("messages", {})
                 self.last_message_ids = msg_data.get("last_message_ids", {})
                 self.last_message_timestamps = msg_data.get("last_message_timestamps", {})
-                migrated_messages = False # No need to force a migrating save since it already exists
         
-        # 3. Save if we migrated any legacy data to separate maps/files
-        if migrated_state or migrated_messages:
-            self.save_state()
-        if migrated_messages:
-            self.save_messages()
+
 
     def save_state(self):
         """Saves only the core server configuration (channels, roles, emojis)."""
+        if not self.state_file:
+            return
         data = {
             "channels": self.channel_map,
             "categories": self.category_map,
@@ -94,6 +71,8 @@ class MigrationState:
 
     def save_messages(self):
         """Saves only the message tracking data."""
+        if not self.messages_file:
+            return
         data = {
             "last_message_ids": self.last_message_ids,
             "last_message_timestamps": self.last_message_timestamps,
@@ -241,4 +220,24 @@ class MigrationState:
         self.message_map.clear()
         self.last_message_ids.clear()
         self.last_message_timestamps.clear()
+        self.save_messages()
+
+    def set_folder(self, server_id: str, clean_name: str):
+        new_folder = Path(f"{clean_name}-{server_id}")
+        
+        # If we have an existing folder that is different, rename it
+        if self.state_file and self.state_file.parent.exists() and self.state_file.parent != new_folder:
+            # Check if it's actually in a server-specific folder (not roots)
+            if self.state_file.parent.name.endswith(f"-{server_id}"):
+                try:
+                    self.state_file.parent.rename(new_folder)
+                except Exception as e:
+                    logger.debug(f"Could not rename {self.state_file.parent} to {new_folder}: {e}")
+
+        new_folder.mkdir(exist_ok=True)
+        
+        self.state_file = new_folder / "state-migration.json"
+        self.messages_file = new_folder / "message-tracker.json"
+        
+        self.save_state()
         self.save_messages()

@@ -29,9 +29,25 @@ class MigrationContext:
         ]:
             server_id = "unconfigured"
         
+        # Try to find an existing folder for this server_id
+        import os
+        from pathlib import Path
+        
+        state_file: str | Path = ""
+        messages_file: str | Path = ""
+        
+        if server_id and server_id not in ["000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID", "STOAT_SERVER_ID", "unconfigured", ""]:
+            # If a folder doesn't exist yet, we stick with the generic server_id names,
+            # but they won't be saved until set_folder is called.
+            for d in Path(".").iterdir():
+                if d.is_dir() and d.name.endswith(f"-{server_id}"):
+                    state_file = d / "state-migration.json"
+                    messages_file = d / "message-tracker.json"
+                    break
+
         self.state = MigrationState(
-            state_file=f"{server_id}.state.json",
-            messages_file=f"{server_id}.messages.json"
+            state_file=state_file,
+            messages_file=messages_file
         )
         
         self.discord_reader = DiscordReader(
