@@ -646,16 +646,16 @@ class DiscordExporter:
                         msg_found = True
                         logger.debug(f"Found starter message {msg.id} for {thread.name}")
                         
-                        # Save assets in the thread's own directory instead of the forum root
+                        # Save assets in the thread's own directory inside the forum directory
                         thread_asset_dir = forum_asset_dir / str(thread.id)
                         thread_asset_dir.mkdir(parents=True, exist_ok=True)
                         
                         msg_data = await self._format_message(
                             msg, 
                             thread_asset_dir, 
-                            str(thread.id), 
+                            f"{channel_id}/{thread.id}",  # Full relative path from message_backup/
                             avatar_dir, 
-                            "../user_avatars" # Relative path up one more level
+                            "../../user_avatars"  # Two levels up from {forum_id}/{thread_id}/
                         )
                         # Override type and add title for forum starter messages
                         msg_data["type"] = "Thread_starter_message"
