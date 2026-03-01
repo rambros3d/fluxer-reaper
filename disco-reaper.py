@@ -61,13 +61,14 @@ def relaunch_in_terminal():
 async def main():
     relaunch_in_terminal()
     setup_logging()
+    await run_disco_reaper()
+
+if __name__ == "__main__":
     try:
-        await run_disco_reaper()
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("\nExiting...")
+        print("\nOperation terminated by user.")
+        sys.exit(0)
     except Exception as e:
         print(f"Error: {e}")
         sys.exit(1)
-
-if __name__ == "__main__":
-    asyncio.run(main())

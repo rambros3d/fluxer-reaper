@@ -148,8 +148,8 @@ def main():
     relaunch_in_terminal()
     config = load_config()
     setup_logging()
-    platform = select_platform(config)
     try:
+        platform = select_platform(config)
         asyncio.run(run_cli(target_platform=platform))
     except KeyboardInterrupt:
         print("\nOperation terminated by user.")

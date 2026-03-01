@@ -96,42 +96,46 @@ class DiscoReaperCLI:
     async def run(self):
         await self.validate_config()
 
-        while True:
-            console.print("")
-            console.print(Panel.fit("Disco Reaper - Server Backup Tool", style="bold green"))
-            
-            d_name = self.validation_results.get("discord_server_name")
-            d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT CONNECTED[/bold red]"
-            console.print(f"[bold cyan]Source Server:[/bold cyan] {d_display}")
-            
-            b_name = self.validation_results.get("discord_bot_name")
-            b_display = f"[bold green]\"{b_name}\"[/bold green]" if b_name else "[bold red]UNKNOWN[/bold red]"
-            console.print(f"[bold cyan]Bot name:[/bold cyan] {b_display}")
-            
-            backup_ts = self.get_backup_info()
-            if backup_ts:
-                console.print(f"[bold cyan]Backup Found:[/bold cyan] [bold yellow]{backup_ts}[/bold yellow]")
-            
-            console.print("\n[bold]Main Menu[/bold]")
-            console.print("(1) Backup Server Profile")
-            console.print("(2) Backup Channel Messages")
-            console.print("(3) Update & Sync Backup")
-            console.print("(4) Configuration")
-            console.print("(Q) Exit")
-            
-            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "Q"], default="Q", show_choices=False).upper()
-            
-            if choice == "1":
-                await self.backup_server_profile()
-            elif choice == "2":
-                await self.backup_messages()
-            elif choice == "3":
-                await self.sync_backup()
-            elif choice == "4":
-                await self.edit_configuration()
-            elif choice == "Q":
-                await self.engine.close_connections()
-                break
+        try:
+            while True:
+                console.print("")
+                console.print(Panel.fit("Disco Reaper - Server Backup Tool", style="bold green"))
+                
+                d_name = self.validation_results.get("discord_server_name")
+                d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT CONNECTED[/bold red]"
+                console.print(f"[bold cyan]Source Server:[/bold cyan] {d_display}")
+                
+                b_name = self.validation_results.get("discord_bot_name")
+                b_display = f"[bold green]\"{b_name}\"[/bold green]" if b_name else "[bold red]UNKNOWN[/bold red]"
+                console.print(f"[bold cyan]Bot name:[/bold cyan] {b_display}")
+                
+                backup_ts = self.get_backup_info()
+                if backup_ts:
+                    console.print(f"[bold cyan]Backup Found:[/bold cyan] [bold yellow]{backup_ts}[/bold yellow]")
+                
+                console.print("\n[bold]Main Menu[/bold]")
+                console.print("(1) Backup Server Profile")
+                console.print("(2) Backup Channel Messages")
+                console.print("(3) Update & Sync Backup")
+                console.print("(4) Configuration")
+                console.print("(Q) Exit")
+                
+                choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "Q"], default="Q", show_choices=False).upper()
+                
+                if choice == "1":
+                    await self.backup_server_profile()
+                elif choice == "2":
+                    await self.backup_messages()
+                elif choice == "3":
+                    await self.sync_backup()
+                elif choice == "4":
+                    await self.edit_configuration()
+                elif choice == "Q":
+                    break
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            console.print("\n[yellow]Operation terminated by user.[/yellow]")
+        finally:
+            await self.engine.close_connections()
 
     async def backup_server_profile(self):
         """Option 1: Backup name, banner, logo, roles, structure, and custom assets."""
