@@ -95,13 +95,13 @@ def relaunch_in_terminal():
 
     # Check if we have a TTY on stdin or stdout, or if already relaunched
     is_tty = sys.stdin.isatty() or sys.stdout.isatty()
-    if is_tty or os.environ.get("FLUXER_REAPER_RELAUNCHED"):
+    if is_tty or os.environ.get("SERVER_SHUTTLE_RELAUNCHED"):
         return
 
     # Diagnostic logging to help debug why it fails on some distros
-    debug_log = "/tmp/reaper_terminal_debug.log"
+    debug_log = "/tmp/shuttle_terminal_debug.log"
     with open(debug_log, "a") as f:
-        f.write(f"Relaunching... isatty={is_tty}, env={os.environ.get('FLUXER_REAPER_RELAUNCHED')}\n")
+        f.write(f"Relaunching... isatty={is_tty}, env={os.environ.get('SERVER_SHUTTLE_RELAUNCHED')}\n")
 
     # List of terminals to try with their specific execution flags
     terminals = [
@@ -129,7 +129,7 @@ def relaunch_in_terminal():
     
     # Set env var to prevent loops
     env = os.environ.copy()
-    env["FLUXER_REAPER_RELAUNCHED"] = "1"
+    env["SERVER_SHUTTLE_RELAUNCHED"] = "1"
 
     for term, cmd_args in terminals:
         if shutil.which(term):

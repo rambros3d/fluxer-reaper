@@ -30,5 +30,5 @@ else
 fi
 
 # Run the application
-python3 fluxer-reaper.py "$@"
+python3 server-shuttle.py "$@"
 

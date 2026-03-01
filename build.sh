@@ -3,7 +3,7 @@
 # Exit on error
 set -e
 
-echo "--- Fluxer Reaper Cross-Distro Build Script ---"
+echo "--- Server Shuttle Cross-Distro Build Script ---"
 echo "NOTE: For maximum compatibility (glibc), run this on your oldest target Linux distribution."
 
 # Check for venv
@@ -38,32 +38,32 @@ echo "Cleaning previous build artifacts..."
 rm -rf build/ dist/
 
 echo "Starting PyInstaller build..."
-pyinstaller --clean fluxer-reaper.spec
+pyinstaller --clean server-shuttle.spec
 
-echo "Generating Launch-Reaper.sh launcher..."
-cat << 'EOF' > dist/Launch-Reaper.sh
+echo "Generating Launch-Shuttle.sh launcher..."
+cat << 'EOF' > dist/Launch-Shuttle.sh
 #!/bin/bash
-# Convenient launcher for Fluxer Reaper
+# Convenient launcher for Server Shuttle
 # Ensures it runs in a terminal if possible, but the binary also has internal auto-terminal logic.
 
 BASEDIR=$(dirname "$0")
 cd "$BASEDIR"
 
-if [ -f "./fluxer-reaper" ]; then
-    ./fluxer-reaper
+if [ -f "./server-shuttle" ]; then
+    ./server-shuttle
 else
-    echo "Error: fluxer-reaper binary not found in $(pwd)"
+    echo "Error: server-shuttle binary not found in $(pwd)"
     read -p "Press enter to exit..."
 fi
 EOF
-chmod +x dist/Launch-Reaper.sh
+chmod +x dist/Launch-Shuttle.sh
 
-echo "Packaging release: fluxer-reaper-linux.zip..."
+echo "Packaging release: server-shuttle-linux.zip..."
 cp config.example.yaml dist/
 cd dist
 if command -v zip >/dev/null 2>&1; then
-    zip -q fluxer-reaper-linux.zip fluxer-reaper Launch-Reaper.sh config.example.yaml
-    echo "Package created: dist/fluxer-reaper-linux.zip"
+    zip -q server-shuttle-linux.zip server-shuttle Launch-Shuttle.sh config.example.yaml
+    echo "Package created: dist/server-shuttle-linux.zip"
 else
     echo "Warning: 'zip' command not found. Skipping zip creation."
     echo "Files available in dist/ directory."
@@ -72,7 +72,7 @@ cd ..
 
 echo "-----------------------------------"
 echo "Build complete!"
-echo "Standalone executable: dist/fluxer-reaper"
-echo "Launcher script:       dist/Launch-Reaper.sh"
-echo "Release Package:       dist/fluxer-reaper-linux.zip"
+echo "Standalone executable: dist/server-shuttle"
+echo "Launcher script:       dist/Launch-Shuttle.sh"
+echo "Release Package:       dist/server-shuttle-linux.zip"
 echo "---"

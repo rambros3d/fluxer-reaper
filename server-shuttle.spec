@@ -13,15 +13,15 @@ hiddenimports += collect_submodules('rich._unicode_data')
 
 # Determine the best icon to use
 icon_file = None
-if os.path.exists('fluxer-reaper-icon.ico'):
-    icon_file = 'fluxer-reaper-icon.ico'
-elif os.path.exists('fluxer-reaper-icon.png'):
-    icon_file = 'fluxer-reaper-icon.png'
+if os.path.exists('server-shuttle-icon.ico'):
+    icon_file = 'server-shuttle-icon.ico'
+elif os.path.exists('server-shuttle-icon.png'):
+    icon_file = 'server-shuttle-icon.png'
 
 print(f"DEBUG: Selected icon_file = {icon_file}")
 
 a = Analysis(
-    ['fluxer-reaper.py'],
+    ['server-shuttle.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -42,7 +42,7 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='fluxer-reaper',
+    name='server-shuttle',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

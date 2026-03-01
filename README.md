@@ -1,6 +1,6 @@
-# Fluxer Reaper
+# Server Shuttle
 
-Fluxer Reaper is a simple tool to help you move an entire Discord server over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
+Server Shuttle is a simple tool to help you move an entire Discord server over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
 
 >Join our [**Reaper Community**](https://fluxer.gg/9KxDP8WH) if you need help or have any questions.
 
@@ -62,21 +62,21 @@ The Discord bot has **read-only access** to the Discord server. Hence **no chang
 #### Setup the bots as per this [guide](BOT-SETUP.md)
 
 ### Option 1: Using Pre-built Binaries (Easiest)
-1. **Download**: Download the latest executable from the [Releases](https://github.com/rambros3d/fluxer-reaper/releases) page & unzip it.
+1. **Download**: Download the latest executable from the [Releases](https://github.com/rambros3d/server-shuttle/releases) page & unzip it.
 2. **Run**: Simply run the downloaded file to start the tool. No Python installation is required.
-   - **Linux**: Run the **fluxer-reaper** file (or `./fluxer-reaper` in terminal).
-   - **Windows**: Run the **fluxer-reaper.exe** file.
+   - **Linux**: Run the **server-shuttle** file (or `./server-shuttle` in terminal).
+   - **Windows**: Run the **server-shuttle.exe** file.
 
 ### Option 2: Running from Source
 1. **Clone**: Clone the repository to your local machine:
    ```bash
-   git clone https://github.com/rambros3d/fluxer-reaper.git
-   cd fluxer-reaper
+   git clone https://github.com/rambros3d/server-shuttle.git
+   cd server-shuttle
    ```
 2. **Launch**: Run the appropriate launcher script for your OS. It will automatically create a virtual environment and install dependencies:
-   - **Linux**: `./launch-reaper-LINUX.sh`
-   - **MacOS**: `./launch-reaper-MAC.sh`
-   - **Windows**: Double-click `launch-reaper-WIN.bat`
+   - **Linux**: `./launch-shuttle-LINUX.sh`
+   - **MacOS**: `./launch-shuttle-MAC.sh`
+   - **Windows**: Double-click `launch-shuttle-WIN.bat`
 
 
 ---
@@ -112,7 +112,7 @@ But now their own website states that **Persona** will be used in some countries
 ---
 
 ### Documentation
-Detailed info about the code can be found at https://deepwiki.com/rambros3d/fluxer-reaper
+Detailed info about the code can be found at https://deepwiki.com/rambros3d/server-shuttle
 
 ### Vibe Code Notice
 

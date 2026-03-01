@@ -13,17 +13,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            artifact_name: fluxer-reaper-linux
-            asset_name: fluxer-reaper-linux.zip
-            executable_path: dist/fluxer-reaper
+            artifact_name: server-shuttle-linux
+            asset_name: server-shuttle-linux.zip
+            executable_path: dist/server-shuttle
           - os: windows-latest
-            artifact_name: fluxer-reaper-windows
-            asset_name: fluxer-reaper-windows.zip
-            executable_path: dist/fluxer-reaper.exe
+            artifact_name: server-shuttle-windows
+            asset_name: server-shuttle-windows.zip
+            executable_path: dist/server-shuttle.exe
           - os: macos-latest
-            artifact_name: fluxer-reaper-macos
-            asset_name: fluxer-reaper-macos.zip
-            executable_path: dist/fluxer-reaper
+            artifact_name: server-shuttle-macos
+            asset_name: server-shuttle-macos.zip
+            executable_path: dist/server-shuttle
 
     steps:
       - name: Checkout code
@@ -45,27 +45,27 @@ jobs:
         shell: python
         run: |
           from PIL import Image
-          img = Image.open('fluxer-reaper-icon.png')
-          img.save('fluxer-reaper-icon.ico', format='ICO', sizes=[(256, 256)])
+          img = Image.open('server-shuttle-icon.png')
+          img.save('server-shuttle-icon.ico', format='ICO', sizes=[(256, 256)])
 
       - name: Build with PyInstaller
         run: |
           echo "Listing directory contents:"
           ls -R || dir /s
-          pyinstaller fluxer-reaper.spec
+          pyinstaller server-shuttle.spec
 
       - name: Prepare Release Asset (Linux/MacOS)
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: |
-          cp ${{ matrix.executable_path }} fluxer-reaper
-          chmod +x fluxer-reaper
-          zip ${{ matrix.asset_name }} fluxer-reaper
+          cp ${{ matrix.executable_path }} server-shuttle
+          chmod +x server-shuttle
+          zip ${{ matrix.asset_name }} server-shuttle
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          copy ${{ matrix.executable_path }} fluxer-reaper.exe
-          powershell Compress-Archive -Path "fluxer-reaper.exe" -DestinationPath "${{ matrix.asset_name }}"
+          copy ${{ matrix.executable_path }} server-shuttle.exe
+          powershell Compress-Archive -Path "server-shuttle.exe" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -88,8 +88,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/fluxer-reaper-linux/fluxer-reaper-linux.zip
-            artifacts/fluxer-reaper-windows/fluxer-reaper-windows.zip
-            artifacts/fluxer-reaper-macos/fluxer-reaper-macos.zip
+            artifacts/server-shuttle-linux/server-shuttle-linux.zip
+            artifacts/server-shuttle-windows/server-shuttle-windows.zip
+            artifacts/server-shuttle-macos/server-shuttle-macos.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -29,7 +29,7 @@ if not exist "%DIR%venv" (
 )
 
 :: Run the application
-python fluxer-reaper.py %*
+python server-shuttle.py %*
 
 if %ERRORLEVEL% neq 0 (
     echo.
