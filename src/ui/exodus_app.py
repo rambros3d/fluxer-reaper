@@ -83,21 +83,18 @@ class ExodusCLI:
             
             console.print("\n[bold]Main Menu[/bold]")
             console.print("(1) Backup Server Profile")
-            console.print("(2) Backup User Names & Avatars")
-            console.print("(3) Backup Messages")
-            console.print("(4) Update & Sync Backup")
+            console.print("(2) Backup Messages")
+            console.print("(3) Update & Sync Backup")
             console.print("(C) Configuration")
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "C", "Q"], default="Q", show_choices=False).upper()
+            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "C", "Q"], default="Q", show_choices=False).upper()
             
             if choice == "1":
                 await self.backup_server_profile()
             elif choice == "2":
-                await self.backup_customization()
-            elif choice == "3":
                 await self.backup_messages()
-            elif choice == "4":
+            elif choice == "3":
                 await self.sync_backup()
             elif choice == "C":
                 await self.edit_configuration()
@@ -145,29 +142,8 @@ class ExodusCLI:
         finally:
             await self.engine.close_connections()
 
-    async def backup_customization(self):
-        """Option 2: Backup User Names & Avatars (Members)."""
-        if not self.tokens_valid: return
-        try:
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-            with console.status("[yellow]Backing up members and names...[/yellow]"):
-                m_count = await self.exporter.export_members()
-            
-            if m_count > 0:
-                console.print(f"[bold green]Backup complete: {m_count} members and avatars saved to customization.json[/bold green]")
-            else:
-                console.print("[yellow]No members exported. Ensure 'Server Members Intent' is enabled.[/yellow]")
-        except discord.Forbidden as e:
-            console.print(f"[bold red]Member backup failed: {e}[/bold red]")
-            console.print("[yellow]Hint: Missing Access. Ensure 'Server Members Intent' is enabled in the Developer Portal.[/yellow]")
-        except Exception as e:
-            console.print(f"[bold red]Member backup failed: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-
     async def backup_messages(self):
-        """Option 3: Backup Channels structure and all message history."""
+        """Option 2: Backup Channels structure and all message history."""
         if not self.tokens_valid: return
         try:
             await self.engine.discord_reader.start()
@@ -241,10 +217,9 @@ class ExodusCLI:
             await self.engine.close_connections()
 
     async def sync_backup(self):
-        """Option 4: Update & Sync Backup (Runs a full pass but overwrites where needed)."""
+        """Option 3: Update & Sync Backup (Runs a full pass but overwrites where needed)."""
         console.print("[yellow]Syncing backup... (Re-validating all data)[/yellow]")
         await self.backup_server_profile()
-        await self.backup_customization()
         await self.backup_messages()
 
     async def edit_configuration(self):

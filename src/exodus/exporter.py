@@ -189,45 +189,6 @@ class DiscordExporter:
             
         return len(emoji_data), len(sticker_data)
 
-    async def export_members(self):
-        """Exports server members to server_assets.json."""
-        member_data = []
-        logger.info("Attempting to export members (requires Server Members Intent)...")
-        try:
-            members = await self.reader.get_members()
-            for m in members:
-                member_data.append({
-                    "id": str(m.id),
-                    "name": m.name,
-                    "display_name": m.display_name,
-                    "discriminator": m.discriminator,
-                    "avatar_url": str(m.avatar.url) if m.avatar else None,
-                    "bot": m.bot,
-                    "roles": [str(r.id) for r in m.roles if not r.is_default()]
-                })
-            logger.info(f"Successfully exported {len(member_data)} members.")
-        except discord.Forbidden:
-            logger.warning("403 Forbidden: Missing Access to fetch members. Skipping members export.")
-            return 0
-        except Exception as e:
-            logger.error(f"Failed to fetch members: {e}")
-            return 0
-
-        # Merge with existing assets
-        custom_file = self.export_path / "server_assets.json"
-        customization = {"emojis": [], "stickers": [], "members": member_data}
-        if custom_file.exists():
-            try:
-                with open(custom_file, "r", encoding="utf-8") as f:
-                    old_data = json.load(f)
-                    customization["emojis"] = old_data.get("emojis", [])
-                    customization["stickers"] = old_data.get("stickers", [])
-            except Exception: pass
-
-        with open(custom_file, "w", encoding="utf-8") as f:
-            json.dump(customization, f, indent=4, ensure_ascii=False)
-            
-        return len(member_data)
 
     async def export_channels_structure(self):
         """Exports categories and channels hierarchy."""
@@ -381,7 +342,6 @@ class DiscordExporter:
             thread_msg_count += (t.message_count or 0)
 
         output_data = {
-            "channelName": channel_name,
             "channelID": str(channel_id),
             "messageCount": len(messages),
             "threadCount": thread_count,
