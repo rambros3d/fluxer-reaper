@@ -1,7 +1,7 @@
 import sys
 import asyncio
 import logging
-from src.ui.exodus_app import run_exodus
+from src.ui.disco_reaper_app import run_disco_reaper
 from src.core.configuration import load_config
 
 def setup_logging():
@@ -12,7 +12,7 @@ def setup_logging():
     except Exception:
         level = logging.INFO
         
-    handlers = [logging.FileHandler('exodus.log', mode='a')]
+    handlers = [logging.FileHandler('disco-reaper.log', mode='a')]
     logging.basicConfig(
         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
         datefmt='%H:%M:%S',
@@ -31,7 +31,7 @@ def relaunch_in_terminal():
         return
 
     is_tty = sys.stdin.isatty() or sys.stdout.isatty()
-    if is_tty or os.environ.get("EXODUS_RELAUNCHED"):
+    if is_tty or os.environ.get("DISCO_REAPER_RELAUNCHED"):
         return
 
     terminals = [
@@ -48,7 +48,7 @@ def relaunch_in_terminal():
     args = [executable] + sys.argv[1:]
     
     env = os.environ.copy()
-    env["EXODUS_RELAUNCHED"] = "1"
+    env["DISCO_REAPER_RELAUNCHED"] = "1"
 
     for term, cmd_args in terminals:
         if shutil.which(term):
@@ -62,7 +62,7 @@ async def main():
     relaunch_in_terminal()
     setup_logging()
     try:
-        await run_exodus()
+        await run_disco_reaper()
     except KeyboardInterrupt:
         print("\nExiting...")
     except Exception as e:

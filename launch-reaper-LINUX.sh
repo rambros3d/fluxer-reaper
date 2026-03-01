@@ -30,4 +30,4 @@ else
 fi
 
 # Run the application
-python3 discord-exodus.py "$@"
+python3 disco-reaper.py "$@"

@@ -11,11 +11,11 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 
 from src.core.configuration import load_config, save_config
 from src.core.base import MigrationContext
-from src.exodus.exporter import DiscordExporter
+from src.disco_reaper.exporter import DiscordExporter
 
 console = Console()
 
-class ExodusCLI:
+class DiscoReaperCLI:
     """CLI app to manage Discord server data export."""
     
     def __init__(self, config_path="config.yaml"):
@@ -71,7 +71,7 @@ class ExodusCLI:
 
         while True:
             console.print("")
-            console.print(Panel.fit("Discord Exodus - Server Exporter", style="bold green"))
+            console.print(Panel.fit("Disco Reaper - Server Backup Tool", style="bold green"))
             
             d_name = self.validation_results.get("discord_server_name")
             d_display = f"[bold green]\"{d_name}\"[/bold green]" if d_name else "[bold red]NOT CONNECTED[/bold red]"
@@ -239,6 +239,6 @@ class ExodusCLI:
         else:
             console.print("[yellow]No changes.[/yellow]")
 
-async def run_exodus(config_path="config.yaml"):
-    app = ExodusCLI(config_path)
+async def run_disco_reaper(config_path="config.yaml"):
+    app = DiscoReaperCLI(config_path)
     await app.run()
