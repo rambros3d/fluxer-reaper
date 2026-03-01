@@ -173,7 +173,7 @@ class DiscoReaperCLI:
         finally:
             await self.engine.close_connections()
 
-    async def backup_messages(self):
+    async def backup_messages(self, force_overwrite=None, skip_found_prompt=False, auto_sync_existing=False):
         """Option 2: Backup Channels structure and all message history."""
         if not self.tokens_valid: return
         try:
@@ -200,48 +200,61 @@ class DiscoReaperCLI:
                 console.print("[yellow]No text/news channels found to backup.[/yellow]")
                 return
 
-            console.print(f"\n[bold]Select Channels to Backup ({len(eligible_channels)} total):[/bold]")
-            
-            # Identify duplicate names to show categories for them
-            name_counts = {}
-            for chan in eligible_channels:
-                name_counts[chan.name] = name_counts.get(chan.name, 0) + 1
-            
-            for i, chan in enumerate(eligible_channels):
-                display_name = chan.name
-                if name_counts[chan.name] > 1:
-                    cat_name = cat_map.get(chan.category_id)
-                    if cat_name:
-                        display_name = f"{chan.name} [{cat_name}]"
-                
-                # Check for existing backup
-                found_prefix = ""
-                backup_file = self.exporter.export_path / "message_backup" / f"{chan.id}.json"
-                if backup_file.exists():
-                    found_prefix = "[green][FOUND][/green] "
-                
-                console.print(f"({i+1}) {found_prefix}{display_name}")
-            
-            console.print("(A) [bold green]All Channels[/bold green]")
-            console.print("(B) Back")
-
-            choices = [str(i+1) for i in range(len(eligible_channels))] + ["A", "B", "a", "b"]
-            selection_input = Prompt.ask("\nSelect option or indices (e.g. 1,2,5)", default="B")
-            
-            if selection_input.upper() == "B":
-                return
-            
             selected_channels = []
-            if selection_input.upper() == "A":
-                selected_channels = eligible_channels
-            else:
-                try:
-                    # Handle multiple indices like '1,2,5'
-                    indices = [int(i.strip()) - 1 for i in selection_input.split(",") if i.strip().isdigit()]
-                    selected_channels = [eligible_channels[i] for i in indices if 0 <= i < len(eligible_channels)]
-                except Exception:
-                    console.print("[red]Invalid selection. Aborting.[/red]")
+            
+            if auto_sync_existing:
+                selected_channels = [
+                    c for c in eligible_channels 
+                    if (self.exporter.export_path / "message_backup" / f"{c.id}.json").exists()
+                ]
+                if not selected_channels:
+                    console.print("[yellow]No existing backups found to sync.[/yellow]")
                     return
+                # In auto-sync mode, we always use sync (force_overwrite=False) and skip prompts
+                force_overwrite = False
+                skip_found_prompt = True
+            else:
+                console.print(f"\n[bold]Select Channels to Backup ({len(eligible_channels)} total):[/bold]")
+                
+                # Identify duplicate names to show categories for them
+                name_counts = {}
+                for chan in eligible_channels:
+                    name_counts[chan.name] = name_counts.get(chan.name, 0) + 1
+                
+                for i, chan in enumerate(eligible_channels):
+                    display_name = chan.name
+                    if name_counts[chan.name] > 1:
+                        cat_name = cat_map.get(chan.category_id)
+                        if cat_name:
+                            display_name = f"{chan.name} [{cat_name}]"
+                    
+                    # Check for existing backup
+                    found_prefix = ""
+                    backup_file = self.exporter.export_path / "message_backup" / f"{chan.id}.json"
+                    if backup_file.exists():
+                        found_prefix = "[green][FOUND][/green] "
+                    
+                    console.print(f"({i+1}) {found_prefix}{display_name}")
+                
+                console.print("(A) [bold green]All Channels[/bold green]")
+                console.print("(B) Back")
+
+                choices = [str(i+1) for i in range(len(eligible_channels))] + ["A", "B", "a", "b"]
+                selection_input = Prompt.ask("\nSelect option or indices (e.g. 1,2,5)", default="B")
+                
+                if selection_input.upper() == "B":
+                    return
+                
+                if selection_input.upper() == "A":
+                    selected_channels = eligible_channels
+                else:
+                    try:
+                        # Handle multiple indices like '1,2,5'
+                        indices = [int(i.strip()) - 1 for i in selection_input.split(",") if i.strip().isdigit()]
+                        selected_channels = [eligible_channels[i] for i in indices if 0 <= i < len(eligible_channels)]
+                    except Exception:
+                        console.print("[red]Invalid selection. Aborting.[/red]")
+                        return
 
             if not selected_channels:
                 console.print("[yellow]No valid channels selected.[/yellow]")
@@ -254,17 +267,18 @@ class DiscoReaperCLI:
                     any_found = True
                     break
             
-            force_overwrite = False
-            if any_found:
-                console.print("\n[bold yellow]Existing backup(s) found for some selected channels.[/bold yellow]")
-                console.print("(Y) Update & Sync Backup")
-                console.print("(F) [bold red]Force Overwrite Backup[/bold red]")
-                console.print("(B) Back")
-                
-                sync_choice = Prompt.ask("\nSelect option", choices=["Y", "F", "B"], default="Y").upper()
-                if sync_choice == "B":
-                    return
-                force_overwrite = (sync_choice == "F")
+            if force_overwrite is None:
+                force_overwrite = False
+                if any_found and not skip_found_prompt:
+                    console.print("\n[bold yellow]Existing backup(s) found for some selected channels.[/bold yellow]")
+                    console.print("(Y) Update & Sync Backup")
+                    console.print("(F) [bold red]Force Overwrite Backup[/bold red]")
+                    console.print("(B) Back")
+                    
+                    sync_choice = Prompt.ask("\nSelect option", choices=["Y", "F", "B"], default="Y").upper()
+                    if sync_choice == "B":
+                        return
+                    force_overwrite = (sync_choice == "F")
 
             console.print(f"\n[yellow]Starting backup for {len(selected_channels)} channels...[/yellow]")
             
@@ -304,10 +318,11 @@ class DiscoReaperCLI:
             await self.engine.close_connections()
 
     async def sync_backup(self):
-        """Option 3: Update & Sync Backup (Runs a full pass but overwrites where needed)."""
-        console.print("[yellow]Syncing backup... (Re-validating all data)[/yellow]")
+        """Option 3: Update & Sync Backup (Automated incremental sync for existing backups)."""
+        console.print("[yellow]Syncing backup... (Updating existing data)[/yellow]")
         await self.backup_server_profile()
-        await self.backup_messages()
+        # Automatically select and sync existing backups
+        await self.backup_messages(auto_sync_existing=True)
 
     async def edit_configuration(self):
         # reuse or implement simplified version of edit_configuration from app.py
