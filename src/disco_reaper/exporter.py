@@ -265,8 +265,8 @@ class DiscordExporter:
             
         return data
 
-    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False):
-        """Fetches and saves message history for a channel, handling incremental sync."""
+    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0):
+        """Fetches and saves message history for a channel, handling incremental sync. Returns the total messages processed."""
         channel = await self.reader.get_channel(channel_id)
         if not channel:
             logger.error(f"Channel not found: {channel_id}")
@@ -356,14 +356,19 @@ class DiscordExporter:
                 msg_data = await self._format_message(msg, asset_dir, base_filename, avatar_dir, avatar_rel_base)
                 messages.append(msg_data)
                 new_count += 1
+                accumulated_count += 1
                 if progress_callback:
-                    await progress_callback(channel_name, new_count)
+                    await progress_callback(channel_name, accumulated_count)
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to read messages in {channel_name} ({channel_id})")
-            if not messages: return 0
+            if not messages: return accumulated_count
         except Exception as e:
             logger.error(f"Error fetching messages for {channel_name}: {e}")
-            if not messages: return 0
+            if not messages: return accumulated_count
+
+        # If it's a forum or a channel with no new messages, we still want the UI to register that we've started it.
+        if new_count == 0 and progress_callback:
+            await progress_callback(channel_name, accumulated_count)
 
         # 2. Handle Threads and collect counts accurately
         all_threads = []
@@ -405,6 +410,8 @@ class DiscordExporter:
             "threadCount": thread_count,
             "lastMessageID": str(messages[-1]["messageID"]) if messages else None,
             "threadMessagesCount": thread_msg_count,
+            "totalAttachmentSizeBytes": sum(m.get("totalFileSizeBytes", 0) for m in messages),
+            "numberOfAttachments": sum(m.get("numberOfFiles", 0) for m in messages),
             "lastBackup": discord.utils.utcnow().isoformat(),
             "messages": messages
         }
@@ -429,9 +436,9 @@ class DiscordExporter:
 
         # If it's a forum, also export its threads into the sub-directory
         if is_forum:
-            await self.export_threads(channel_id, progress_callback=progress_callback, force=force)
+            accumulated_count = await self.export_threads(channel_id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count)
 
-        return count
+        return accumulated_count
 
     async def _format_message(self, msg, asset_dir, asset_prefix, avatar_dir, avatar_rel_base):
         """Formats a single message to match the reference format."""
@@ -575,6 +582,8 @@ class DiscordExporter:
             "content": msg_content,
             "userID": user_id,
             "attachments": attachments,
+            "numberOfFiles": len(attachments),
+            "totalFileSizeBytes": sum(a["fileSizeBytes"] for a in attachments),
             "embeds": [e.to_dict() for e in msg.embeds],
             "stickers": stickers,
             "reactions": reactions
@@ -600,8 +609,8 @@ class DiscordExporter:
 
         return data
 
-    async def export_threads(self, channel_id: int, progress_callback=None, force=False):
-        """Exports active and archived threads for a channel."""
+    async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0):
+        """Exports active and archived threads for a channel. Returns accumulated message count."""
         channel = await self.reader.get_channel(channel_id)
         if not hasattr(channel, "threads") and not hasattr(channel, "public_archived_threads"):
             return 0
@@ -634,9 +643,13 @@ class DiscordExporter:
         thread_count = 0
         if all_threads:
             logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
-        
+            
         for thread in all_threads:
-            # Whenever a forum thread backup starts, populate the forum root json with the starter message.
+            # First backup the full thread — this creates {thread_id}.json with totalAttachmentSizeBytes
+            accumulated_count = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count)
+            thread_count += 1
+
+            # Then populate the forum root JSON with the starter message
             if is_forum:
                 logger.info(f"Adding starter message for thread: {thread.name} ({thread.id})")
                 try:
@@ -664,6 +677,23 @@ class DiscordExporter:
                         # Store applied tag IDs (as strings) — names are resolvable via the forum's available_tags
                         msg_data["tags"] = [str(tid) for tid in getattr(thread, "_applied_tags", [])]
                         
+                        # Enrich totalFileSizeBytes with the child thread's totalAttachmentSizeBytes
+                        # (the thread JSON has already been written above)
+                        thread_json = backup_root / str(channel_id) / f"{thread.id}.json"
+                        if thread_json.exists():
+                            try:
+                                with open(thread_json, "r", encoding="utf-8") as f:
+                                    thread_data = json.load(f)
+                                child_size = thread_data.get("totalAttachmentSizeBytes", 0)
+                                msg_data["totalFileSizeBytes"] = msg_data.get("totalFileSizeBytes", 0) + child_size
+                                
+                                child_count = thread_data.get("numberOfAttachments", 0)
+                                msg_data["numberOfFiles"] = msg_data.get("numberOfFiles", 0) + child_count
+                                
+                                logger.debug(f"Enriched files for {thread.name}: +{child_size} bytes, +{child_count} files from child thread")
+                            except Exception as e:
+                                logger.error(f"Failed to read thread JSON for size enrichment: {e}")
+                        
                         if forum_json_file.exists():
                             with open(forum_json_file, "r", encoding="utf-8") as f:
                                 try:
@@ -675,18 +705,29 @@ class DiscordExporter:
                             if "messages" not in forum_data:
                                 forum_data["messages"] = []
                             
-                            # Avoid duplicates
-                            if not any(m["messageID"] == msg_data["messageID"] for m in forum_data["messages"]):
-                                forum_data["messages"].append(msg_data)
-                                forum_data["messageCount"] = len(forum_data["messages"])
-                                # Keep chronological order
-                                forum_data["messages"].sort(key=lambda x: x["timestamp"])
-                                
-                                with open(forum_json_file, "w", encoding="utf-8") as f:
-                                    json.dump(forum_data, f, indent=4, ensure_ascii=False)
-                                logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")
+                            # Avoid duplicates — update if already exists (e.g. sync run)
+                            existing = next((m for m in forum_data["messages"] if m["messageID"] == msg_data["messageID"]), None)
+                            if existing:
+                                existing.update(msg_data)
+                                logger.debug(f"Updated starter message for {thread.name} in forum JSON")
                             else:
-                                logger.debug(f"Starter message for {thread.name} already in JSON")
+                                forum_data["messages"].append(msg_data)
+                            
+                            forum_data["messageCount"] = len(forum_data["messages"])
+                            # Recalculate forum totalAttachmentSizeBytes from enriched starter messages
+                            forum_data["totalAttachmentSizeBytes"] = sum(
+                                m.get("totalFileSizeBytes", 0) for m in forum_data["messages"]
+                            )
+                            # Recalculate forum numberOfAttachments from enriched starter messages
+                            forum_data["numberOfAttachments"] = sum(
+                                m.get("numberOfFiles", 0) for m in forum_data["messages"]
+                            )
+                            # Keep chronological order
+                            forum_data["messages"].sort(key=lambda x: x["timestamp"])
+                            
+                            with open(forum_json_file, "w", encoding="utf-8") as f:
+                                json.dump(forum_data, f, indent=4, ensure_ascii=False)
+                            logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")
                         else:
                             logger.warning(f"Forum JSON file does not exist: {forum_json_file}")
                     
@@ -694,8 +735,4 @@ class DiscordExporter:
                         logger.warning(f"No starter message found for thread: {thread.name}")
                 except Exception as e:
                     logger.error(f"Error adding starter message for {thread.name}: {e}")
-
-            await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force)
-            thread_count += 1
-            
-        return thread_count
+        return accumulated_count
