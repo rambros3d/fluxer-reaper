@@ -218,26 +218,26 @@ class DiscordExporter:
         
         for cat in categories:
             cat_channels = [c for c in channels if c.category_id == cat.id]
-            formatted_channels = [self._format_channel(c) for c in cat_channels]
+            formatted_channels = await asyncio.gather(*[self._format_channel(c) for c in cat_channels])
             chan_count += len(formatted_channels)
             structure.append({
                 "type": "category",
                 "id": str(cat.id),
                 "name": cat.name,
                 "position": cat.position,
-                "channels": formatted_channels
+                "channels": list(formatted_channels)
             })
             
         # Uncategorized
         uncategorized = [c for c in channels if not c.category_id]
         if uncategorized:
-            formatted_uncat = [self._format_channel(c) for c in uncategorized]
+            formatted_uncat = await asyncio.gather(*[self._format_channel(c) for c in uncategorized])
             chan_count += len(formatted_uncat)
             structure.append({
                 "type": "category",
                 "id": "uncategorized",
                 "name": "Uncategorized",
-                "channels": formatted_uncat
+                "channels": list(formatted_uncat)
             })
             # No need to increment cat_count for 'Uncategorized' usually, 
             # but let's see if the user wants it. For now, cat_count is real Discord categories.
@@ -247,8 +247,8 @@ class DiscordExporter:
             json.dump(structure, f, indent=4, ensure_ascii=False)
         return structure, cat_count, chan_count
 
-    def _format_channel(self, c):
-        return {
+    async def _format_channel(self, c):
+        data = {
             "id": str(c.id),
             "name": c.name,
             "type": str(c.type),
@@ -256,6 +256,14 @@ class DiscordExporter:
             "topic": getattr(c, "topic", None),
             "nsfw": getattr(c, "nsfw", False)
         }
+        
+        if isinstance(c, discord.ForumChannel):
+            data["available_tags"] = [
+                {"id": str(t.id), "name": t.name, "moderated": t.moderated, "emoji_id": str(t.emoji.id) if t.emoji and hasattr(t.emoji, "id") else None, "emoji_name": t.emoji.name if t.emoji else None}
+                for t in c.available_tags
+            ]
+            
+        return data
 
     async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False):
         """Fetches and saves message history for a channel, handling incremental sync."""
@@ -269,12 +277,25 @@ class DiscordExporter:
 
         # Detection for thread grouping
         is_thread = isinstance(channel, discord.Thread)
+        is_forum = isinstance(channel, discord.ForumChannel)
         backup_root = self.export_path / "message_backup"
         
         if is_thread:
-            backup_dir = backup_root / "threads"
-            avatar_rel_base = "../user_avatars"
+            parent = await self.reader.get_channel(channel.parent_id)
+            if isinstance(parent, discord.ForumChannel):
+                # Forum thread: nested inside forum folder
+                backup_dir = backup_root / str(channel.parent_id)
+                avatar_rel_base = "../../user_avatars"
+            else:
+                # Regular thread
+                backup_dir = backup_root / "threads"
+                avatar_rel_base = "../user_avatars"
+        elif is_forum:
+            # Forum metadata root
+            backup_dir = backup_root
+            avatar_rel_base = "user_avatars"
         else:
+            # Regular channel
             backup_dir = backup_root
             avatar_rel_base = "user_avatars"
 
@@ -368,9 +389,18 @@ class DiscordExporter:
         for t in all_threads:
             thread_msg_count += (t.message_count or 0)
 
+        msg_type = "Text"
+        if is_thread:
+            msg_type = "Thread"
+        elif channel.type == discord.ChannelType.news:
+            msg_type = "News"
+        elif is_forum:
+            msg_type = "Forum"
+
         output_data = {
             "channelName": channel_name,
             "channelID": str(channel_id),
+            "channelType": msg_type,
             "messageCount": len(messages),
             "threadCount": thread_count,
             "lastMessageID": str(messages[-1]["messageID"]) if messages else None,
@@ -378,9 +408,16 @@ class DiscordExporter:
             "lastBackup": discord.utils.utcnow().isoformat(),
             "messages": messages
         }
-
+        
         if is_thread:
             output_data["parentID"] = str(channel.parent_id)
+        
+        # Merge additional metadata for forums (like tags)
+        if is_forum:
+            fmt_data = await self._format_channel(channel)
+            for k, v in fmt_data.items():
+                if k not in output_data and k not in ["id", "name", "type", "position", "nsfw", "topic"]:
+                    output_data[k] = v
         
         # Save channel messages
         with open(json_file, "w", encoding="utf-8") as f:
@@ -389,6 +426,10 @@ class DiscordExporter:
         # Save/Update user_info.json
         with open(user_info_file, "w", encoding="utf-8") as f:
             json.dump(list(self.user_cache.values()), f, indent=4, ensure_ascii=False)
+
+        # If it's a forum, also export its threads into the sub-directory
+        if is_forum:
+            await self.export_threads(channel_id, progress_callback=progress_callback, force=force)
 
         return count
 
@@ -584,11 +625,76 @@ class DiscordExporter:
         except Exception as e:
             logger.error(f"Failed to fetch threads for {channel.name}: {e}")
 
+        is_forum = isinstance(channel, discord.ForumChannel)
+        backup_root = self.export_path / "message_backup"
+        forum_json_file = backup_root / f"{channel_id}.json"
+        forum_asset_dir = backup_root / str(channel_id)
+        avatar_dir = backup_root / "user_avatars"
+
         thread_count = 0
         if all_threads:
             logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
         
         for thread in all_threads:
+            # Whenever a forum thread backup starts, populate the forum root json with the starter message.
+            if is_forum:
+                logger.info(f"Adding starter message for thread: {thread.name} ({thread.id})")
+                try:
+                    msg_found = False
+                    # In discord.py 2.x, we get the oldest message by using 'after' with a limit
+                    async for msg in thread.history(limit=1, after=discord.Object(id=thread.id - 1)):
+                        msg_found = True
+                        logger.debug(f"Found starter message {msg.id} for {thread.name}")
+                        
+                        # Save assets in the thread's own directory instead of the forum root
+                        thread_asset_dir = forum_asset_dir / str(thread.id)
+                        thread_asset_dir.mkdir(parents=True, exist_ok=True)
+                        
+                        msg_data = await self._format_message(
+                            msg, 
+                            thread_asset_dir, 
+                            str(thread.id), 
+                            avatar_dir, 
+                            "../user_avatars" # Relative path up one more level
+                        )
+                        # Override type and add title for forum starter messages
+                        msg_data["type"] = "Thread_starter_message"
+                        msg_data["title"] = thread.name
+                        
+                        # Store applied tag IDs (as strings) — names are resolvable via the forum's available_tags
+                        msg_data["tags"] = [str(tid) for tid in getattr(thread, "_applied_tags", [])]
+                        
+                        if forum_json_file.exists():
+                            with open(forum_json_file, "r", encoding="utf-8") as f:
+                                try:
+                                    forum_data = json.load(f)
+                                except Exception as e:
+                                    logger.error(f"Failed to load forum JSON: {e}")
+                                    forum_data = {}
+                            
+                            if "messages" not in forum_data:
+                                forum_data["messages"] = []
+                            
+                            # Avoid duplicates
+                            if not any(m["messageID"] == msg_data["messageID"] for m in forum_data["messages"]):
+                                forum_data["messages"].append(msg_data)
+                                forum_data["messageCount"] = len(forum_data["messages"])
+                                # Keep chronological order
+                                forum_data["messages"].sort(key=lambda x: x["timestamp"])
+                                
+                                with open(forum_json_file, "w", encoding="utf-8") as f:
+                                    json.dump(forum_data, f, indent=4, ensure_ascii=False)
+                                logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")
+                            else:
+                                logger.debug(f"Starter message for {thread.name} already in JSON")
+                        else:
+                            logger.warning(f"Forum JSON file does not exist: {forum_json_file}")
+                    
+                    if not msg_found:
+                        logger.warning(f"No starter message found for thread: {thread.name}")
+                except Exception as e:
+                    logger.error(f"Error adding starter message for {thread.name}: {e}")
+
             await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force)
             thread_count += 1
             
