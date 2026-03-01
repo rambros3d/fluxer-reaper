@@ -12,7 +12,7 @@ def setup_logging():
     except Exception:
         level = logging.INFO
         
-    handlers = [logging.FileHandler('disco-reaper.log', mode='a')]
+    handlers = [logging.FileHandler('.reaper.log', mode='a')]
     logging.basicConfig(
         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
         datefmt='%H:%M:%S',

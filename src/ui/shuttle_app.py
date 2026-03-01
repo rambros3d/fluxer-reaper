@@ -1108,7 +1108,10 @@ class MigrationCLI:
             # 2. Select Target Channel
             with console.status(f"[yellow]Fetching {platform_name} channels...[/yellow]"):
                 full_f_channels = await self.engine.writer.get_channels()
-                f_channels = [c for c in full_f_channels if c.get('name') not in ["reaper_logs", "reaper-logs"]]
+                f_channels = [
+                    c for c in full_f_channels 
+                    if c.get('name') not in ["reaper_logs", "reaper-logs"] and c.get('type') != 4
+                ]
             if not f_channels:
                 console.print(f"[yellow]No channels found in {platform_name} community.[/yellow]")
                 return
