@@ -1,7 +1,7 @@
 import sys
 import asyncio
 import logging
-from src.ui.disco_reaper_app import run_disco_reaper
+from src.ui.reaper_app import run_disco_reaper
 from src.core.configuration import load_config
 
 def setup_logging():

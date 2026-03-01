@@ -2,7 +2,7 @@ import sys
 import asyncio
 import logging
 from pathlib import Path
-from src.ui.app import run_cli
+from src.ui.shuttle_app import run_cli
 from src.core.configuration import load_config
 
 def setup_logging():

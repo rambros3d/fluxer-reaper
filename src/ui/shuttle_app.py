@@ -1065,17 +1065,30 @@ class MigrationCLI:
              return
 
         try:
-            with console.status("[yellow]Fetching Discord channels...[/yellow]"):
+            with console.status("[yellow]Fetching Discord channels & categories...[/yellow]"):
                 await self.engine.start_connections()
                 d_channels = await self.engine.discord_reader.get_channels()
+                d_categories = await self.engine.discord_reader.get_categories()
+                d_cat_map = {c.id: c.name for c in d_categories}
             
             if not d_channels:
                 console.print("[yellow]No text channels found in Discord server.[/yellow]")
                 return
             
             console.print("\n[bold]Select Source Discord Channel:[/bold]")
+            
+            # Identify duplicate names to show categories for them
+            d_name_counts = {}
+            for ch in d_channels:
+                d_name_counts[ch.name] = d_name_counts.get(ch.name, 0) + 1
+
             for i, ch in enumerate(d_channels):
-                console.print(f"({i+1}) {ch.name}")
+                display_name = ch.name
+                if d_name_counts[ch.name] > 1:
+                    cat_name = d_cat_map.get(ch.category_id)
+                    if cat_name:
+                        display_name = f"{ch.name} [{cat_name}]"
+                console.print(f"({i+1}) {display_name}")
             
             console.print("(B) Back")
             d_choices = [str(i+1) for i in range(len(d_channels))] + ["B", "b"]
@@ -1113,8 +1126,28 @@ class MigrationCLI:
                 
             console.print(f"\n[bold]Select Target {platform_name} Channel:[/bold]")
             
+            # Identify duplicate names to show categories for them
+            f_name_counts = {}
+            for ch in f_channels:
+                name = ch.get('name', 'Unnamed Channel')
+                f_name_counts[name] = f_name_counts.get(name, 0) + 1
+
+            # Get category map for target platform
+            # For Fluxer/Stoat, the channel object in f_channels contains 'parent_id'
+            # We need to resolve these IDs to names.
+            target_cat_names = {}
+            for ch in full_f_channels: # use full list including categories (type 4)
+                if ch.get('type') == 4:
+                    target_cat_names[str(ch.get('id'))] = ch.get('name')
+
             for i, ch in enumerate(f_channels):
-                console.print(f"({i+1}) {ch.get('name', 'Unnamed Channel')}")
+                name = ch.get('name', 'Unnamed Channel')
+                display_name = name
+                if f_name_counts[name] > 1:
+                    parent_id = ch.get('parent_id')
+                    if parent_id and str(parent_id) in target_cat_names:
+                        display_name = f"{name} [{target_cat_names[str(parent_id)]}]"
+                console.print(f"({i+1}) {display_name}")
 
             f_choices = [str(i+1) for i in range(len(f_channels))] + ["B", "b", "N", "n"]
             

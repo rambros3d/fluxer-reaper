@@ -85,10 +85,10 @@ class DiscoReaperCLI:
             console.print("(1) Backup Server Profile")
             console.print("(2) Backup Messages")
             console.print("(3) Update & Sync Backup")
-            console.print("(C) Configuration")
+            console.print("(4) Configuration")
             console.print("(Q) Exit")
             
-            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "C", "Q"], default="Q", show_choices=False).upper()
+            choice = Prompt.ask("\nSelect an option", choices=["1", "2", "3", "4", "Q"], default="Q", show_choices=False).upper()
             
             if choice == "1":
                 await self.backup_server_profile()
@@ -96,7 +96,7 @@ class DiscoReaperCLI:
                 await self.backup_messages()
             elif choice == "3":
                 await self.sync_backup()
-            elif choice == "C":
+            elif choice == "4":
                 await self.edit_configuration()
             elif choice == "Q":
                 await self.engine.close_connections()
@@ -154,7 +154,11 @@ class DiscoReaperCLI:
                 await self.exporter.export_channels_structure()
             
             # 2. Select Channels
-            all_channels = await self.engine.discord_reader.get_channels()
+            with console.status("[yellow]Fetching channels & categories...[/yellow]"):
+                all_channels = await self.engine.discord_reader.get_channels()
+                all_categories = await self.engine.discord_reader.get_categories()
+                cat_map = {c.id: c.name for c in all_categories}
+
             # Filter for exportable channels
             eligible_channels = [
                 c for c in all_channels 
@@ -166,8 +170,19 @@ class DiscoReaperCLI:
                 return
 
             console.print(f"\n[bold]Select Channels to Backup ({len(eligible_channels)} total):[/bold]")
+            
+            # Identify duplicate names to show categories for them
+            name_counts = {}
+            for chan in eligible_channels:
+                name_counts[chan.name] = name_counts.get(chan.name, 0) + 1
+            
             for i, chan in enumerate(eligible_channels):
-                console.print(f"({i+1}) {chan.name}")
+                display_name = chan.name
+                if name_counts[chan.name] > 1:
+                    cat_name = cat_map.get(chan.category_id)
+                    if cat_name:
+                        display_name = f"{chan.name} [{cat_name}]"
+                console.print(f"({i+1}) {display_name}")
             
             console.print("(A) [bold green]All Channels[/bold green]")
             console.print("(B) Back")
