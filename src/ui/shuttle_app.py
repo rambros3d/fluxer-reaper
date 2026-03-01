@@ -1,5 +1,6 @@
 import sys
 import asyncio
+import discord
 import logging
 import re
 import time
@@ -529,10 +530,13 @@ class MigrationCLI:
 
                 console.print(f"\nDiscord Bot Token {get_status_str(self.validation_results.get('discord_token', False))}")
                 console.print(f"Discord Server ID {get_status_str(self.validation_results.get('discord_server', False))}")
-                console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
-                console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
-                console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False))}")
-                console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False))}")
+                
+                if self.target_platform == "fluxer":
+                    console.print(f"Fluxer Bot Token {get_status_str(self.validation_results.get('fluxer_token', False))}")
+                    console.print(f"Fluxer Community ID {get_status_str(self.validation_results.get('fluxer_community', False))}")
+                else:
+                    console.print(f"Stoat Bot Token {get_status_str(self.validation_results.get('stoat_token', False))}")
+                    console.print(f"Stoat Server ID {get_status_str(self.validation_results.get('stoat_server', False))}")
                 
                 console.print(f"[bold green]Configuration updated and saved to {self.config_path}![/bold green]")
             else:
@@ -1067,7 +1071,8 @@ class MigrationCLI:
         try:
             with console.status("[yellow]Fetching Discord channels & categories...[/yellow]"):
                 await self.engine.start_connections()
-                d_channels = await self.engine.discord_reader.get_channels()
+                full_d_channels = await self.engine.discord_reader.get_channels()
+                d_channels = [c for c in full_d_channels if c.type in [discord.ChannelType.text, discord.ChannelType.news]]
                 d_categories = await self.engine.discord_reader.get_categories()
                 d_cat_map = {c.id: c.name for c in d_categories}
             
@@ -1110,7 +1115,7 @@ class MigrationCLI:
                 full_f_channels = await self.engine.writer.get_channels()
                 f_channels = [
                     c for c in full_f_channels 
-                    if c.get('name') not in ["reaper_logs", "reaper-logs"] and c.get('type') != 4
+                    if c.get('name') not in ["reaper_logs", "reaper-logs"] and c.get('type') not in [2, 4]
                 ]
             if not f_channels:
                 console.print(f"[yellow]No channels found in {platform_name} community.[/yellow]")

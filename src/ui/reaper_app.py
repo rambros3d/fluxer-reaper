@@ -162,7 +162,7 @@ class DiscoReaperCLI:
             # Filter for exportable channels
             eligible_channels = [
                 c for c in all_channels 
-                if c.type in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.voice]
+                if c.type in [discord.ChannelType.text, discord.ChannelType.news]
             ]
             
             if not eligible_channels:
