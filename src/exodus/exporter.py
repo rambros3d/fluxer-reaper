@@ -342,6 +342,7 @@ class DiscordExporter:
             thread_msg_count += (t.message_count or 0)
 
         output_data = {
+            "channelName": channel_name,
             "channelID": str(channel_id),
             "messageCount": len(messages),
             "threadCount": thread_count,
@@ -478,17 +479,32 @@ class DiscordExporter:
                     "format": str(s.format).split(".")[-1]
                 })
 
-        # Determine message type (Override if it's a thread starter)
+        # Determine message type (Override if it's a thread starter or forward)
         msg_type = str(msg.type).split(".")[-1].capitalize()
         if msg.thread:
             msg_type = "ThreadStarter"
+        
+        # Check for forwarded flags (newer discord.py feature)
+        try:
+            if hasattr(msg.flags, "forwarded") and msg.flags.forwarded:
+                msg_type = "Forward"
+        except Exception:
+            pass
+
+        msg_content = msg.content
+        if msg_type == "Forward" and not msg_content:
+            try:
+                if hasattr(msg, "message_snapshots") and msg.message_snapshots:
+                    msg_content = msg.message_snapshots[0].content
+            except Exception:
+                pass
 
         data = {
             "messageID": str(msg.id),
             "type": msg_type,
             "timestamp": msg.created_at.isoformat(),
             "isPinned": msg.pinned,
-            "content": msg.content,
+            "content": msg_content,
             "userID": user_id,
             "attachments": attachments,
             "embeds": [e.to_dict() for e in msg.embeds],
