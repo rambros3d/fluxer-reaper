@@ -55,7 +55,24 @@ class DiscordExporter:
             else:
                 metadata["banner"] = None
 
+        # Add metadata fields
+        from datetime import datetime
+        metadata["last_backup"] = datetime.now().isoformat()
+        
         output_file = self.export_path / "server_profile.json"
+        
+        # Preserve ignore_channels if the file already exists
+        ignore_channels = []
+        if output_file.exists():
+            try:
+                with open(output_file, "r", encoding="utf-8") as f:
+                    old_data = json.load(f)
+                    ignore_channels = old_data.get("ignore_channels", [])
+            except Exception as e:
+                logger.warning(f"Could not read existing server_profile.json to preserve ignore_channels: {e}")
+        
+        metadata["ignore_channels"] = ignore_channels
+
         with open(output_file, "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=4, ensure_ascii=False)
         return metadata
@@ -240,10 +257,12 @@ class DiscordExporter:
             "nsfw": getattr(c, "nsfw", False)
         }
 
-    async def export_channel_messages(self, channel_id: int, progress_callback=None):
-        """Exports all messages from a channel, including attachments, pins, reactions."""
+    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False):
+        """Fetches and saves message history for a channel, handling incremental sync."""
         channel = await self.reader.get_channel(channel_id)
-        if not channel: return 0
+        if not channel:
+            logger.error(f"Channel not found: {channel_id}")
+            return 0
         
         channel_name = channel.name
         safe_name = channel_name.replace(" ", "-").lower()
@@ -278,13 +297,21 @@ class DiscordExporter:
         base_filename = str(channel_id)
         json_file = backup_dir / f"{base_filename}.json"
         asset_dir = backup_dir / base_filename
+        
+        if force and asset_dir.exists():
+            import shutil
+            try:
+                shutil.rmtree(asset_dir)
+            except Exception as e:
+                logger.warning(f"Failed to clear asset directory {asset_dir}: {e}")
+        
         asset_dir.mkdir(exist_ok=True)
         
         messages = []
         last_id = None
         
-        # Load existing messages for incremental sync
-        if json_file.exists():
+        # Load existing messages for incremental sync (skip if force)
+        if not force and json_file.exists():
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
                     old_data = json.load(f)
@@ -309,7 +336,7 @@ class DiscordExporter:
                 messages.append(msg_data)
                 new_count += 1
                 if progress_callback:
-                    await progress_callback(channel_name, count + new_count)
+                    await progress_callback(channel_name, new_count)
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to read messages in {channel_name} ({channel_id})")
             if not messages: return 0
@@ -532,7 +559,7 @@ class DiscordExporter:
 
         return data
 
-    async def export_threads(self, channel_id: int):
+    async def export_threads(self, channel_id: int, progress_callback=None, force=False):
         """Exports active and archived threads for a channel."""
         channel = await self.reader.get_channel(channel_id)
         if not hasattr(channel, "threads") and not hasattr(channel, "public_archived_threads"):
@@ -562,7 +589,7 @@ class DiscordExporter:
             logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
         
         for thread in all_threads:
-            await self.export_channel_messages(thread.id)
+            await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force)
             thread_count += 1
             
         return thread_count

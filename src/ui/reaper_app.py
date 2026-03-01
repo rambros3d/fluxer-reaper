@@ -3,6 +3,10 @@ import asyncio
 import discord
 import logging
 import time
+import re
+import json
+from datetime import datetime
+from pathlib import Path
 from rich.console import Console
 from rich.prompt import Prompt, Confirm
 from rich.table import Table
@@ -65,6 +69,29 @@ class DiscoReaperCLI:
             console.print(f"[bold red]Discord validation failed: {e}[/bold red]")
         
         return False
+        
+    def get_backup_info(self):
+        """Checks for existing backup and returns formatted timestamp."""
+        d_name = self.validation_results.get("discord_server_name")
+        d_id = self.config.discord_server_id
+        if not d_name or not d_id or d_id == "DISCORD_SERVER_ID":
+            return None
+            
+        safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', d_name)
+        export_path = Path(".") / f"EXPORT-{safe_name}-{d_id}"
+        profile_file = export_path / "server_profile.json"
+        
+        if profile_file.exists():
+            try:
+                with open(profile_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    ts_str = data.get("last_backup")
+                    if ts_str:
+                        dt = datetime.fromisoformat(ts_str)
+                        return dt.strftime("%d-%b-%Y %H:%M")
+            except Exception:
+                pass
+        return None
 
     async def run(self):
         await self.validate_config()
@@ -81,9 +108,13 @@ class DiscoReaperCLI:
             b_display = f"[bold green]\"{b_name}\"[/bold green]" if b_name else "[bold red]UNKNOWN[/bold red]"
             console.print(f"[bold cyan]Bot name:[/bold cyan] {b_display}")
             
+            backup_ts = self.get_backup_info()
+            if backup_ts:
+                console.print(f"[bold cyan]Backup Found:[/bold cyan] [bold yellow]{backup_ts}[/bold yellow]")
+            
             console.print("\n[bold]Main Menu[/bold]")
             console.print("(1) Backup Server Profile")
-            console.print("(2) Backup Messages")
+            console.print("(2) Backup Channel Messages")
             console.print("(3) Update & Sync Backup")
             console.print("(4) Configuration")
             console.print("(Q) Exit")
@@ -182,7 +213,14 @@ class DiscoReaperCLI:
                     cat_name = cat_map.get(chan.category_id)
                     if cat_name:
                         display_name = f"{chan.name} [{cat_name}]"
-                console.print(f"({i+1}) {display_name}")
+                
+                # Check for existing backup
+                found_prefix = ""
+                backup_file = self.exporter.export_path / "message_backup" / f"{chan.id}.json"
+                if backup_file.exists():
+                    found_prefix = "[green][FOUND][/green] "
+                
+                console.print(f"({i+1}) {found_prefix}{display_name}")
             
             console.print("(A) [bold green]All Channels[/bold green]")
             console.print("(B) Back")
@@ -209,23 +247,57 @@ class DiscoReaperCLI:
                 console.print("[yellow]No valid channels selected.[/yellow]")
                 return
 
+            # Check if any have [FOUND]
+            any_found = False
+            for chan in selected_channels:
+                if (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists():
+                    any_found = True
+                    break
+            
+            force_overwrite = False
+            if any_found:
+                console.print("\n[bold yellow]Existing backup(s) found for some selected channels.[/bold yellow]")
+                console.print("(Y) Update & Sync Backup")
+                console.print("(F) [bold red]Force Overwrite Backup[/bold red]")
+                console.print("(B) Back")
+                
+                sync_choice = Prompt.ask("\nSelect option", choices=["Y", "F", "B"], default="Y").upper()
+                if sync_choice == "B":
+                    return
+                force_overwrite = (sync_choice == "F")
+
             console.print(f"\n[yellow]Starting backup for {len(selected_channels)} channels...[/yellow]")
             
             with Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
-                BarColumn(),
-                TaskProgressColumn(),
+                TextColumn("- [bold yellow]{task.fields[msg_count]} {task.fields[suffix]}"),
                 console=console
             ) as progress:
-                overall_task = progress.add_task("[cyan]Exporting Channels...", total=len(selected_channels))
                 for chan in selected_channels:
-                    progress.update(overall_task, description=f"[cyan]Backing up: {chan.name}")
-                    await self.exporter.export_channel_messages(chan.id)
-                    await self.exporter.export_threads(chan.id)
-                    progress.advance(overall_task)
+                    # Determine if it's a sync or fresh backup
+                    backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
+                    is_sync = backup_exists and not force_overwrite
+                    
+                    label = "Syncing Backup" if is_sync else "Backing up"
+                    suffix = "new messages" if is_sync else "messages"
+                    
+                    # Create a specific task for each channel to keep it on its own line
+                    task_id = progress.add_task(f"[cyan]{label}: {chan.name}", total=None, msg_count=0, suffix=suffix)
+                    
+                    async def update_msg_count(name, count, tid=task_id):
+                        progress.update(tid, msg_count=count)
+                    
+                    await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=force_overwrite)
+                    await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=force_overwrite)
+                    
+                    # Mark as finished (stop spinner)
+                    progress.stop_task(task_id)
+                    progress.update(task_id, description=f"[green]Completed: {chan.name}")
 
             console.print("[bold green]Message backup complete![/bold green]")
+            # Update last_backup in server_profile.json
+            await self.exporter.export_metadata()
         except Exception as e:
             console.print(f"[bold red]Message backup failed: {e}[/bold red]")
         finally:
