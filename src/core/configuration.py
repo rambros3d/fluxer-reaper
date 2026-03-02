@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 class MigrationSettings(BaseModel):
-    batch_size: int = Field(default=50)
+    batch_size: int = Field(default=100)
     rate_limit_delay_seconds: int = Field(default=2)
     log_level: str = Field(default="INFO")
 

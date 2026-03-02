@@ -1,10 +1,8 @@
 """
-Shuttle Screen – native Textual TUI for direct server-to-server migration.
-Ports every operation from the old Rich CLI (MigrationCLI) into Textual
-Screens, Modals, and Workers.
+ShuttlePane – self-contained shuttle (migration) operations widget.
+Embedded inside ModeScreen's "Migrate" tab.
 """
 
-import sys
 import asyncio
 import discord
 import logging
@@ -13,20 +11,17 @@ import time
 import aiohttp
 from pathlib import Path
 
-from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-from textual.widgets import (
-    Header, Footer, Button, Static, Label, Input,
-    Checkbox, RadioButton, ProgressBar, RichLog, Rule,
-    ListItem, ListView, RadioSet,
-)
-from textual.screen import Screen, ModalScreen
+from textual.app import ComposeResult
+from textual.containers import Container, Vertical, VerticalScroll
+from textual.widgets import Button, Label, Rule
 from textual import work
-from textual.worker import Worker, WorkerState
 
-from src.core.configuration import load_config, save_config
+from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.core.audit import log_audit_event
+from src.ui.modals import (
+    ProgressModal, ConfirmModal, SubMenuModal, ChannelPickerModal,
+)
 
 import src.fluxer.roles_permissions as fluxer_roles
 import src.stoat.roles_permissions as stoat_roles
@@ -52,329 +47,81 @@ class RateLimitHandler(logging.Handler):
         super().__init__()
 
     def emit(self, record):
-        try:
-            msg = record.getMessage()
-            if "retry" in msg.lower() and ("rate limit" in msg.lower() or "429" in msg):
-                match = re.search(r"in ([\d.]+)\s*(?:seconds?|s)", msg, re.IGNORECASE)
-                if match:
-                    seconds = match.group(1)
-                    platform = "API"
-                    if "discord" in record.name.lower():
-                        platform = "Discord"
-                    elif "fluxer" in record.name.lower():
-                        platform = "Fluxer"
-                    elif "stoat" in record.name.lower():
-                        platform = "Stoat"
-                    global global_rate_limit_msg, global_rate_limit_expires
-                    global_rate_limit_msg = f"{platform} rate limit {seconds}s"
-                    try:
-                        global_rate_limit_expires = time.time() + float(seconds)
-                    except ValueError:
-                        pass
-        except Exception:
-            pass
+        global global_rate_limit_msg, global_rate_limit_expires
+        msg = record.getMessage()
+        if "rate" in msg.lower() and "limit" in msg.lower():
+            global_rate_limit_msg = msg
+            try:
+                parts = msg.split()
+                for i, p in enumerate(parts):
+                    if p.lower() in ("retry_after", "retry"):
+                        secs = float(parts[i + 1].strip("s,."))
+                        global_rate_limit_expires = time.time() + secs
+                        break
+                    if p.lower() == "after":
+                        secs = float(parts[i + 1].strip("s,."))
+                        global_rate_limit_expires = time.time() + secs
+                        break
+                else:
+                    for p in parts:
+                        try:
+                            secs = float(p.strip("s,."))
+                            if 0 < secs < 3600:
+                                global_rate_limit_expires = time.time() + secs
+                                break
+                        except ValueError:
+                            continue
+            except Exception:
+                pass
 
 
-# ---------------------------------------------------------------------------
-# Shared modals
-# ---------------------------------------------------------------------------
+class ShuttlePane(Container):
+    """Shuttle (migration) operations pane — clone, roles, emojis, metadata, messages, danger zone."""
 
-class ProgressModal(ModalScreen[None]):
-    """Modal to display progress for any long-running operation."""
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="progress_dialog"):
-            yield Label("Operation Status", id="progress_status")
-            yield ProgressBar(total=None, show_eta=False, id="progress_bar")
-            yield RichLog(id="progress_log", highlight=True, markup=True)
-            yield Button("Close", id="btn_close_progress", disabled=True)
-
-    def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_close_progress":
-            self.dismiss(None)
-
-    def write(self, message: str):
-        self.query_one("#progress_log", RichLog).write(message)
-
-    def set_status(self, status: str):
-        self.query_one("#progress_status", Label).update(status)
-
-    def set_progress(self, current: int, total: int):
-        bar = self.query_one("#progress_bar", ProgressBar)
-        bar.update(total=total, progress=current)
-
-    def allow_close(self):
-        btn = self.query_one("#btn_close_progress", Button)
-        btn.disabled = False
-        btn.variant = "success"
-        self.query_one("#progress_bar", ProgressBar).update(total=100, progress=100)
-
-
-class ShuttleConfigModal(ModalScreen[dict]):
-    """Modal for editing all shuttle-mode tokens & IDs."""
-
-    def __init__(self, config, target_platform: str):
-        super().__init__()
-        self.config = config
-        self.target_platform = target_platform
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="shuttle_config_dialog"):
-            yield Label("Shuttle Configuration", id="config_title")
-            yield Label("Discord Bot Token:")
-            yield Input(value=self.config.discord_bot_token or "", id="inp_d_token")
-            yield Label("Discord Server ID:")
-            yield Input(value=self.config.discord_server_id or "", id="inp_d_server")
-
-            plat_label = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
-            yield Label(f"{plat_label} Bot Token:")
-            yield Input(value=self.config.target_bot_token or "", id="inp_t_token")
-            yield Label(f"{plat_label} Server/Community ID:")
-            yield Input(value=self.config.target_server_id or "", id="inp_t_server")
-
-            with Horizontal(id="config_buttons"):
-                yield Button("Save", variant="success", id="btn_save")
-                yield Button("Cancel", variant="primary", id="btn_cancel")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_save":
-            self.dismiss({
-                "d_token": self.query_one("#inp_d_token", Input).value,
-                "d_server": self.query_one("#inp_d_server", Input).value,
-                "t_token": self.query_one("#inp_t_token", Input).value,
-                "t_server": self.query_one("#inp_t_server", Input).value,
-            })
-        elif event.button.id == "btn_cancel":
-            self.dismiss(None)
-
-
-class PlatformSelectModal(ModalScreen[str]):
-    """Modal for selecting target platform (fluxer / stoat)."""
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="platform_select_dialog"):
-            yield Label("Select Target Platform", id="platform_title")
-            yield Button("Fluxer", variant="primary", id="btn_fluxer")
-            yield Button("Stoat", variant="warning", id="btn_stoat")
-            yield Rule()
-            yield Button("Cancel", id="btn_cancel_platform")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_fluxer":
-            self.dismiss("fluxer")
-        elif event.button.id == "btn_stoat":
-            self.dismiss("stoat")
-        elif event.button.id == "btn_cancel_platform":
-            self.dismiss(None)
-
-
-class SubMenuModal(ModalScreen[str]):
-    """A generic sub-menu modal that presents a list of labelled buttons."""
-
-    def __init__(self, title: str, options: list[tuple[str, str, str]]):
-        """options: list of (button_id, label, variant)"""
-        super().__init__()
-        self._title = title
-        self._options = options
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="submenu_dialog"):
-            yield Label(self._title, id="submenu_title")
-            for btn_id, label, variant in self._options:
-                yield Button(label, id=btn_id, variant=variant)
-            yield Rule()
-            yield Button("Cancel", id="btn_cancel_sub")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_cancel_sub":
-            self.dismiss(None)
-        else:
-            self.dismiss(event.button.id)
-
-
-class ConfirmModal(ModalScreen[bool]):
-    """Simple Yes / No confirmation modal."""
-
-    def __init__(self, message: str, danger: bool = False):
-        super().__init__()
-        self._message = message
-        self._danger = danger
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm_dialog"):
-            yield Label(self._message, id="confirm_msg")
-            with Horizontal(id="confirm_buttons"):
-                yield Button("Confirm", variant="error" if self._danger else "success", id="btn_yes")
-                yield Button("Cancel", variant="primary", id="btn_no")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        self.dismiss(event.button.id == "btn_yes")
-
-
-class ChannelPickerModal(ModalScreen[int]):
-    """Modal listing Discord channels for single-channel selection."""
-
-    def __init__(self, channels: list, categories: dict, label: str = "Select Channel"):
-        super().__init__()
-        self._channels = channels
-        self._categories = categories
-        self._label = label
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="chanpick_dialog"):
-            yield Label(self._label, id="chanpick_title")
-            with VerticalScroll(id="chanpick_scroll"):
-                cat_grouped: dict[int | None, list] = {}
-                for c in self._channels:
-                    cat_id = getattr(c, "category_id", None) if not isinstance(c, dict) else c.get("parent_id")
-                    cat_grouped.setdefault(cat_id, []).append(c)
-
-                for cat_id in sorted(cat_grouped, key=lambda k: self._categories.get(k, "") if k else ""):
-                    if cat_id is not None and cat_id in self._categories:
-                        yield Label(f"[cyan]{self._categories[cat_id]}[/cyan]", classes="category_header")
-                    for c in cat_grouped[cat_id]:
-                        if isinstance(c, dict):
-                            name = c.get("name", "Unnamed")
-                            cid = c.get("id")
-                        else:
-                            name = c.name
-                            cid = c.id
-                        yield RadioButton(name, value=False, id=f"chpk_{cid}")
-
-            with Horizontal(id="chanpick_buttons"):
-                yield Button("Select", variant="success", id="btn_pick_ok")
-                yield Button("Cancel", id="btn_pick_cancel")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_pick_cancel":
-            self.dismiss(None)
-        elif event.button.id == "btn_pick_ok":
-            for rb in self.query(RadioButton):
-                if rb.value and rb.id and rb.id.startswith("chpk_"):
-                    self.dismiss(int(rb.id.split("_", 1)[1]))
-                    return
-            # Nothing selected
-            return
-
-
-# ---------------------------------------------------------------------------
-# ShuttleScreen — main screen for Shuttle Mode
-# ---------------------------------------------------------------------------
-
-class ShuttleScreen(Screen):
-    """Native Textual screen for Shuttle (direct migration) mode."""
-
-    CSS = """
-    #shuttle_scroll {
-        align: center middle;
+    DEFAULT_CSS = """
+    ShuttlePane { height: auto; width: 100%; }
+    ShuttlePane #sp_info {
+        height: auto; border: tall cyan; padding: 1; margin-bottom: 1;
     }
-    
-    #shuttle_container {
-        width: 80%;
-        height: auto;
-        min-height: 25;
-        border: solid #4641D9;
-        padding: 1 2;
-        margin: 2 0;
-    }
-    #shuttle_title {
-        text-style: bold;
-        color: #4641D9;
-        margin-bottom: 1;
-        content-align: center middle;
-        width: 100%;
-    }
-    #shuttle_info {
-        height: auto;
-        margin-bottom: 2;
-        border: tall cyan;
-        padding: 1;
-    }
-    #shuttle_actions {
-        height: auto;
-        layout: vertical;
-        align: center top;
-        margin-top: 1;
-    }
-    #shuttle_actions Button {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    /* Modals */
-    #shuttle_config_dialog, #platform_select_dialog, #submenu_dialog, #confirm_dialog {
-        width: 60%;
-        height: auto;
-        max-height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #progress_dialog {
-        width: 80%;
-        height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #chanpick_dialog {
-        width: 70%;
-        height: 75%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #chanpick_scroll {
-        height: 1fr;
-        border: solid $primary;
-        margin-bottom: 1;
-        padding: 0 1;
-    }
-    .category_header {
-        margin-top: 1;
-        background: $primary 10%;
-        text-style: bold;
-        padding-left: 1;
-    }
-    #config_title, #platform_title, #submenu_title, #confirm_msg, #chanpick_title {
-        text-style: bold; margin-bottom: 1;
-    }
-    #config_buttons, #confirm_buttons, #chanpick_buttons {
-        height: auto; margin-top: 1;
-    }
-    #config_buttons Button, #confirm_buttons Button, #chanpick_buttons Button {
-        width: 1fr; margin: 0 1;
-    }
-    #progress_status { text-style: bold; margin-bottom: 1; }
-    #progress_bar { margin-bottom: 1; }
-    #progress_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
-    RadioButton:focus { background: transparent; border: none; }
-    RadioButton > .radio-button--label { padding: 0 1; }
-    RadioButton:focus > .radio-button--label { background: transparent; text-style: none; }
+    ShuttlePane #sp_actions { height: auto; }
+    ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
     """
-
-    BINDINGS = [
-        ("q", "app.exit", "Quit"),
-        ("b", "go_back", "Back"),
-    ]
 
     def __init__(self, cfg_name: str, cfg_path: Path, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cfg_name = cfg_name
         self.config_path = cfg_path
-        self.config = load_config(self.config_path)
-        self.target_platform: str | None = None
+        self.config = load_config(cfg_path)
+        self.target_platform = self.config.target_platform or "fluxer"
         self.engine: MigrationContext | None = None
         self.validation_results: dict = {}
         self.tokens_valid = False
         self.permissions_complete = False
 
-        # Register rate-limit handler
-        rl = RateLimitHandler()
-        logging.getLogger("discord").addHandler(rl)
-        logging.getLogger("fluxer").addHandler(rl)
-        logging.getLogger("stoat").addHandler(rl)
+    def compose(self) -> ComposeResult:
+        with VerticalScroll():
+            with Vertical(id="sp_info"):
+                yield Label("Discord: [yellow]Loading...[/yellow]", id="sp_lbl_discord")
+                yield Label("Target: [yellow]Loading...[/yellow]", id="sp_lbl_target")
+                yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_status")
+            with Vertical(id="sp_actions"):
+                yield Button("Clone Server Template", id="sp_clone", disabled=True)
+                yield Button("Copy Roles & Permissions", id="sp_roles", disabled=True)
+                yield Button("Copy Emojis & Stickers", id="sp_emojis", disabled=True)
+                yield Button("Sync Server Profile", id="sp_metadata", disabled=True)
+                yield Button("Migrate Message History", id="sp_messages", disabled=True)
+                yield Rule()
+                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True)
 
-    # ── helpers ──────────────────────────────────────────────────────────
+    def on_mount(self) -> None:
+        self._rebuild_engine()
+        self.run_validate()
+
+    def reload_config(self) -> None:
+        self.config = load_config(self.config_path)
+        self.target_platform = self.config.target_platform or "fluxer"
+        self._rebuild_engine()
+        self.run_validate()
 
     def _base_dir(self) -> str:
         return f"Reaper-{self.cfg_name}"
@@ -382,89 +129,51 @@ class ShuttleScreen(Screen):
     def _rebuild_engine(self):
         self.engine = MigrationContext(self.config, self.target_platform)
 
+    # ── labels ────────────────────────────────────────────────────────────
+
     def _update_info_labels(self):
-        d_name = self.validation_results.get("discord_server_name")
-        d_disp = f"[green]\"{d_name}\"[/green]" if d_name else "[red]NOT SET UP[/red]"
-        self.query_one("#lbl_discord", Label).update(f"Discord: {d_disp}")
+        v = self.validation_results
 
-        if self.target_platform == "fluxer":
-            t_name = self.validation_results.get("target_community_name")
-            t_disp = f"[green]\"{t_name}\"[/green]" if t_name else "[red]NOT SET UP[/red]"
-            self.query_one("#lbl_target", Label).update(f"Fluxer: {t_disp}")
+        # Discord
+        d_name = v.get("discord_server_name")
+        d_bot = v.get("discord_bot_name")
+        if v.get("discord_timeout"):
+            d_disp = "[red]TIMEOUT[/red]"
+        elif d_name and v.get("discord_token") and v.get("discord_server"):
+            d_disp = f'[green]"{d_name}"[/green]  Bot: [green]{d_bot}[/green]'
+        elif v.get("discord_token") is False:
+            d_disp = "[red]INVALID TOKEN[/red]"
         else:
-            t_name = self.validation_results.get("target_community_name")
-            t_disp = f"[green]\"{t_name}\"[/green]" if t_name else "[red]NOT SET UP[/red]"
-            self.query_one("#lbl_target", Label).update(f"Stoat: {t_disp}")
+            d_disp = "[red]NOT SET UP[/red]"
+        self.query_one("#sp_lbl_discord", Label).update(f"Discord: {d_disp}")
 
+        # Target
+        plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
+        t_name = v.get("target_community_name")
+        if v.get("target_timeout"):
+            t_disp = "[red]TIMEOUT[/red]"
+        elif t_name and v.get("target_token") and v.get("target_community"):
+            t_disp = f'[green]"{t_name}"[/green]'
+        elif v.get("target_token") is False:
+            t_disp = "[red]INVALID TOKEN[/red]"
+        else:
+            t_disp = "[red]NOT SET UP[/red]"
+        self.query_one("#sp_lbl_target", Label).update(f"{plat}: {t_disp}")
+
+        # Status
         if not self.tokens_valid:
             val = "[red][INVALID][/red]"
         elif not self.permissions_complete:
-            val = "[yellow][PERMISSION MISSING][/yellow]"
+            val = "[yellow][MISSING PERMISSIONS][/yellow]"
         else:
             val = "[green][VALID][/green]"
-        self.query_one("#lbl_status", Label).update(f"Status: {val}")
+        self.query_one("#sp_lbl_status", Label).update(f"Status: {val}")
 
-        enabled = self.tokens_valid
-        for bid in ("#btn_clone", "#btn_roles", "#btn_emojis", "#btn_metadata", "#btn_messages", "#btn_danger"):
-            self.query_one(bid, Button).disabled = not enabled
+        # Buttons
+        for bid in ("#sp_clone", "#sp_roles", "#sp_emojis", "#sp_metadata", "#sp_messages", "#sp_danger"):
+            self.query_one(bid, Button).disabled = not self.tokens_valid
 
-    # ── compose ──────────────────────────────────────────────────────────
-
-    def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
-        with VerticalScroll(id="shuttle_scroll"):
-            with Container(id="shuttle_container"):
-                yield Label("Shuttle Mode", id="shuttle_title")
-                with Vertical(id="shuttle_info"):
-                    yield Label("Discord: [yellow]Loading...[/yellow]", id="lbl_discord")
-                    yield Label("Target: [yellow]Loading...[/yellow]", id="lbl_target")
-                    yield Label("Status: [yellow]Validating...[/yellow]", id="lbl_status")
-                with Vertical(id="shuttle_actions"):
-                    yield Button("Clone Server Template", id="btn_clone", disabled=True)
-                    yield Button("Copy Roles & Permissions", id="btn_roles", disabled=True)
-                    yield Button("Copy Emojis & Stickers", id="btn_emojis", disabled=True)
-                    yield Button("Sync Server Profile", id="btn_metadata", disabled=True)
-                    yield Button("Migrate Message History", id="btn_messages", disabled=True)
-                    yield Rule()
-                    yield Button("Configuration", id="btn_config")
-                    yield Button("Danger Zone ⚠", id="btn_danger", variant="error", disabled=True)
-                    yield Rule()
-                    yield Button("Back", id="btn_back")
-        yield Footer()
-
-    # ── lifecycle ────────────────────────────────────────────────────────
-
-    def on_mount(self) -> None:
-        # Platform is already configured in config.yaml via ConfigScreen
-        self.target_platform = self.config.target_platform or "fluxer"
-        self._rebuild_engine()
-        self.run_validate()
-
-    def action_go_back(self):
-        self.app.pop_screen()
-
-    # ── button routing ───────────────────────────────────────────────────
-
-    def on_button_pressed(self, event: Button.Pressed):
-        bid = event.button.id
-        if bid == "btn_back":
-            self.app.pop_screen()
-        elif bid == "btn_config":
-            self._open_config()
-        elif bid == "btn_clone":
-            self.run_clone_template()
-        elif bid == "btn_roles":
-            self._open_roles_menu()
-        elif bid == "btn_emojis":
-            self._open_emoji_menu()
-        elif bid == "btn_metadata":
-            self._open_metadata_menu()
-        elif bid == "btn_messages":
-            self.run_migrate_messages()
-        elif bid == "btn_danger":
-            self._open_danger_menu()
-
-    # ── (0) validation ───────────────────────────────────────────────────
+    # ── validation ────────────────────────────────────────────────────────
 
     @work(exclusive=True)
     async def run_validate(self) -> None:
@@ -501,7 +210,6 @@ class ShuttleScreen(Screen):
             if all_tasks:
                 done, _ = await asyncio.wait(all_tasks, timeout=10.0)
 
-            # Discord
             dt = tasks.get("discord")
             if dt and dt in done:
                 res = dt.result()
@@ -515,7 +223,6 @@ class ShuttleScreen(Screen):
                 self.validation_results["discord_timeout"] = True
                 dt.cancel()
 
-            # Target platform
             tt = tasks.get("target")
             if tt and tt in done:
                 res = tt.result()
@@ -528,12 +235,10 @@ class ShuttleScreen(Screen):
                 self.validation_results["target_timeout"] = True
                 tt.cancel()
 
-            # Compute validity
             discord_ok = self.validation_results.get("discord_token") and self.validation_results.get("discord_server")
             target_ok = self.validation_results.get("target_token") and self.validation_results.get("target_community")
             self.tokens_valid = bool(discord_ok and target_ok)
 
-            # Set state folder
             if self.tokens_valid:
                 srv_id = self.config.target_server_id
                 srv_name = self.validation_results.get("target_community_name", "unknown")
@@ -541,7 +246,6 @@ class ShuttleScreen(Screen):
                     safe = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", srv_name)
                     self.engine.state.set_folder(str(srv_id), safe, base_dir=self._base_dir())
 
-            # Check permissions
             self.permissions_complete = True
             if self.tokens_valid:
                 di = self.validation_results.get("discord_intents", {})
@@ -560,7 +264,26 @@ class ShuttleScreen(Screen):
 
         self._update_info_labels()
 
-    # ── (1) clone server template ────────────────────────────────────────
+    # ── button routing ────────────────────────────────────────────────────
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id
+        if not bid or not bid.startswith("sp_"):
+            return
+        if bid == "sp_clone":
+            self.run_clone_template()
+        elif bid == "sp_roles":
+            self._open_roles_menu()
+        elif bid == "sp_emojis":
+            self._open_emoji_menu()
+        elif bid == "sp_metadata":
+            self._open_metadata_menu()
+        elif bid == "sp_messages":
+            self.run_migrate_messages()
+        elif bid == "sp_danger":
+            self._open_danger_menu()
+
+    # ── (1) clone server template ─────────────────────────────────────────
 
     @work(exclusive=True)
     async def run_clone_template(self) -> None:
@@ -616,7 +339,7 @@ class ShuttleScreen(Screen):
             modal.set_status("Finished.")
             modal.allow_close()
 
-    # ── (2) roles & permissions ──────────────────────────────────────────
+    # ── (2) roles & permissions ───────────────────────────────────────────
 
     def _open_roles_menu(self):
         options = [
@@ -707,7 +430,7 @@ class ShuttleScreen(Screen):
             modal.set_status("Finished.")
             modal.allow_close()
 
-    # ── (3) emojis & stickers ────────────────────────────────────────────
+    # ── (3) emojis & stickers ─────────────────────────────────────────────
 
     def _open_emoji_menu(self):
         options = [
@@ -775,7 +498,7 @@ class ShuttleScreen(Screen):
             modal.set_status("Finished.")
             modal.allow_close()
 
-    # ── (4) server metadata sync ─────────────────────────────────────────
+    # ── (4) server metadata sync ──────────────────────────────────────────
 
     def _open_metadata_menu(self):
         options = [
@@ -842,7 +565,7 @@ class ShuttleScreen(Screen):
             modal.set_status("Finished.")
             modal.allow_close()
 
-    # ── (5) message migration ────────────────────────────────────────────
+    # ── (5) message migration ─────────────────────────────────────────────
 
     @work(exclusive=True)
     async def run_migrate_messages(self) -> None:
@@ -870,8 +593,8 @@ class ShuttleScreen(Screen):
                 modal.allow_close()
                 return
 
-            # Pick source channel via modal
-            self.app.pop_screen()  # pop progress temporarily
+            # Pick source channel
+            self.app.pop_screen()
 
             loop = asyncio.get_running_loop()
             src_future = loop.create_future()
@@ -889,7 +612,7 @@ class ShuttleScreen(Screen):
 
             source_channel = next(c for c in d_channels if c.id == src_id)
 
-            # Pick target channel
+            # Fetch target channels
             modal2_status = ProgressModal()
             self.app.push_screen(modal2_status)
             await asyncio.sleep(0.1)
@@ -912,7 +635,7 @@ class ShuttleScreen(Screen):
             if not recommended:
                 recommended = next((c for c in f_channels if c.get("name") == source_channel.name), None)
 
-            self.app.pop_screen()  # pop status
+            self.app.pop_screen()
 
             target_cat_names = {str(c.get("id")): c.get("name") for c in full_f if c.get("type") == 4}
 
@@ -999,22 +722,7 @@ class ShuttleScreen(Screen):
             modal.set_status("Finished.")
             modal.allow_close()
 
-    # ── (6) configuration ────────────────────────────────────────────────
-
-    def _open_config(self):
-        def on_result(data: dict | None):
-            if data is None:
-                return
-            self.config.discord_bot_token = data["d_token"] or self.config.discord_bot_token
-            self.config.discord_server_id = data["d_server"] or self.config.discord_server_id
-            self.config.target_bot_token = data["t_token"] or self.config.target_bot_token
-            self.config.target_server_id = data["t_server"] or self.config.target_server_id
-            save_config(self.config, self.config_path)
-            self._rebuild_engine()
-            self.run_validate()
-        self.app.push_screen(ShuttleConfigModal(self.config, self.target_platform), on_result)
-
-    # ── (7) danger zone ──────────────────────────────────────────────────
+    # ── (6) danger zone ───────────────────────────────────────────────────
 
     def _open_danger_menu(self):
         options = [

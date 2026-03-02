@@ -114,7 +114,8 @@ class ConfigSelectionScreen(Screen):
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         cfg_name = event.item.name
         cfg_path = Path(f"Reaper-{cfg_name}") / "config.yaml"
-        self.app.push_screen(ConfigScreen(cfg_name, cfg_path))
+        from src.ui.mode_screen import ModeScreen
+        self.app.push_screen(ModeScreen(cfg_name, cfg_path))
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_new_config":
@@ -157,11 +158,12 @@ class ConfigScreen(Screen):
 
     DEFAULT_CSS = """
     ConfigScreen { align: center middle; }
-    #cfg_scroll { width: 100%; height: 100%; align: center middle; }
+    #cfg_outer { width: 100%; height: 100%; align: center top; }
     #cfg_container {
-        width: 70; height: auto;
-        border: solid green; padding: 1 2; margin: 1 0;
+        width: 80%; height: 100%; layout: vertical;
+        border: solid green; padding: 1 2; margin: 2 0;
     }
+    #cfg_scroll { width: 100%; height: 1fr; margin-bottom: 1; }
     #cfg_title {
         text-style: bold; color: green; margin-bottom: 1;
         content-align: center middle; width: 100%;
@@ -175,7 +177,7 @@ class ConfigScreen(Screen):
         height: auto; margin: 0 0 0 2;
     }
     #target_section { height: auto; }
-    #cfg_actions { height: auto; margin-top: 1; }
+    #cfg_actions { height: auto; margin-top: 1; margin-bottom: 0; dock: bottom; }
     #cfg_actions Button { width: 1fr; margin: 0 1; }
     """
 
@@ -189,78 +191,80 @@ class ConfigScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with VerticalScroll(id="cfg_scroll"):
+        with Container(id="cfg_outer"):
             with Container(id="cfg_container"):
                 yield Label(f"Configuration — {self.cfg_name}", id="cfg_title")
 
-                # ── Discord ──────────────────────────────────────────────
-                yield Label("Discord", classes="section_title")
-                yield Rule()
-                yield Label("Bot Token:", classes="field_label")
-                yield Input(
-                    value=self.config.discord_bot_token or "",
-                    id="inp_discord_token",
-                    password=True,
-                )
-                yield Label("Server ID:", classes="field_label")
-                yield Input(
-                    value=self.config.discord_server_id or "",
-                    id="inp_discord_server",
-                )
-
-                # ── Reaper Mode ──────────────────────────────────────────
-                yield Label("Reaper Mode", classes="section_title")
-                yield Rule()
-                cur_mode = self.config.tool_mode or "backup_only"
-                with RadioSet(id="mode_radio"):
-                    yield RadioButton(
-                        "Shuttle Transfer  (direct migration)",
-                        id="radio_direct",
-                        value=(cur_mode == "direct_transfer"),
-                    )
-                    yield RadioButton(
-                        "Backup & Migrate  (backup first, then migrate)",
-                        id="radio_backup",
-                        value=(cur_mode == "backup_transfer"),
-                    )
-                    yield RadioButton(
-                        "Backup Only       (local backup, no migration)",
-                        id="radio_bkonly",
-                        value=(cur_mode == "backup_only"),
-                    )
-
-                # ── Target Platform (hidden for backup_only) ─────────────
-                with Vertical(id="target_section"):
-                    yield Label("Target Platform", classes="section_title")
-                    yield Rule()
-                    cur_plat = self.config.target_platform or "none"
-                    with RadioSet(id="plat_radio"):
-                        yield RadioButton(
-                            "Fluxer",
-                            id="radio_fluxer",
-                            value=(cur_plat == "fluxer"),
-                        )
-                        yield RadioButton(
-                            "Stoat",
-                            id="radio_stoat",
-                            value=(cur_plat == "stoat"),
-                        )
+                with VerticalScroll(id="cfg_scroll"):
+                    # ── Discord ──────────────────────────────────────────────
+                    yield Label("Discord", classes="section_title")
                     yield Label("Bot Token:", classes="field_label")
                     yield Input(
-                        value=self.config.target_bot_token or "",
-                        id="inp_target_token",
+                        value=self.config.discord_bot_token or "",
+                        id="inp_discord_token",
                         password=True,
                     )
-                    yield Label("Community / Server ID:", classes="field_label")
+                    yield Label("Server ID:", classes="field_label")
                     yield Input(
-                        value=self.config.target_server_id or "",
-                        id="inp_target_server",
+                        value=self.config.discord_server_id or "",
+                        id="inp_discord_server",
                     )
+
+                    # ── Reaper Mode ──────────────────────────────────────────
+                    yield Label("Reaper Mode", classes="section_title")
+                    cur_mode = self.config.tool_mode or "backup_only"
+                    with RadioSet(id="mode_radio"):
+                        yield RadioButton(
+                            "Shuttle Transfer  (direct migration)",
+                            id="radio_direct",
+                            value=(cur_mode == "direct_transfer"),
+                        )
+                        yield RadioButton(
+                            "Backup & Migrate  (backup first, then migrate)",
+                            id="radio_backup",
+                            value=(cur_mode == "backup_transfer"),
+                        )
+                        yield RadioButton(
+                            "Backup Only       (local backup, no migration)",
+                            id="radio_bkonly",
+                            value=(cur_mode == "backup_only"),
+                        )
+
+                    # ── Target Platform (hidden for backup_only) ─────────────
+                    with Vertical(id="target_section"):
+                        yield Label("Target Platform", classes="section_title")
+                        cur_plat = self.config.target_platform or "none"
+                        with RadioSet(id="plat_radio"):
+                            yield RadioButton(
+                                "Fluxer",
+                                id="radio_fluxer",
+                                value=(cur_plat == "fluxer"),
+                            )
+                            yield RadioButton(
+                                "Stoat",
+                                id="radio_stoat",
+                                value=(cur_plat == "stoat"),
+                            )
+                        yield Label("Bot Token:", classes="field_label")
+                        yield Input(
+                            value=self.config.target_bot_token or "",
+                            id="inp_target_token",
+                            password=True,
+                        )
+                        yield Label("Community / Server ID:", classes="field_label")
+                        yield Input(
+                            value=self.config.target_server_id or "",
+                            id="inp_target_server",
+                        )
+                        yield Label("Target API URL:", classes="field_label")
+                        yield Input(
+                            value=self.config.target_api_url or "default",
+                            id="inp_target_api",
+                        )
 
                 yield Rule()
                 with Horizontal(id="cfg_actions"):
-                    yield Button("Save & Start", variant="success", id="btn_start")
-                    yield Button("Save", variant="primary", id="btn_save")
+                    yield Button("Save Configuration", variant="primary", id="btn_save")
                     yield Button("Back", id="btn_back")
         yield Footer()
 
@@ -300,22 +304,14 @@ class ConfigScreen(Screen):
             self.config.target_platform = self._get_selected_platform()
             self.config.target_bot_token = self.query_one("#inp_target_token", Input).value.strip() or self.config.target_bot_token
             self.config.target_server_id = self.query_one("#inp_target_server", Input).value.strip() or self.config.target_server_id
+            self.config.target_api_url = self.query_one("#inp_target_api", Input).value.strip() or self.config.target_api_url
         else:
             self.config.target_platform = "none"
 
         save_config(self.config, self.cfg_path)
 
     def _launch_mode(self) -> None:
-        mode = self.config.tool_mode
-        if mode == "direct_transfer":
-            from src.ui.shuttle_screen import ShuttleScreen
-            self.app.push_screen(ShuttleScreen(self.cfg_name, self.cfg_path))
-        elif mode == "backup_transfer":
-            from src.ui.backup_screen import BackupScreen
-            self.app.push_screen(BackupScreen(self.cfg_name, self.cfg_path))
-        else:  # backup_only
-            from src.ui.backup_screen import BackupScreen
-            self.app.push_screen(BackupScreen(self.cfg_name, self.cfg_path))
+        pass # No longer needed
 
     def action_go_back(self) -> None:
         self.app.pop_screen()
@@ -326,9 +322,7 @@ class ConfigScreen(Screen):
         elif event.button.id == "btn_save":
             self._collect_and_save()
             self.notify("Configuration saved.", severity="information")
-        elif event.button.id == "btn_start":
-            self._collect_and_save()
-            self._launch_mode()
+            self.dismiss(True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -336,6 +330,7 @@ class ConfigScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ReaperApp(App):
+    theme = "dracula"
 
     def on_mount(self) -> None:
         self.push_screen(ConfigSelectionScreen())

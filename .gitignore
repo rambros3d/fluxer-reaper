@@ -41,4 +41,9 @@ test_*.py
 test_release.zip
 test_release/
 
+REAPER-*/
+Reaper-*/
+DISCORD-*/
+FLUXER-*/
+REAPER-*/
 EXPORT-*/
