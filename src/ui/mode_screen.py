@@ -22,7 +22,7 @@ class ModeScreen(Screen):
     """Unified mode screen — adapts content based on tool_mode."""
 
     CSS = """
-    #main_scroll {
+    #main_outer {
         align: center top;
         height: 100%;
     }
@@ -48,33 +48,22 @@ class ModeScreen(Screen):
         margin: 0 1;
     }
 
-    /* Modal styling (shared across both panes) */
-    #progress_dialog {
+    ModalScreen {
+        align: center middle;
+    }
+    #progress_dialog, #shuttle_config_dialog, #platform_select_dialog, #submenu_dialog, #confirm_dialog, #chanpick_dialog, #channel_dialog {
         width: 80%;
-        height: 80%;
-        border: thick $background 80%;
-        background: $surface;
+        height: 100%;
+        layout: vertical;
+        border: solid green;
         padding: 1 2;
+        margin: 2 0;
+        background: $surface;
     }
     #progress_status { text-style: bold; margin-bottom: 1; }
     #progress_bar { margin-bottom: 1; }
+    #progress_loader { margin-bottom: 1; }
     #progress_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
-
-    #shuttle_config_dialog, #platform_select_dialog, #submenu_dialog, #confirm_dialog {
-        width: 60%;
-        height: auto;
-        max-height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #chanpick_dialog {
-        width: 70%;
-        height: 75%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
     #chanpick_scroll {
         height: 1fr;
         border: solid $primary;
@@ -95,14 +84,6 @@ class ModeScreen(Screen):
     }
     #config_buttons Button, #confirm_buttons Button, #chanpick_buttons Button {
         width: 1fr; margin: 0 1;
-    }
-
-    #channel_dialog {
-        width: 80%;
-        height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
     }
     #channel_list_scroll {
         height: 1fr;
@@ -134,7 +115,7 @@ class ModeScreen(Screen):
 
         mode = self.config.tool_mode or "backup_only"
 
-        with VerticalScroll(id="main_scroll"):
+        with Container(id="main_outer"):
             with Container(id="main_container"):
                 if mode == "backup_only":
                     yield BackupPane(self.cfg_name, self.config_path, id="pane_backup")
@@ -162,9 +143,17 @@ class ModeScreen(Screen):
             from src.ui.main_app import ConfigScreen
             def reload_screen(saved: bool = False):
                 if saved:
-                    self.app.pop_screen()
-                    from src.ui.mode_screen import ModeScreen
-                    self.app.push_screen(ModeScreen(self.cfg_name, self.config_path))
+                    new_cfg = load_config(self.config_path)
+                    if new_cfg.tool_mode != self.config.tool_mode:
+                        self.app.pop_screen()
+                        from src.ui.mode_screen import ModeScreen
+                        self.app.push_screen(ModeScreen(self.cfg_name, self.config_path))
+                    else:
+                        self.config = new_cfg
+                        for pane in self.query(BackupPane):
+                            pane.reload_config()
+                        for pane in self.query(ShuttlePane):
+                            pane.reload_config()
             self.app.push_screen(ConfigScreen(self.cfg_name, self.config_path), reload_screen)
         elif bid == "btn_switch":
             self._toggle_pane()
@@ -181,22 +170,3 @@ class ModeScreen(Screen):
             switcher.current = "pane_backup"
             btn.label = "Switch to Migrate ⇄"
             self._showing_backup = True
-
-    def on_screen_resume(self) -> None:
-        """Reload config when returning from ConfigScreen.
-        If the mode changed, pop back to ConfigSelectionScreen so the user
-        re-enters with the correct layout.
-        """
-        old_mode = self.config.tool_mode
-        self.config = load_config(self.config_path)
-        new_mode = self.config.tool_mode
-
-        if new_mode != old_mode:
-            self.app.pop_screen()
-            return
-
-        # Propagate config reload to panes
-        for pane in self.query(BackupPane):
-            pane.reload_config()
-        for pane in self.query(ShuttlePane):
-            pane.reload_config()

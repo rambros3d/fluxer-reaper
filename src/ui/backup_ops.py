@@ -18,7 +18,7 @@ from textual import work
 from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.disco_reaper.exporter import DiscordExporter
-from src.ui.modals import ProgressModal, ChannelSelectModal
+from src.ui.modals import ProgressScreen, ChannelSelectScreen, ReportModal
 
 
 class BackupPane(Container):
@@ -123,7 +123,7 @@ class BackupPane(Container):
 
     @work(exclusive=True, thread=True)
     async def run_backup_profile(self) -> None:
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.call_from_thread(self.app.push_screen, modal)
         await asyncio.sleep(0.1)
 
@@ -152,12 +152,12 @@ class BackupPane(Container):
             self.app.call_from_thread(modal.write, f"[bold red]Error: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal.set_status, "Finished.")
             self.app.call_from_thread(modal.allow_close)
+            self.app.call_from_thread(self.app.push_screen, ReportModal("Backup Complete", "Server profile and structure successfully exported."))
 
     @work(exclusive=True, thread=True)
     async def run_backup_messages(self) -> None:
-        modal_prog = ProgressModal()
+        modal_prog = ProgressScreen()
         self.app.call_from_thread(self.app.push_screen, modal_prog)
         await asyncio.sleep(0.1)
 
@@ -199,7 +199,7 @@ class BackupPane(Container):
 
             self.app.call_from_thread(
                 self.app.push_screen,
-                ChannelSelectModal(eligible_channels, cat_map, backed_up_ids, any_found),
+                ChannelSelectScreen(eligible_channels, cat_map, backed_up_ids, any_found),
                 check_channels,
             )
 
@@ -241,12 +241,12 @@ class BackupPane(Container):
             self.app.call_from_thread(modal_prog.write, f"[bold red]Message backup failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
             self.app.call_from_thread(modal_prog.allow_close)
+            self.app.call_from_thread(self.app.push_screen, ReportModal("Backup Complete", "Channel messages and threads successfully backed up."))
 
     @work(exclusive=True, thread=True)
     async def run_backup_sync(self) -> None:
-        modal_prog = ProgressModal()
+        modal_prog = ProgressScreen()
         self.app.call_from_thread(self.app.push_screen, modal_prog)
         await asyncio.sleep(0.1)
 
@@ -293,5 +293,5 @@ class BackupPane(Container):
             self.app.call_from_thread(modal_prog.write, f"[bold red]Sync failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
             self.app.call_from_thread(modal_prog.allow_close)
+            self.app.call_from_thread(self.app.push_screen, ReportModal("Sync Complete", "Backup cleanly synced with latest Discord data."))

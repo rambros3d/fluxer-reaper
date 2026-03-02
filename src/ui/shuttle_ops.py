@@ -20,7 +20,7 @@ from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.core.audit import log_audit_event
 from src.ui.modals import (
-    ProgressModal, ConfirmModal, SubMenuModal, ChannelPickerModal,
+    ProgressScreen, ReportModal, ConfirmModal, SubMenuModal, ChannelPickerScreen,
 )
 
 import src.fluxer.roles_permissions as fluxer_roles
@@ -292,7 +292,7 @@ class ShuttlePane(Container):
         else:
             from src.stoat.clone_server import sync_channel_state, migrate_channels
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -356,7 +356,7 @@ class ShuttlePane(Container):
     @work(exclusive=True)
     async def run_clone_roles(self) -> None:
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -394,7 +394,7 @@ class ShuttlePane(Container):
     @work(exclusive=True)
     async def run_sync_permissions(self) -> None:
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -453,7 +453,7 @@ class ShuttlePane(Container):
     @work(exclusive=True)
     async def run_copy_emojis(self, types_to_include: list[str]) -> None:
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -524,7 +524,7 @@ class ShuttlePane(Container):
     @work(exclusive=True)
     async def run_sync_metadata(self, components: list[str]) -> None:
         meta_mod = fluxer_metadata if self.target_platform == "fluxer" else stoat_metadata
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -575,7 +575,7 @@ class ShuttlePane(Container):
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -593,65 +593,38 @@ class ShuttlePane(Container):
                 modal.allow_close()
                 return
 
-            # Pick source channel
-            self.app.pop_screen()
-
-            loop = asyncio.get_running_loop()
-            src_future = loop.create_future()
-
-            def on_src(cid):
-                if not src_future.done():
-                    src_future.set_result(cid)
-
-            self.app.push_screen(ChannelPickerModal(d_channels, d_cat_map, "Select Source Discord Channel"), on_src)
-            src_id = await src_future
-
-            if src_id is None:
-                await self.engine.close_connections()
-                return
-
-            source_channel = next(c for c in d_channels if c.id == src_id)
-
             # Fetch target channels
-            modal2_status = ProgressModal()
-            self.app.push_screen(modal2_status)
-            await asyncio.sleep(0.1)
-            modal2_status.set_status(f"Fetching {platform_name} channels...")
-
+            modal.set_status(f"Fetching {platform_name} channels...")
+            
             full_f = await self.engine.writer.get_channels()
             f_channels = [c for c in full_f if c.get("name") not in ["reaper_logs", "reaper-logs"] and c.get("type") not in [2, 4]]
 
             if not f_channels:
-                modal2_status.write(f"[yellow]No channels found in {platform_name} community.[/yellow]")
-                modal2_status.allow_close()
+                modal.write(f"[yellow]No channels found in {platform_name} community.[/yellow]")
+                modal.allow_close()
                 await self.engine.close_connections()
                 return
-
-            # Auto-match
-            mapped_id = self.engine.state.get_fluxer_channel_id(str(source_channel.id))
-            recommended = None
-            if mapped_id:
-                recommended = next((c for c in f_channels if str(c.get("id", "")) == mapped_id), None)
-            if not recommended:
-                recommended = next((c for c in f_channels if c.get("name") == source_channel.name), None)
 
             self.app.pop_screen()
 
             target_cat_names = {str(c.get("id")): c.get("name") for c in full_f if c.get("type") == 4}
 
-            tgt_future = loop.create_future()
+            loop = asyncio.get_running_loop()
+            pick_future = loop.create_future()
 
-            def on_tgt(cid):
-                if not tgt_future.done():
-                    tgt_future.set_result(cid)
+            def on_pick(result):
+                if not pick_future.done():
+                    pick_future.set_result(result)
 
-            self.app.push_screen(ChannelPickerModal(f_channels, target_cat_names, f"Select Target {platform_name} Channel"), on_tgt)
-            tgt_id = await tgt_future
+            self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name), on_pick)
+            res = await pick_future
 
-            if tgt_id is None:
+            if res is None:
                 await self.engine.close_connections()
                 return
-
+            
+            src_id, tgt_id = res
+            source_channel = next(c for c in d_channels if c.id == src_id)
             target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
 
             # Determine after_id
@@ -661,10 +634,11 @@ class ShuttlePane(Container):
                 after_id = int(last_migrated)
 
             # Analyze
-            modal = ProgressModal()
+            modal = ProgressScreen()
             self.app.push_screen(modal)
             await asyncio.sleep(0.1)
             modal.set_status("Analyzing channel...")
+            modal.show_stats()
 
             self.engine.is_running = True
             stats = {"messages": 0, "threads": 0, "attachments": 0}
@@ -690,6 +664,7 @@ class ShuttlePane(Container):
             async def update_msg(count):
                 modal.set_status(f"[cyan]Migrated {count}/{total_messages} messages...")
                 modal.set_progress(count, total_messages)
+                modal.update_stats(messages=count)
 
             result = await migrate_mod.migrate_messages(
                 self.engine,
@@ -706,6 +681,11 @@ class ShuttlePane(Container):
                 modal.write(f"[bold yellow]Interrupted! {result['messages']} messages migrated.[/bold yellow]")
                 event_title = "Message History Migration Interrupted"
 
+            self.app.push_screen(ReportModal(
+                event_title, 
+                f"Successfully processed {result['messages']} messages, {result['attachments']} attachments, and {result['threads']} threads."
+            ))
+
             lines = [f"Migrated Discord #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
             lines.append(f"{result['messages']} messages, {result['attachments']} attachments, {result['threads']} threads")
             await log_audit_event(self.engine, event_title, "\n".join(lines))
@@ -719,7 +699,6 @@ class ShuttlePane(Container):
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
-            modal.set_status("Finished.")
             modal.allow_close()
 
     # ── (6) danger zone ───────────────────────────────────────────────────
@@ -755,7 +734,7 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_channels
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -784,7 +763,7 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_reset_channel_permissions
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -813,7 +792,7 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_roles
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -842,7 +821,7 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_emojis_and_stickers
 
-        modal = ProgressModal()
+        modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
