@@ -11,11 +11,12 @@ logger = logging.getLogger(__name__)
 class DiscordExporter:
     """Core logic for exporting Discord server data."""
     
-    def __init__(self, reader):
+    def __init__(self, reader, base_dir: Path | str = ""):
         self.reader = reader
         self.server_name = ""
         self.server_id = ""
         self.user_cache = {}
+        self.base_dir = Path(base_dir) if base_dir else Path(".")
 
     async def setup(self):
         """Prepares the output directory and fetches server metadata."""
@@ -26,7 +27,7 @@ class DiscordExporter:
         # Create safe folder name
         import re
         safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', self.server_name)
-        self.export_path = Path(".") / f"EXPORT-{safe_name}-{self.server_id}"
+        self.export_path = self.base_dir / f"DISCORD-{self.server_id}"
         self.export_path.mkdir(parents=True, exist_ok=True)
         
         # Consolidate media into one folder

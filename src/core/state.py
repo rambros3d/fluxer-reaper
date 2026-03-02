@@ -222,8 +222,9 @@ class MigrationState:
         self.last_message_timestamps.clear()
         self.save_messages()
 
-    def set_folder(self, server_id: str, clean_name: str):
-        new_folder = Path(f"{clean_name}-{server_id}")
+    def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
+        base = Path(base_dir) if base_dir else Path(".")
+        new_folder = base / f"{clean_name}-{server_id}"
         
         # If we have an existing folder that is different, rename it
         if self.state_file and self.state_file.parent.exists() and self.state_file.parent != new_folder:
@@ -234,7 +235,7 @@ class MigrationState:
                 except Exception as e:
                     logger.debug(f"Could not rename {self.state_file.parent} to {new_folder}: {e}")
 
-        new_folder.mkdir(exist_ok=True)
+        new_folder.mkdir(parents=True, exist_ok=True)
         
         self.state_file = new_folder / "state-migration.json"
         self.messages_file = new_folder / "message-tracker.json"

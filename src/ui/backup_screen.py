@@ -146,38 +146,141 @@ class ProgressModal(ModalScreen[None]):
         btn.variant = "success"
         self.query_one("#progress_bar", ProgressBar).update(total=100, progress=100)
 
-class MainScreen(Screen):
+class BackupScreen(Screen):
     """Main screen of the application."""
+    
+    CSS = """
+    #backup_scroll {
+        align: center middle;
+    }
+    
+    #main_container {
+        width: 80%;
+        height: auto;
+        min-height: 20;
+        border: solid green;
+        padding: 1 2;
+        margin: 2 0;
+    }
+    
+    #info_container {
+        height: auto;
+        margin-bottom: 2;
+        border: tall cyan;
+        padding: 1;
+    }
+    
+    #actions_container {
+        height: auto;
+        layout: vertical;
+        align: center top;
+        margin-top: 1;
+    }
+    
+    Button {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    #config_dialog {
+        width: 60%;
+        height: 60%;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+    #config_title { text-style: bold; margin-bottom: 1; }
+    #config_buttons { height: auto; margin-top: 1; }
+    #config_buttons Button { width: 1fr; margin: 0 1; }
+    
+    #channel_dialog {
+        width: 80%;
+        height: 80%;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+    #chan_title { text-style: bold; margin-bottom: 1; }
+    
+    .category_header {
+        margin-top: 1;
+        background: $primary 10%;
+        text-style: bold;
+        padding-left: 1;
+    }
+
+    #channel_list_scroll {
+        height: 1fr;
+        border: solid $primary;
+        margin-bottom: 1;
+        padding: 0 1;
+    }
+
+    #select_all_buttons { height: auto; margin-bottom: 1; }
+    #select_all_buttons Button { width: auto; margin-right: 1; }
+
+    #confirm_buttons { height: auto; margin-top: 1; }
+    #confirm_buttons Button { width: auto; margin: 0 1; }
+
+    RadioButton:focus {
+        background: transparent;
+        border: none;
+        color: $text;
+    }
+    RadioButton > .radio-button--label {
+        padding: 0 1;
+    }
+    RadioButton:focus > .radio-button--label {
+        background: transparent;
+        text-style: none;
+    }
+    
+    #progress_dialog {
+        width: 80%;
+        height: 80%;
+        border: thick $background 80%;
+        background: $surface;
+        padding: 1 2;
+    }
+    #progress_status { text-style: bold; margin-bottom: 1; }
+    #progress_bar { margin-bottom: 1; }
+    #progress_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
+    .label_warning { color: yellow; margin-right: 1; content-align: center middle;}
+    """
     
     BINDINGS = [
         ("q", "app.exit", "Quit"),
         ("c", "config", "Config"),
+        ("b", "app.pop_screen", "Back"),
     ]
 
-    def __init__(self):
-        super().__init__()
-        self.config_path = "config.yaml"
+    def __init__(self, cfg_name: str, cfg_path: Path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg_name = cfg_name
+        self.config_path = cfg_path
         self.config = load_config(self.config_path)
         self.engine = MigrationContext(self.config, target_platform="fluxer")
-        self.exporter = DiscordExporter(self.engine.discord_reader)
+        self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
         self.validation_results = {}
         self.tokens_valid = False
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(id="main_container"):
-            yield Label("Disco Reaper - Server Backup Tool", id="title_label")
-            with Vertical(id="info_container"):
-                yield Label("Loading...", id="lbl_server")
-                yield Label("", id="lbl_bot")
-                yield Label("", id="lbl_backup")
-            with Vertical(id="actions_container"):
-                yield Button("Backup Server Profile", id="btn_backup_profile", disabled=True)
-                yield Button("Backup Channel Messages", id="btn_backup_msgs", disabled=True)
-                yield Button("Update & Sync Backup", id="btn_backup_sync", disabled=True)
-                yield Rule()
-                yield Button("Configuration", id="btn_config")
-                yield Button("Exit", id="btn_exit", variant="error")
+        with VerticalScroll(id="backup_scroll"):
+            with Container(id="main_container"):
+                yield Label("Disco Reaper - Server Backup Tool", id="title_label")
+                with Vertical(id="info_container"):
+                    yield Label("Loading...", id="lbl_server")
+                    yield Label("", id="lbl_bot")
+                    yield Label("", id="lbl_backup")
+                with Vertical(id="actions_container"):
+                    yield Button("Backup Server Profile", id="btn_backup_profile", disabled=True)
+                    yield Button("Backup Channel Messages", id="btn_backup_msgs", disabled=True)
+                    yield Button("Update & Sync Backup", id="btn_backup_sync", disabled=True)
+                    yield Rule()
+                    yield Button("Configuration", id="btn_config")
+                    yield Button("Back", id="btn_back")
+                    yield Button("Exit", id="btn_exit", variant="error")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -236,8 +339,7 @@ class MainScreen(Screen):
         if not d_name or not d_id:
             return None
             
-        safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', d_name)
-        export_path = Path(".") / f"EXPORT-{safe_name}-{d_id}"
+        export_path = Path(f"Reaper-{self.cfg_name}") / f"DISCORD-{d_id}"
         profile_file = export_path / "server_profile.json"
         
         if profile_file.exists():
@@ -262,7 +364,7 @@ class MainScreen(Screen):
                 self.config.discord_server_id = reply["server"]
                 save_config(self.config, self.config_path)
                 self.engine = MigrationContext(self.config, target_platform="fluxer")
-                self.exporter = DiscordExporter(self.engine.discord_reader)
+                self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
                 self.validate_config()
                 
         self.app.push_screen(
@@ -273,6 +375,8 @@ class MainScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_exit":
             self.app.exit()
+        elif event.button.id == "btn_back":
+            self.app.pop_screen()
         elif event.button.id == "btn_config":
             self.open_config()
         elif event.button.id == "btn_backup_profile":
@@ -460,115 +564,4 @@ class MainScreen(Screen):
             self.app.call_from_thread(modal_prog.set_status, "Finished.")
             self.app.call_from_thread(modal_prog.allow_close)
 
-class ReaperUI(App):
-    CSS = """
-    Screen {
-        align: center middle;
-    }
-    
-    #title_label {
-        text-style: bold;
-        color: green;
-        margin-bottom: 1;
-        content-align: center middle;
-        width: 100%;
-    }
-    
-    #main_container {
-        width: 80%;
-        height: 80%;
-        border: solid green;
-        padding: 1 2;
-    }
-    
-    #info_container {
-        height: auto;
-        margin-bottom: 2;
-        border: tall cyan;
-        padding: 1;
-    }
-    
-    #actions_container {
-        height: auto;
-        layout: vertical;
-        align: center top;
-        margin-top: 1;
-    }
-    
-    Button {
-        width: 100%;
-        margin-bottom: 1;
-    }
-    
-    #config_dialog {
-        width: 60%;
-        height: 60%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #config_title { text-style: bold; margin-bottom: 1; }
-    #config_buttons { height: auto; margin-top: 1; }
-    #config_buttons Button { width: 1fr; margin: 0 1; }
-    
-    #channel_dialog {
-        width: 80%;
-        height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #chan_title { text-style: bold; margin-bottom: 1; }
-    
-    .category_header {
-        margin-top: 1;
-        background: $primary 10%;
-        text-style: bold;
-        padding-left: 1;
-    }
 
-    #channel_list_scroll {
-        height: 1fr;
-        border: solid $primary;
-        margin-bottom: 1;
-        padding: 0 1;
-    }
-
-    #select_all_buttons { height: auto; margin-bottom: 1; }
-    #select_all_buttons Button { width: auto; margin-right: 1; }
-
-    #confirm_buttons { height: auto; margin-top: 1; }
-    #confirm_buttons Button { width: auto; margin: 0 1; }
-
-    RadioButton:focus {
-        background: transparent;
-        border: none;
-        color: $text;
-    }
-    RadioButton > .radio-button--label {
-        padding: 0 1;
-    }
-    RadioButton:focus > .radio-button--label {
-        background: transparent;
-        text-style: none;
-    }
-    
-    #progress_dialog {
-        width: 80%;
-        height: 80%;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #progress_status { text-style: bold; margin-bottom: 1; }
-    #progress_bar { margin-bottom: 1; }
-    #progress_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
-    .label_warning { color: yellow; margin-right: 1; content-align: center middle;}
-    """
-    
-    def on_mount(self) -> None:
-        self.push_screen(MainScreen())
-
-async def run_disco_reaper_tui(config_path="config.yaml"):
-    app = ReaperUI()
-    await app.run_async()

@@ -1,9 +1,6 @@
 import sys
-import argparse
-import asyncio
 import logging
-from src.ui.reaper_app import run_disco_reaper
-from src.ui.reaper_tui import run_disco_reaper_tui
+from src.ui.main_app import run_disco_reaper_tui
 from src.core.configuration import load_config
 
 def setup_logging():
@@ -60,23 +57,14 @@ def relaunch_in_terminal():
             except Exception:
                 continue
 
-async def main():
+def main():
     relaunch_in_terminal()
     setup_logging()
-    
-    parser = argparse.ArgumentParser(description="Disco Reaper")
-    parser.add_argument("--cli", action="store_true", help="Run the legacy CLI interface")
-    parser.add_argument("--tui", action="store_true", help="Run the Textual TUI interface (default)")
-    args, _ = parser.parse_known_args()
-    
-    if args.cli:
-        await run_disco_reaper()
-    else:
-        await run_disco_reaper_tui()
+    run_disco_reaper_tui()
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        main()
     except KeyboardInterrupt:
         print("\nOperation terminated by user.")
         sys.exit(0)

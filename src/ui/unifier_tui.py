@@ -201,7 +201,7 @@ class ReaperScreen(Screen):
     @property
     def exporter(self): return self.app.exporter
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def validate_config(self) -> None:
         def update_ui(server_text, bot_text, backup_text, buttons_enabled):
             self.query_one("#lbl_server", Label).update(f"Source Server: {server_text}")
@@ -213,17 +213,17 @@ class ReaperScreen(Screen):
         d_token = self.config.discord_bot_token
         fillers = ["DISCORD_BOT_TOKEN", "000000000000000000", "DISCORD_SERVER_ID", "", None]
         if d_token in fillers or self.config.discord_server_id in fillers:
-            self.app.call_from_thread(update_ui, "[red]NOT CONNECTED[/red]", "[red]UNKNOWN[/red]", "", False)
+            update_ui("[red]NOT CONNECTED[/red]", "[red]UNKNOWN[/red]", "", False)
             self.tokens_valid = False
             return
 
-        self.app.call_from_thread(update_ui, "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", "", False)
+        update_ui("[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", "", False)
         
         try:
             res = await self.engine.discord_reader.validate()
         except Exception as e:
             res = {}
-            self.app.call_from_thread(update_ui, f"[red]Validation Error: {e}[/red]", "", "", False)
+            update_ui(f"[red]Validation Error: {e}[/red]", "", "", False)
             self.tokens_valid = False
             return
             
@@ -246,7 +246,7 @@ class ReaperScreen(Screen):
             if backup_ts:
                 backup_text = f"Backup Found: [yellow]{backup_ts}[/yellow]"
         
-        self.app.call_from_thread(update_ui, server_display, bot_display, backup_text, self.tokens_valid)
+        update_ui(server_display, bot_display, backup_text, self.tokens_valid)
 
     def get_backup_info(self):
         d_name = self.validation_results.get("discord_server_name")
@@ -299,48 +299,48 @@ class ReaperScreen(Screen):
         elif event.button.id == "btn_backup_sync":
             self.run_backup_sync()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_profile(self) -> None:
         modal = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal)
+        self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         
         try:
-            self.app.call_from_thread(modal.set_status, "Starting readers...")
+            modal.set_status("Starting readers...")
             await self.engine.discord_reader.start()
             meta = await self.exporter.setup()
             
-            self.app.call_from_thread(modal.write_to_log, "[yellow]Backing up server profile & skeleton...[/yellow]")
+            modal.write_to_log("[yellow]Backing up server profile & skeleton...[/yellow]")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()
             
-            self.app.call_from_thread(modal.write_to_log, "Exporting structure...")
+            modal.write_to_log("Exporting structure...")
             _, cat_count, chan_count = await self.exporter.export_channels_structure()
             
-            self.app.call_from_thread(modal.write_to_log, "Exporting assets...")
+            modal.write_to_log("Exporting assets...")
             e_count, s_count = await self.exporter.export_assets()
             
-            self.app.call_from_thread(modal.write_to_log, f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
-            self.app.call_from_thread(modal.write_to_log, f"- {cat_count} categories & {chan_count} channels")
-            self.app.call_from_thread(modal.write_to_log, f"- {e_count} emojis, {s_count} stickers.")
+            modal.write_to_log(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+            modal.write_to_log(f"- {cat_count} categories & {chan_count} channels")
+            modal.write_to_log(f"- {e_count} emojis, {s_count} stickers.")
             
         except discord.Forbidden as e:
-            self.app.call_from_thread(modal.write_to_log, f"[bold red]Backup failed: {e}[/bold red]")
+            modal.write_to_log(f"[bold red]Backup failed: {e}[/bold red]")
         except Exception as e:
-            self.app.call_from_thread(modal.write_to_log, f"[bold red]Error: {e}[/bold red]")
+            modal.write_to_log(f"[bold red]Error: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal.set_status, "Finished.")
-            self.app.call_from_thread(modal.allow_close)
+            modal.set_status("Finished.")
+            modal.allow_close()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_messages(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Fetching channels...")
+            modal_prog.set_status("Fetching channels...")
             await self.engine.discord_reader.start()
             await self.exporter.setup()
             
@@ -355,8 +355,8 @@ class ReaperScreen(Screen):
             ]
             
             if not eligible_channels:
-                self.app.call_from_thread(modal_prog.write_to_log, "[yellow]No text/news channels found to backup.[/yellow]")
-                self.app.call_from_thread(modal_prog.allow_close)
+                modal_prog.write_to_log("[yellow]No text/news channels found to backup.[/yellow]")
+                modal_prog.allow_close()
                 return
                 
             any_found = False
@@ -366,7 +366,7 @@ class ReaperScreen(Screen):
                     any_found = True
                     backed_up_ids.add(chan.id)
 
-            self.app.call_from_thread(self.app.pop_screen)
+            self.app.pop_screen()
             
             loop = asyncio.get_running_loop()
             future = loop.create_future()
@@ -375,8 +375,7 @@ class ReaperScreen(Screen):
                 if not future.done():
                     future.set_result(reply)
                     
-            self.app.call_from_thread(
-                self.app.push_screen,
+            self.app.push_screen(
                 ChannelSelectModal(eligible_channels, cat_map, backed_up_ids, any_found),
                 check_channels
             )
@@ -390,50 +389,50 @@ class ReaperScreen(Screen):
             
             selected_channels = [c for c in eligible_channels if c.id in selected_ids]
             
-            self.app.call_from_thread(self.app.push_screen, modal_prog)
+            self.app.push_screen(modal_prog)
             await asyncio.sleep(0.1)
             
             total_chans = len(selected_channels)
-            self.app.call_from_thread(modal_prog.set_status, "Backing up messages...")
-            self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
+            modal_prog.set_status("Backing up messages...")
+            modal_prog.write_to_log(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
             
             for chan in selected_channels:
                 backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
                 is_sync = backup_exists and not force_overwrite
                 
                 label = "Syncing Backup" if is_sync else "Backing up"
-                self.app.call_from_thread(modal_prog.write_to_log, f"[cyan]{label}: {chan.name}[/cyan]")
+                modal_prog.write_to_log(f"[cyan]{label}: {chan.name}[/cyan]")
                 
                 async def update_msg_count(name, count):
-                    self.app.call_from_thread(modal_prog.set_status, f"{name}: {count} messages")
+                    modal_prog.set_status(f"{name}: {count} messages")
                 
                 await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=force_overwrite)
                 await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=force_overwrite)
                 
-                self.app.call_from_thread(modal_prog.write_to_log, f"[green]Completed: {chan.name}[/green]")
+                modal_prog.write_to_log(f"[green]Completed: {chan.name}[/green]")
                 
             await self.exporter.export_metadata()
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Message backup complete![/bold green]")
+            modal_prog.write_to_log("[bold green]Message backup complete![/bold green]")
             
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Message backup failed: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Message backup failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_sync(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Starting sync...")
+            modal_prog.set_status("Starting sync...")
             await self.engine.discord_reader.start()
             await self.exporter.setup()
             
-            self.app.call_from_thread(modal_prog.write_to_log, "Updating structure...")
+            modal_prog.write_to_log("Updating structure...")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()
             await self.exporter.export_channels_structure()
@@ -451,28 +450,28 @@ class ReaperScreen(Screen):
             ]
             
             if not selected_channels:
-                self.app.call_from_thread(modal_prog.write_to_log, "[yellow]No existing backups found to sync.[/yellow]")
+                modal_prog.write_to_log("[yellow]No existing backups found to sync.[/yellow]")
             else:
-                self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
+                modal_prog.write_to_log(f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
                 for chan in selected_channels:
-                    self.app.call_from_thread(modal_prog.write_to_log, f"[cyan]Syncing: {chan.name}[/cyan]")
+                    modal_prog.write_to_log(f"[cyan]Syncing: {chan.name}[/cyan]")
                     
                     async def update_msg_count(name, count):
-                        self.app.call_from_thread(modal_prog.set_status, f"{name}: {count} messages")
+                        modal_prog.set_status(f"{name}: {count} messages")
                         
                     await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=False)
                     await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=False)
-                    self.app.call_from_thread(modal_prog.write_to_log, f"[green]Synced: {chan.name}[/green]")
+                    modal_prog.write_to_log(f"[green]Synced: {chan.name}[/green]")
                     
             await self.exporter.export_metadata()
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Sync operation complete![/bold green]")
+            modal_prog.write_to_log("[bold green]Sync operation complete![/bold green]")
             
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Sync failed: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Sync failed: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
 # -------------------------------------------------------------------------
 # Shuttle Screen
@@ -576,7 +575,7 @@ class ShuttleScreen(Screen):
         is_stoat = getattr(self.config, 'use_stoat', False)
         return self.app.stoat_engine if is_stoat else self.app.fluxer_engine
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def validate_config(self) -> None:
         is_stoat = getattr(self.config, 'use_stoat', False)
         platform_name = "Stoat" if is_stoat else "Fluxer"
@@ -589,7 +588,7 @@ class ShuttleScreen(Screen):
             for btn_id in ["#btn_clone", "#btn_roles", "#btn_emojis", "#btn_meta", "#btn_history", "#btn_danger"]:
                 self.query_one(btn_id, Button).disabled = not buttons_enabled
 
-        self.app.call_from_thread(update_ui, "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", False)
+        update_ui("[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]", False)
         
         engine = self.engine
         
@@ -667,10 +666,10 @@ class ShuttleScreen(Screen):
             else:
                 perms_display = "[green]VALID[/green]"
 
-            self.app.call_from_thread(update_ui, t_display, d_display, perms_display, self.tokens_valid)
+            update_ui(t_display, d_display, perms_display, self.tokens_valid)
 
         except Exception as e:
-            self.app.call_from_thread(update_ui, f"[red]Validation Error: {e}[/red]", "", "", False)
+            update_ui(f"[red]Validation Error: {e}[/red]", "", "", False)
             self.tokens_valid = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -699,10 +698,10 @@ class ShuttleScreen(Screen):
         elif event.button.id == "btn_history":
             pass # Implement later
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_clone(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         is_stoat = getattr(self.config, 'use_stoat', False)
@@ -712,25 +711,23 @@ class ShuttleScreen(Screen):
             from src.stoat.clone_server import sync_channel_state, migrate_channels
             
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Fetching structure...")
+            modal_prog.set_status("Fetching structure...")
             await self.engine.start_connections()
-            self.app.call_from_thread(modal_prog.write_to_log, "Syncing channel state...")
+            modal_prog.write_to_log("Syncing channel state...")
             await sync_channel_state(self.engine)
             
             categories = await self.engine.discord_reader.get_categories()
             channels = await self.engine.discord_reader.get_channels()
             
             async def update_progress(item_name: str, status: str, current: int, total: int):
-                self.app.call_from_thread(modal_prog.set_status, f"{status} Channel: {item_name} ({current}/{total})")
+                modal_prog.set_status(f"{status} Channel: {item_name} ({current}/{total})")
                 
-            self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Starting Channel Cloning...[/yellow]")
+            modal_prog.write_to_log(f"[yellow]Starting Channel Cloning...[/yellow]")
             self.engine.is_running = True
             
-            # Use False for force. UI logic should have an intermediate confirmation for Force in future iterations
-            # For this unified TUI, we default to sync
             cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=False)
             
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Server Template cloned![/bold green]")
+            modal_prog.write_to_log("[bold green]Server Template cloned![/bold green]")
             
             if cloned_info and cloned_info.get("structure"):
                 await log_audit_event(self.engine, "Server Template Cloned", "Successfully cloned target structure.")
@@ -738,37 +735,37 @@ class ShuttleScreen(Screen):
                 await log_audit_event(self.engine, "Server Template Cloned", "No new channels were cloned.")
                 
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Error during channel clone: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Error during channel clone: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
             self.engine.is_running = False
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_roles(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         is_stoat = getattr(self.config, 'use_stoat', False)
         roles_mod = stoat_roles if is_stoat else fluxer_roles
         
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Fetching roles...")
+            modal_prog.set_status("Fetching roles...")
             await self.engine.start_connections()
-            self.app.call_from_thread(modal_prog.write_to_log, "Syncing role state...")
+            modal_prog.write_to_log("Syncing role state...")
             await roles_mod.sync_roles_state(self.engine)
             
             async def update_progress(item_name: str, current: int, total: int):
-                self.app.call_from_thread(modal_prog.set_status, f"Copying Role: {item_name} ({current}/{total})")
+                modal_prog.set_status(f"Copying Role: {item_name} ({current}/{total})")
                 
-            self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Starting Role Migration...[/yellow]")
+            modal_prog.write_to_log(f"[yellow]Starting Role Migration...[/yellow]")
             self.engine.is_running = True
             
             cloned_roles = await roles_mod.migrate_roles(self.engine, progress_callback=update_progress, force=False)
             
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Role migration complete![/bold green]")
+            modal_prog.write_to_log("[bold green]Role migration complete![/bold green]")
             
             if cloned_roles:
                 await log_audit_event(self.engine, "Roles Cloned", "Successfully cloned roles.")
@@ -776,79 +773,79 @@ class ShuttleScreen(Screen):
                 await log_audit_event(self.engine, "Roles Cloned", "No new roles were cloned.")
                 
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Error during role clone: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Error during role clone: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
             self.engine.is_running = False
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_emojis(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         is_stoat = getattr(self.config, 'use_stoat', False)
         emo_mod = stoat_emoji_stickers if is_stoat else fluxer_emoji_stickers
         
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Fetching emojis...")
+            modal_prog.set_status("Fetching emojis...")
             await self.engine.start_connections()
-            self.app.call_from_thread(modal_prog.write_to_log, "Syncing emoji & sticker state...")
+            modal_prog.write_to_log("Syncing emoji & sticker state...")
             await emo_mod.sync_emojis_state(self.engine)
             await emo_mod.sync_stickers_state(self.engine)
             
             async def update_progress(item_name: str, item_type: str, current: int, total: int):
-                self.app.call_from_thread(modal_prog.set_status, f"Copying {item_type}: {item_name} ({current}/{total})")
+                modal_prog.set_status(f"Copying {item_type}: {item_name} ({current}/{total})")
                 
-            self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Starting Asset Migration...[/yellow]")
+            modal_prog.write_to_log(f"[yellow]Starting Asset Migration...[/yellow]")
             self.engine.is_running = True
             
             # Using force=False
             res_e, res_s = await emo_mod.migrate_emojis(self.engine, progress_callback=update_progress, force=False)
             
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Asset migration complete![/bold green]")
+            modal_prog.write_to_log("[bold green]Asset migration complete![/bold green]")
             await log_audit_event(self.engine, "Assets Cloned", f"E: {res_e} S: {res_s}")
             
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Error during asset migrate: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Error during asset migrate: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
             self.engine.is_running = False
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_meta(self) -> None:
         modal_prog = ProgressModal()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         
         is_stoat = getattr(self.config, 'use_stoat', False)
         meta_mod = stoat_metadata if is_stoat else fluxer_metadata
         
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Connecting to platforms...")
+            modal_prog.set_status("Connecting to platforms...")
             await self.engine.start_connections()
             
             def cb(item, status):
-                self.app.call_from_thread(modal_prog.write_to_log, f"{item}: {status}")
+                modal_prog.write_to_log(f"{item}: {status}")
                 
-            self.app.call_from_thread(modal_prog.write_to_log, f"[yellow]Starting Meta Migration...[/yellow]")
+            modal_prog.write_to_log(f"[yellow]Starting Meta Migration...[/yellow]")
             self.engine.is_running = True
             
             await meta_mod.migrate_server_metadata(self.engine, progress_callback=cb)
             
-            self.app.call_from_thread(modal_prog.write_to_log, "[bold green]Meta migration complete![/bold green]")
+            modal_prog.write_to_log("[bold green]Meta migration complete![/bold green]")
             
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write_to_log, f"[bold red]Error during meta migrate: {e}[/bold red]")
+            modal_prog.write_to_log(f"[bold red]Error during meta migrate: {e}[/bold red]")
         finally:
             await self.engine.close_connections()
             self.engine.is_running = False
-            self.app.call_from_thread(modal_prog.set_status, "Finished.")
-            self.app.call_from_thread(modal_prog.allow_close)
+            modal_prog.set_status("Finished.")
+            modal_prog.allow_close()
 
 
 # -------------------------------------------------------------------------
