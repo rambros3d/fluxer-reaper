@@ -1,20 +1,11 @@
 import sys
-import argparse
 import asyncio
 import logging
-from src.ui.reaper_app import run_disco_reaper
-from src.ui.reaper_tui import run_disco_reaper_tui
-from src.core.configuration import load_config
+from src.ui.unifier_tui import run_unifier_tui
 
 def setup_logging():
-    try:
-        config = load_config()
-        log_level_str = config.migration.log_level.upper()
-        level = getattr(logging, log_level_str, logging.INFO)
-    except Exception:
-        level = logging.INFO
-        
-    handlers = [logging.FileHandler('.reaper.log', mode='a')]
+    level = logging.INFO
+    handlers = [logging.FileHandler('.unifier.log', mode='a')]
     logging.basicConfig(
         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
         datefmt='%H:%M:%S',
@@ -33,7 +24,7 @@ def relaunch_in_terminal():
         return
 
     is_tty = sys.stdin.isatty() or sys.stdout.isatty()
-    if is_tty or os.environ.get("DISCO_REAPER_RELAUNCHED"):
+    if is_tty or os.environ.get("DISCO_UNIFIER_RELAUNCHED"):
         return
 
     terminals = [
@@ -50,7 +41,7 @@ def relaunch_in_terminal():
     args = [executable] + sys.argv[1:]
     
     env = os.environ.copy()
-    env["DISCO_REAPER_RELAUNCHED"] = "1"
+    env["DISCO_UNIFIER_RELAUNCHED"] = "1"
 
     for term, cmd_args in terminals:
         if shutil.which(term):
@@ -64,15 +55,7 @@ async def main():
     relaunch_in_terminal()
     setup_logging()
     
-    parser = argparse.ArgumentParser(description="Disco Reaper")
-    parser.add_argument("--cli", action="store_true", help="Run the legacy CLI interface")
-    parser.add_argument("--tui", action="store_true", help="Run the Textual TUI interface (default)")
-    args, _ = parser.parse_known_args()
-    
-    if args.cli:
-        await run_disco_reaper()
-    else:
-        await run_disco_reaper_tui()
+    await run_unifier_tui()
 
 if __name__ == "__main__":
     try:

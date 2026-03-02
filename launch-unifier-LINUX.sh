@@ -30,14 +30,5 @@ else
 fi
 
 # Run the application
-if [[ "$1" == "--cli" ]]; then
-    echo "Starting Disco Reaper in CLI mode..."
-    python3 disco-reaper.py --cli
-elif [[ "$1" == "--tui" ]]; then
-    echo "Starting Disco Reaper in TUI mode..."
-    python3 disco-reaper.py --tui
-else
-    # Default to TUI if no arguments or other arguments
-    echo "Starting Disco Reaper (Default: TUI)..."
-    python3 disco-reaper.py --tui "$@"
-fi
+echo "Starting Unified TUI..."
+python3 unifier.py "$@"

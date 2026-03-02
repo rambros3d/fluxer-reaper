@@ -2,6 +2,6 @@ git+https://github.com/akarealemil/fluxer.py.git # API wrapper for Fluxer
 git+https://github.com/MCausc78/stoat.py # API wrapper for Stoat
 discord.py # API wrapper for Discord
 rich # Terminal formatting and rich text
+textual # Terminal UI framework
 PyYAML # YAML parsing and serialization
 pydantic # Data validation using Python type hints
-

@@ -17,6 +17,8 @@ class AppConfig(BaseModel):
     stoat_bot_token: Optional[str] = Field(default=None)
     stoat_server_id: Optional[str] = Field(default=None)
     stoat_api_url: Optional[str] = Field(default=None)
+    use_stoat: bool = Field(default=False)
+    use_fluxer: bool = Field(default=False)
     migration: MigrationSettings = Field(default_factory=MigrationSettings)
 
 def load_config(config_path: Union[str, Path] = "config.yaml") -> AppConfig:
