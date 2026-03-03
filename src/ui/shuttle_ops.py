@@ -747,6 +747,28 @@ class ShuttlePane(Container):
                 i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
                 modal.show_info(m_status, i_status)
 
+                # Fetch and display message previews
+                try:
+                    first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
+                    if first_msg:
+                        content = first_msg.content or (f"[dim]({len(first_msg.attachments)} attachments)[/dim]" if first_msg.attachments else "[dim](no content)[/dim]")
+                        modal.write("[bold cyan]Start from first message:[/bold cyan]")
+                        modal.write(f"[bold]{first_msg.author.display_name}:[/bold] {content[:200]}")
+                        modal.write("")
+
+                    if has_previous and last_migrated:
+                        try:
+                            prev_msg = await self.engine.discord_reader.get_message(source_channel.id, int(last_migrated))
+                            if prev_msg:
+                                content = prev_msg.content or (f"[dim]({len(prev_msg.attachments)} attachments)[/dim]" if prev_msg.attachments else "[dim](no content)[/dim]")
+                                modal.write("[bold yellow]Continue from previous migration:[/bold yellow]")
+                                modal.write(f"[bold]{prev_msg.author.display_name}:[/bold] {content[:200]}")
+                                modal.write("")
+                        except Exception as e:
+                            logger.warning(f"Could not fetch previous message {last_migrated}: {e}")
+                except Exception as e:
+                    logger.warning(f"Error fetching message previews: {e}")
+
                 modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
 
                 # Phase 2: Confirmation
