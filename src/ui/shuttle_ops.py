@@ -395,6 +395,7 @@ class ShuttlePane(Container):
             force_mode = (choice == "btn_start_id")
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
+            modal.set_status("Cloning Server Template")
             
             # Connections already started above
             if not connections_started:
@@ -446,6 +447,7 @@ class ShuttlePane(Container):
             force_mode = (choice == "btn_start_id")
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
+            modal.set_status("Syncing Server Settings")
             await self.engine.start_connections()
             self.engine.is_running = True
 
@@ -483,14 +485,14 @@ class ShuttlePane(Container):
         else:
             from src.stoat.clone_server import sync_channel_state, migrate_channels
         
-        modal.set_status("Processing Server Structure...")
+        modal.set_item_status("Processing Server Structure...")
         await sync_channel_state(self.engine)
         categories = await self.engine.discord_reader.get_categories()
         channels = await self.engine.discord_reader.get_channels()
         
         async def update_progress(item_name, status, current, total):
             color = "cyan" if status == "Copying" else "yellow"
-            modal.set_status(f"[{color}]{status}: {item_name}[/{color}]")
+            modal.set_item_status(f"[{color}]{status}: {item_name}[/{color}]")
             modal.set_progress(current, total)
         
         cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=force)
@@ -507,11 +509,11 @@ class ShuttlePane(Container):
 
     async def _logic_clone_roles(self, modal: ProgressScreen, force: bool = False):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal.set_status("Processing Roles...")
+        modal.set_item_status("Processing Roles...")
         await roles_mod.sync_roles_state(self.engine)
         
         async def update(name, current, total):
-            modal.set_status(f"[cyan]Copying Role: {name}[/cyan]")
+            modal.set_item_status(f"[cyan]Copying Role: {name}[/cyan]")
             modal.set_progress(current, total)
         
         cloned = await roles_mod.migrate_roles(self.engine, progress_callback=update, force=force)
@@ -521,10 +523,10 @@ class ShuttlePane(Container):
 
     async def _logic_sync_permissions(self, modal: ProgressScreen):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal.set_status("Syncing Permissions...")
+        modal.set_item_status("Syncing Permissions...")
         
         async def update(name, current, total):
-            modal.set_status(f"[cyan]Syncing Perms: {name}[/cyan]")
+            modal.set_item_status(f"[cyan]Syncing Perms: {name}[/cyan]")
             modal.set_progress(current, total)
             
         synced = await roles_mod.sync_permissions(self.engine, progress_callback=update)
@@ -541,11 +543,11 @@ class ShuttlePane(Container):
 
     async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str], force: bool = False):
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
-        modal.set_status("Processing Assets...")
+        modal.set_item_status("Processing Assets...")
         await asset_mod.sync_assets_state(self.engine)
         
         async def update(name, item_type, current, total):
-            modal.set_status(f"[cyan]Copying {item_type}: {name}[/cyan]")
+            modal.set_item_status(f"[cyan]Copying {item_type}: {name}[/cyan]")
             modal.set_progress(current, total)
             
         cloned = await asset_mod.migrate_emojis(self.engine, progress_callback=update, types_to_include=types_to_include, force=force)
@@ -560,7 +562,7 @@ class ShuttlePane(Container):
 
     async def _logic_sync_metadata(self, modal: ProgressScreen, components: list[str]):
         meta_mod = fluxer_metadata if self.target_platform == "fluxer" else stoat_metadata
-        modal.set_status("Syncing Server Profile...")
+        modal.set_item_status("Syncing Server Profile...")
         
         async def progress_cb(item, status):
             color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
@@ -751,9 +753,9 @@ class ShuttlePane(Container):
                 choice = await modal.phase_wait_confirm(
                     show_continue=has_previous,
                     show_id=True,
-                    btn_start_label="Start Migration",
-                    btn_continue_label="Continue Migration",
-                    btn_id_label="Start from ID"
+                    btn_start_label="Start from\nFirst Message",
+                    btn_continue_label="Continue\nMigration",
+                    btn_id_label="Start from\nmessage ID"
                 )
                 logger.info(f"User confirmation choice: {choice}")
                 if choice == "btn_back":
@@ -802,7 +804,7 @@ class ShuttlePane(Container):
                 c_threads = current_stats["threads"]
                 c_files = current_stats["attachments"]
                 
-                modal.set_status(f"[cyan]Migrated {c_msgs}/{total_messages} messages...")
+                modal.set_item_status(f"[cyan]Migrated {c_msgs}/{total_messages} messages...")
                 modal.set_progress(c_msgs, total_messages)
                 
                 modal.update_stats(
@@ -921,6 +923,7 @@ class ShuttlePane(Container):
 
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
+            modal.set_status("Danger Zone: Destructive Operations")
             self.engine.is_running = True
             # Writer already started above, no need to reconnect
             if not target_started:
@@ -1080,9 +1083,9 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_channels
 
-        modal.set_status("[red]Deleting channels...")
+        modal.set_item_status("[red]Deleting channels...")
         async def on_deleted(name, current, total):
-            modal.set_status(f"[red]Deleting: {name}")
+            modal.set_item_status(f"[red]Deleting: {name}")
             modal.set_progress(current, total)
 
         count = await danger_delete_all_channels(self.engine, progress_callback=on_deleted)
@@ -1095,9 +1098,9 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_reset_channel_permissions
 
-        modal.set_status("[red]Resetting permissions...")
+        modal.set_item_status("[red]Resetting permissions...")
         async def on_reset(name, current, total):
-            modal.set_status(f"[red]Resetting: {name}")
+            modal.set_item_status(f"[red]Resetting: {name}")
             modal.set_progress(current, total)
 
         count = await danger_reset_channel_permissions(self.engine, progress_callback=on_reset)
@@ -1110,9 +1113,9 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_roles
 
-        modal.set_status("[red]Deleting roles...")
+        modal.set_item_status("[red]Deleting roles...")
         async def on_deleted(name, current, total):
-            modal.set_status(f"[red]Deleting role: {name}")
+            modal.set_item_status(f"[red]Deleting role: {name}")
             modal.set_progress(current, total)
 
         count = await danger_delete_all_roles(self.engine, progress_callback=on_deleted)
@@ -1125,9 +1128,9 @@ class ShuttlePane(Container):
         else:
             from src.stoat.danger_zone import danger_delete_all_emojis_and_stickers
 
-        modal.set_status("[red]Deleting assets...")
+        modal.set_item_status("[red]Deleting assets...")
         async def on_deleted(name, asset_type, current, total):
-            modal.set_status(f"[red]Deleting {asset_type}: {name}")
+            modal.set_item_status(f"[red]Deleting {asset_type}: {name}")
             modal.set_progress(current, total)
 
         counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_deleted)

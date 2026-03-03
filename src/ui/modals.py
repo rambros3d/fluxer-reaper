@@ -65,6 +65,7 @@ class ProgressScreen(Screen[None]):
     
     #prog_bar_container { height: auto; width: 100%; align: center middle; }
     #prog_bar { margin-bottom: 1; width: 80%; }
+    #prog_item_status { margin-bottom: 1; text-style: bold; color: cyan; width: 100%; text-align: center; }
     
     #info_container { height: auto; layout: vertical; border: solid $secondary; padding: 1; margin-bottom: 1; display: none; }
     .info_label { text-style: bold; content-align: center middle; width: 100%; color: $secondary-lighten-2; }
@@ -95,7 +96,8 @@ class ProgressScreen(Screen[None]):
                     
                     # Progress bar moved inside info container
                     with Center(id="prog_bar_container"):
-                        pb = ProgressBar(total=None, show_eta=False, id="prog_bar")
+                        yield Label("", id="prog_item_status")
+                        pb = ProgressBar(total=None, show_eta=False, show_percentage=False, id="prog_bar")
                         pb.display = False
                         yield pb
 
@@ -192,10 +194,22 @@ class ProgressScreen(Screen[None]):
 
     def set_progress(self, current: int, total: int):
         try:
-            self.query_one("#prog_loader", LoadingIndicator).display = False
+            # Keep loader visible during progress next to timer
+            self.query_one("#prog_loader", LoadingIndicator).display = True
+            
             bar = self.query_one("#prog_bar", ProgressBar)
             bar.display = True
             bar.update(total=total, progress=current)
+            
+            # Ensure the container is visible if we have a bar
+            self.query_one("#info_container", Vertical).display = True
+        except Exception:
+            pass
+
+    def set_item_status(self, status: str):
+        try:
+            self.query_one("#prog_item_status", Label).update(status)
+            self.query_one("#info_container", Vertical).display = True
         except Exception:
             pass
 
