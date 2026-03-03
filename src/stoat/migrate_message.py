@@ -65,7 +65,7 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     return content
 
 
-async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, int]:
+async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, int]:
     """
     Scans channel history to count messages, threads, and attachments.
     """
@@ -91,12 +91,12 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
         stats["attachments"] += len(msg.attachments)
 
         if progress_callback and stats["messages"] % 10 == 0:
-            await progress_callback(stats["messages"])
+            await progress_callback(stats)
 
     return stats
 
 
-async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[int], Awaitable[None]] | None = None) -> Dict[str, Any]:
+async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """Migrate messages for a specific channel using Stoat masquerade for author impersonation."""
     stats = {
         "messages": 0,
@@ -186,7 +186,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 # Check if this message is a reply
                 reply_to_stoat_id = None
                 if msg.reference and msg.reference.message_id:
-                    reply_to_stoat_id = context.state.get_target_message_id(str(msg.reference.message_id))
+                    reply_to_stoat_id = context.state.get_target_message_id(target_channel_id, str(msg.reference.message_id))
                 
                 stoat_msg_id = await context.stoat_writer.send_message(
                     channel_id=target_channel_id,
@@ -200,11 +200,12 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 )
                 
                 if stoat_msg_id:
-                    context.state.set_message_mapping(str(msg.id), stoat_msg_id)
+                    context.state.set_message_mapping(target_channel_id, str(msg.id), stoat_msg_id)
 
-                context.state.update_last_message_timestamp(str(source_channel_id), str(msg.created_at))
-                context.state.update_last_message_id(str(source_channel_id), str(msg.id))
+                context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
+                context.state.update_last_message_id(target_channel_id, str(msg.id))
                 stats["messages"] += 1
+                context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
 
                 # Check for associated thread (Normal case: parent message is migrated)
                 if hasattr(msg, 'thread') and msg.thread:
@@ -236,7 +237,7 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 stats["last_message_url"] = msg.jump_url
                 
                 if progress_callback:
-                    await progress_callback(stats["messages"])
+                    await progress_callback(stats)
             except Exception as e:
                 # If it's a permission error, stop the entire migration
                 if "MissingPermission" in str(e):

@@ -20,7 +20,7 @@ from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.core.audit import log_audit_event
 from src.ui.modals import (
-    ProgressScreen, ReportModal, ConfirmModal, SubMenuModal, ChannelPickerScreen,
+    ProgressScreen, SubMenuModal, ChannelPickerScreen, OptionSelectModal,
 )
 
 import src.fluxer.roles_permissions as fluxer_roles
@@ -106,9 +106,7 @@ class ShuttlePane(Container):
                 yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_status")
             with Vertical(id="sp_actions"):
                 yield Button("Clone Server Template", id="sp_clone", disabled=True)
-                yield Button("Copy Roles & Permissions", id="sp_roles", disabled=True)
-                yield Button("Copy Emojis & Stickers", id="sp_emojis", disabled=True)
-                yield Button("Sync Server Profile", id="sp_metadata", disabled=True)
+                yield Button("Sync Server Settings", id="sp_sync", disabled=True)
                 yield Button("Migrate Message History", id="sp_messages", disabled=True)
                 yield Rule()
                 yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True)
@@ -170,7 +168,7 @@ class ShuttlePane(Container):
         self.query_one("#sp_lbl_status", Label).update(f"Status: {val}")
 
         # Buttons
-        for bid in ("#sp_clone", "#sp_roles", "#sp_emojis", "#sp_metadata", "#sp_messages", "#sp_danger"):
+        for bid in ("#sp_clone", "#sp_sync", "#sp_messages", "#sp_danger"):
             self.query_one(bid, Button).disabled = not self.tokens_valid
 
     # ── validation ────────────────────────────────────────────────────────
@@ -271,282 +269,223 @@ class ShuttlePane(Container):
         if not bid or not bid.startswith("sp_"):
             return
         if bid == "sp_clone":
-            self.run_clone_template()
-        elif bid == "sp_roles":
-            self._open_roles_menu()
-        elif bid == "sp_emojis":
-            self._open_emoji_menu()
-        elif bid == "sp_metadata":
-            self._open_metadata_menu()
+            self._open_clone_menu()
+        elif bid == "sp_sync":
+            self._open_sync_menu()
         elif bid == "sp_messages":
             self.run_migrate_messages()
         elif bid == "sp_danger":
             self._open_danger_menu()
 
-    # ── (1) clone server template ─────────────────────────────────────────
+    # ── (1) clone server template (combined) ─────────────────────────────
+
+    def _open_clone_menu(self):
+        options = [
+            ("sub_clone_roles", "Clone Roles & Role Permissions"),
+            ("sub_clone_channels", "Clone Channels & Categories"),
+            ("sub_sync_perms", "Sync Channel & Category Permissions"),
+        ]
+        def on_result(choices):
+            if choices:
+                # Order defined: Roles -> Channels -> Permissions
+                ordered = [c for c in ["sub_clone_roles", "sub_clone_channels", "sub_sync_perms"] if c in choices]
+                self.run_batch_clone(ordered)
+        self.app.push_screen(OptionSelectModal("Clone Server Template", options), on_result)
+
+    # ── (2) sync server settings (combined) ────────────────────────────
+
+    def _open_sync_menu(self):
+        options = [
+            ("sub_emoji", "Sync Emojis"),
+            ("sub_sticker", "Sync Stickers"),
+            ("sub_name", "Sync Server Name"),
+            ("sub_icon", "Sync Server Icon"),
+            ("sub_banner", "Sync Server Banner"),
+        ]
+        def on_result(choices):
+            if choices:
+                self.run_batch_sync(choices)
+        self.app.push_screen(OptionSelectModal("Sync Server Settings", options), on_result)
+
+    # ── batch workers ──────────────────────────────────────────────────
 
     @work(exclusive=True)
-    async def run_clone_template(self) -> None:
+    async def run_batch_clone(self, selections: list[str]) -> None:
+        modal = ProgressScreen()
+        self.app.push_screen(modal)
+        await asyncio.sleep(0.1)
+        try:
+            modal.set_status(f"Awaiting Confirmation for {len(selections)} Operations...")
+            choice = await modal.phase_wait_confirm()
+            if choice == "btn_back":
+                modal.dismiss()
+                return
+            elif choice == "btn_main_menu":
+                modal.dismiss()
+                self.app.switch_screen("config_selection")
+                return
+
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
+            await self.engine.start_connections()
+            self.engine.is_running = True
+
+            for sel in selections:
+                if not self.engine.is_running: break
+                if sel == "sub_clone_roles":
+                    await self._logic_clone_roles(modal)
+                elif sel == "sub_clone_channels":
+                    await self._logic_clone_channels(modal)
+                elif sel == "sub_sync_perms":
+                    await self._logic_sync_permissions(modal)
+            
+            modal.phase_report("Clone Template Complete")
+            modal.write("[bold green]All selected cloning operations finished.[/bold green]")
+        except Exception as e:
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Batch Operation", "error")
+        finally:
+            self.engine.is_running = False
+            await self.engine.close_connections()
+
+    @work(exclusive=True)
+    async def run_batch_sync(self, selections: list[str]) -> None:
+        modal = ProgressScreen()
+        self.app.push_screen(modal)
+        await asyncio.sleep(0.1)
+        try:
+            modal.set_status("Awaiting Confirmation to Sync Server Settings...")
+            choice = await modal.phase_wait_confirm()
+            if choice == "btn_back":
+                modal.dismiss()
+                return
+            elif choice == "btn_main_menu":
+                modal.dismiss()
+                self.app.switch_screen("config_selection")
+                return
+
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
+            await self.engine.start_connections()
+            self.engine.is_running = True
+
+            # Separate asset sync from metadata sync
+            asset_types = []
+            if "sub_emoji" in selections: asset_types.append("Emoji")
+            if "sub_sticker" in selections: asset_types.append("Sticker")
+            if asset_types:
+                await self._logic_copy_assets(modal, asset_types)
+            
+            meta_comps = []
+            if "sub_name" in selections: meta_comps.append("name")
+            if "sub_icon" in selections: meta_comps.append("icon")
+            if "sub_banner" in selections: meta_comps.append("banner")
+            if meta_comps:
+                await self._logic_sync_metadata(modal, meta_comps)
+            
+            modal.phase_report("Sync Settings Complete")
+            modal.write("[bold green]All selected synchronization operations finished.[/bold green]")
+        except Exception as e:
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Batch Operation", "error")
+        finally:
+            self.engine.is_running = False
+            await self.engine.close_connections()
+
+    # ── logic blocks (internal) ────────────────────────────────────────
+
+    async def _logic_clone_channels(self, modal: ProgressScreen):
         if self.target_platform == "fluxer":
             from src.fluxer.clone_server import sync_channel_state, migrate_channels
         else:
             from src.stoat.clone_server import sync_channel_state, migrate_channels
+        
+        modal.set_status("Processing Server Structure...")
+        await sync_channel_state(self.engine)
+        categories = await self.engine.discord_reader.get_categories()
+        channels = await self.engine.discord_reader.get_channels()
+        
+        async def update_progress(item_name, status, current, total):
+            color = "cyan" if status == "Copying" else "yellow"
+            modal.set_status(f"[{color}]{status}: {item_name}[/{color}]")
+            modal.set_progress(current, total)
+        
+        cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=False)
+        if cloned_info and cloned_info.get("structure"):
+            lines = ["Successfully cloned channels and categories:"]
+            cats = sorted(cloned_info["structure"].keys(), key=lambda x: (x == "No Category", x))
+            for cat_name in cats:
+                ch_names = cloned_info["structure"][cat_name]
+                if cat_name in cloned_info.get("categories_created", []) or ch_names:
+                    lines.append(f"- **{cat_name}**")
+                    for n in sorted(ch_names): lines.append(f"  - {n}")
+            await log_audit_event(self.engine, "Channels Cloned", "\n".join(lines))
 
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-
-        try:
-            modal.set_status("Fetching server structure...")
-            await self.engine.start_connections()
-            await sync_channel_state(self.engine)
-            categories = await self.engine.discord_reader.get_categories()
-            channels = await self.engine.discord_reader.get_channels()
-
-            cached = sum(1 for c in categories if self.engine.state.get_fluxer_category_id(str(c.id)))
-            cached += sum(1 for c in channels if self.engine.state.get_fluxer_channel_id(str(c.id)))
-            total = len(categories) + len(channels)
-
-            modal.write(f"[yellow]Found {total} items, {cached} already cloned.[/yellow]")
-            modal.set_status("Cloning channels...")
-
-            async def update_progress(item_name, status, current, total):
-                color = "cyan" if status == "Copying" else "yellow"
-                modal.set_status(f"[{color}]{status}: {item_name}[/{color}]")
-                modal.set_progress(current, total)
-
-            self.engine.is_running = True
-            cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=False)
-
-            modal.write("[bold green]Server Template cloned![/bold green]")
-            if cloned_info and cloned_info.get("structure"):
-                lines = ["Successfully cloned channels and categories from Discord:"]
-                cats = sorted(cloned_info["structure"].keys(), key=lambda x: (x == "No Category", x))
-                for cat_name in cats:
-                    ch_names = cloned_info["structure"][cat_name]
-                    if cat_name in cloned_info.get("categories_created", []) or ch_names:
-                        lines.append(f"- **{cat_name}**")
-                        for n in sorted(ch_names):
-                            lines.append(f"  - {n}")
-                await log_audit_event(self.engine, "Server Template Cloned", "\n".join(lines))
-            else:
-                await log_audit_event(self.engine, "Server Template Cloned", "No new items were cloned.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-        finally:
-            self.engine.is_running = False
-            await self.engine.close_connections()
-            modal.set_status("Finished.")
-            modal.allow_close()
-
-    # ── (2) roles & permissions ───────────────────────────────────────────
-
-    def _open_roles_menu(self):
-        options = [
-            ("sub_clone_roles", "Clone Roles & Role Permissions", "primary"),
-            ("sub_sync_perms", "Sync Channel & Category Permissions", "warning"),
-        ]
-        def on_result(choice):
-            if choice == "sub_clone_roles":
-                self.run_clone_roles()
-            elif choice == "sub_sync_perms":
-                self.run_sync_permissions()
-        self.app.push_screen(SubMenuModal("Roles & Permissions", options), on_result)
-
-    @work(exclusive=True)
-    async def run_clone_roles(self) -> None:
+    async def _logic_clone_roles(self, modal: ProgressScreen):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
+        modal.set_status("Processing Roles...")
+        await roles_mod.sync_roles_state(self.engine)
+        
+        async def update(name, current, total):
+            modal.set_status(f"[cyan]Copying Role: {name}[/cyan]")
+            modal.set_progress(current, total)
+        
+        cloned = await roles_mod.migrate_roles(self.engine, progress_callback=update, force=False)
+        if cloned:
+            await log_audit_event(self.engine, "Roles Cloned", "Successfully cloned roles:\n" + "\n".join(f"- {r}" for r in cloned))
 
-        try:
-            modal.set_status("Checking existing roles...")
-            await self.engine.start_connections()
-            await roles_mod.sync_roles_state(self.engine)
-            roles = await self.engine.discord_reader.get_roles()
-
-            cached = sum(1 for r in roles if self.engine.state.get_target_role_id(str(r.id)))
-            modal.write(f"[yellow]Found {len(roles)} roles, {cached} already cloned.[/yellow]")
-            modal.set_status("Cloning roles...")
-
-            async def update(name, current, total):
-                modal.set_status(f"[cyan]Copying: {name}[/cyan]")
-                modal.set_progress(current, total)
-
-            self.engine.is_running = True
-            cloned = await roles_mod.migrate_roles(self.engine, progress_callback=update, force=False)
-
-            modal.write("[bold green]Role migration complete![/bold green]")
-            if cloned:
-                desc = "Successfully cloned roles:\n" + "\n".join(f"- {r}" for r in cloned)
-                await log_audit_event(self.engine, "Roles Cloned", desc)
-            else:
-                await log_audit_event(self.engine, "Roles Cloned", "No new roles were cloned.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-        finally:
-            self.engine.is_running = False
-            await self.engine.close_connections()
-            modal.set_status("Finished.")
-            modal.allow_close()
-
-    @work(exclusive=True)
-    async def run_sync_permissions(self) -> None:
+    async def _logic_sync_permissions(self, modal: ProgressScreen):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
+        modal.set_status("Syncing Permissions...")
+        
+        async def update(name, current, total):
+            modal.set_status(f"[cyan]Syncing Perms: {name}[/cyan]")
+            modal.set_progress(current, total)
+            
+        synced = await roles_mod.sync_permissions(self.engine, progress_callback=update)
+        if synced and synced.get("structure"):
+            lines = ["Synchronized permission overrides:"]
+            cats = sorted(synced["structure"].keys(), key=lambda x: (x == "No Category", x))
+            for cat_name in cats:
+                ch_names = synced["structure"][cat_name]
+                if cat_name in synced.get("categories_synced", []) or ch_names:
+                    lines.append(f"- **{cat_name}**")
+                    for n in sorted(ch_names): lines.append(f"  - {n}")
+            await log_audit_event(self.engine, "Permissions Synced", "\n".join(lines))
 
-        try:
-            modal.set_status("Syncing permissions...")
-            await self.engine.start_connections()
-
-            async def update(name, current, total):
-                modal.set_status(f"[cyan]Syncing: {name}[/cyan]")
-                modal.set_progress(current, total)
-
-            self.engine.is_running = True
-            synced = await roles_mod.sync_permissions(self.engine, progress_callback=update)
-
-            modal.write("[bold green]Permission sync complete![/bold green]")
-            if synced and synced.get("structure"):
-                lines = ["Synchronized permission overrides:"]
-                cats = sorted(synced["structure"].keys(), key=lambda x: (x == "No Category", x))
-                for cat_name in cats:
-                    ch_names = synced["structure"][cat_name]
-                    if cat_name in synced.get("categories_synced", []) or ch_names:
-                        lines.append(f"- **{cat_name}**")
-                        for n in sorted(ch_names):
-                            lines.append(f"  - {n}")
-                await log_audit_event(self.engine, "Permissions Synced", "\n".join(lines))
-            else:
-                await log_audit_event(self.engine, "Permissions Synced", "No permissions synchronized.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-        finally:
-            self.engine.is_running = False
-            await self.engine.close_connections()
-            modal.set_status("Finished.")
-            modal.allow_close()
-
-    # ── (3) emojis & stickers ─────────────────────────────────────────────
-
-    def _open_emoji_menu(self):
-        options = [
-            ("sub_emoji", "Sync Emojis only", "primary"),
-            ("sub_sticker", "Sync Stickers only", "primary"),
-            ("sub_both", "Sync Emojis & Stickers", "success"),
-        ]
-        def on_result(choice):
-            types = []
-            if choice == "sub_emoji":
-                types = ["Emoji"]
-            elif choice == "sub_sticker":
-                types = ["Sticker"]
-            elif choice == "sub_both":
-                types = ["Emoji", "Sticker"]
-            if types:
-                self.run_copy_emojis(types)
-        self.app.push_screen(SubMenuModal("Emojis & Stickers", options), on_result)
-
-    @work(exclusive=True)
-    async def run_copy_emojis(self, types_to_include: list[str]) -> None:
+    async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str]):
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
+        modal.set_status("Processing Assets...")
+        await asset_mod.sync_assets_state(self.engine)
+        
+        async def update(name, item_type, current, total):
+            modal.set_status(f"[cyan]Copying {item_type}: {name}[/cyan]")
+            modal.set_progress(current, total)
+            
+        cloned = await asset_mod.migrate_emojis(self.engine, progress_callback=update, types_to_include=types_to_include, force=False)
+        if cloned and (cloned.get("Emoji") or cloned.get("Sticker")):
+            lines = []
+            if cloned.get("Emoji"):
+                lines.append("Emojis cloned:"); lines.extend([f"- {n}" for n in cloned["Emoji"]])
+            if cloned.get("Sticker"):
+                lines.append("Stickers cloned:"); lines.extend([f"- {n}" for n in cloned["Sticker"]])
+            await log_audit_event(self.engine, "Assets Cloned", "\n".join(lines))
 
-        try:
-            modal.set_status("Checking existing assets...")
-            await self.engine.start_connections()
-            await asset_mod.sync_assets_state(self.engine)
-
-            modal.set_status("Copying assets...")
-
-            async def update(name, item_type, current, total):
-                modal.set_status(f"[cyan]Copying {item_type}: {name}[/cyan]")
-                modal.set_progress(current, total)
-
-            self.engine.is_running = True
-            cloned = await asset_mod.migrate_emojis(
-                self.engine,
-                progress_callback=update,
-                types_to_include=types_to_include,
-                force=False,
-            )
-
-            modal.write("[bold green]Asset migration complete![/bold green]")
-            if cloned and (cloned.get("Emoji") or cloned.get("Sticker")):
-                lines = []
-                if cloned.get("Emoji"):
-                    lines.append("Emojis cloned:")
-                    for n in cloned["Emoji"]:
-                        lines.append(f"- {n}")
-                if cloned.get("Sticker"):
-                    lines.append("Stickers cloned:")
-                    for n in cloned["Sticker"]:
-                        lines.append(f"- {n}")
-                await log_audit_event(self.engine, "Emojis & Stickers Cloned", "\n".join(lines))
-            else:
-                await log_audit_event(self.engine, "Emojis & Stickers Cloned", "No new assets cloned.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-        finally:
-            self.engine.is_running = False
-            await self.engine.close_connections()
-            modal.set_status("Finished.")
-            modal.allow_close()
-
-    # ── (4) server metadata sync ──────────────────────────────────────────
-
-    def _open_metadata_menu(self):
-        options = [
-            ("sub_name", "Sync Name only", "primary"),
-            ("sub_icon", "Sync Icon only", "primary"),
-            ("sub_banner", "Sync Banner only", "primary"),
-            ("sub_all_meta", "Sync Everything", "success"),
-        ]
-        def on_result(choice):
-            comps = []
-            if choice == "sub_name":
-                comps = ["name"]
-            elif choice == "sub_icon":
-                comps = ["icon"]
-            elif choice == "sub_banner":
-                comps = ["banner"]
-            elif choice == "sub_all_meta":
-                comps = ["name", "icon", "banner"]
-            if comps:
-                self.run_sync_metadata(comps)
-        self.app.push_screen(SubMenuModal("Sync Server Profile", options), on_result)
-
-    @work(exclusive=True)
-    async def run_sync_metadata(self, components: list[str]) -> None:
+    async def _logic_sync_metadata(self, modal: ProgressScreen, components: list[str]):
         meta_mod = fluxer_metadata if self.target_platform == "fluxer" else stoat_metadata
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-
-        try:
-            modal.set_status("Syncing server metadata...")
-            await self.engine.start_connections()
-
-            async def progress_cb(item, status):
-                color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
-                modal.write(f"{item} [[bold {color}]{status}[/bold {color}]]")
-
-            cloned = await meta_mod.sync_server_metadata(self.engine, progress_cb, components=components)
-
-            modal.write("[bold green]Server profile sync finished![/bold green]")
-
-            lines = ["Synchronized Community profile:"]
-            if "name" in cloned:
-                lines.append(f"- **Name**: {cloned['name']}")
-            if "icon" in cloned:
-                lines.append("- **Icon**")
-            if "banner" in cloned:
-                lines.append("- **Banner**")
+        modal.set_status("Syncing Server Profile...")
+        
+        async def progress_cb(item, status):
+            color = "green" if status == "DONE" else "red" if status == "ERROR" else "yellow"
+            modal.write(f"{item} [[bold {color}]{status}[/bold {color}]]")
+            
+        cloned = await meta_mod.sync_server_metadata(self.engine, progress_cb, components=components)
+        if cloned:
+            lines = ["Synchronized profile traits:"]
+            if "name" in cloned: lines.append(f"- **Name**: {cloned['name']}")
+            if "icon" in cloned: lines.append("- **Icon**")
+            if "banner" in cloned: lines.append("- **Banner**")
+            # Prepare files for audit log
             files = []
             if "icon" in cloned:
                 ext = "gif" if cloned["icon"].startswith(b"GIF") else "png"
@@ -554,16 +493,7 @@ class ShuttlePane(Container):
             if "banner" in cloned:
                 ext = "gif" if cloned["banner"].startswith(b"GIF") else "png"
                 files.append({"filename": f"banner.{ext}", "data": cloned["banner"]})
-            if cloned:
-                await log_audit_event(self.engine, "Server Profile Synced", "\n".join(lines), files=files)
-            else:
-                await log_audit_event(self.engine, "Server Profile Synced", "Nothing synchronized.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-        finally:
-            await self.engine.close_connections()
-            modal.set_status("Finished.")
-            modal.allow_close()
+            await log_audit_event(self.engine, "Profile Synced", "\n".join(lines), files=files)
 
     # ── (5) message migration ─────────────────────────────────────────────
 
@@ -609,62 +539,114 @@ class ShuttlePane(Container):
 
             target_cat_names = {str(c.get("id")): c.get("name") for c in full_f if c.get("type") == 4}
 
-            loop = asyncio.get_running_loop()
-            pick_future = loop.create_future()
+            while True:
+                loop = asyncio.get_running_loop()
+                pick_future = loop.create_future()
 
-            def on_pick(result):
-                if not pick_future.done():
-                    pick_future.set_result(result)
+                def on_pick(result):
+                    if not pick_future.done():
+                        pick_future.set_result(result)
 
-            self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name), on_pick)
-            res = await pick_future
+                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name), on_pick)
+                res = await pick_future
 
-            if res is None:
-                await self.engine.close_connections()
-                return
-            
-            src_id, tgt_id = res
-            source_channel = next(c for c in d_channels if c.id == src_id)
-            target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
+                if res is None:
+                    await self.engine.close_connections()
+                    return
+                
+                src_id, tgt_id = res
+                source_channel = next(c for c in d_channels if c.id == src_id)
+                target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
 
-            # Determine after_id
-            after_id = None
-            last_migrated = self.engine.state.get_last_message_id(str(source_channel.id))
-            if last_migrated:
-                after_id = int(last_migrated)
+                # Determine after_id status
+                last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
+                has_previous = bool(last_migrated)
+                
+                # Analyze
+                modal = ProgressScreen()
+                self.app.push_screen(modal)
+                await asyncio.sleep(0.1)
+                modal.set_status("Analyzing channel...")
+                modal.show_stats()
 
-            # Analyze
-            modal = ProgressScreen()
-            self.app.push_screen(modal)
-            await asyncio.sleep(0.1)
-            modal.set_status("Analyzing channel...")
-            modal.show_stats()
+                self.engine.is_running = True
+                stats_analysis = {"messages": 0, "threads": 0, "attachments": 0}
 
-            self.engine.is_running = True
-            stats = {"messages": 0, "threads": 0, "attachments": 0}
+                async def update_scan(current_stats):
+                    modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
 
-            async def update_scan(count):
-                modal.set_status(f"[cyan]Scanned {count} items...")
+                stats_analysis = await migrate_mod.analyze_migration(
+                    self.engine,
+                    source_channel_id=source_channel.id,
+                    after_message_id=int(last_migrated) if last_migrated else None,
+                    progress_callback=update_scan,
+                )
+                self.engine.is_running = False
 
-            stats = await migrate_mod.analyze_migration(
-                self.engine,
-                source_channel_id=source_channel.id,
-                after_message_id=after_id,
-                progress_callback=update_scan,
-            )
-            self.engine.is_running = False
+                # Set initial total stats for the confirmation block
+                modal.update_stats(
+                    messages=stats_analysis['messages'],
+                    threads=stats_analysis['threads'],
+                    files=stats_analysis['attachments']
+                )
 
-            modal.write(f"[cyan]Messages: {stats['messages']}, Threads: {stats['threads']}, Attachments: {stats['attachments']}[/cyan]")
-            modal.write(f"Migrating Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+                # Setup the info container
+                m_status = "[bold yellow]Previous Migration Detected[/bold yellow]" if has_previous else "[bold cyan]No previous migration data.[/bold cyan]"
+                i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
+                modal.show_info(m_status, i_status)
+
+                modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+
+                # Phase 2: Confirmation
+                choice = await modal.phase_wait_confirm(show_continue=has_previous)
+                if choice == "btn_back":
+                    modal.dismiss()
+                    continue # Return to channel picker
+                elif choice == "btn_main_menu":
+                    modal.dismiss()
+                    self.app.switch_screen("config_selection")
+                    self.engine.is_running = False
+                    await self.engine.close_connections()
+                    return
+                    
+                after_id = None
+                if choice == "btn_continue" and last_migrated:
+                    after_id = int(last_migrated)
+                elif choice == "btn_start_id":
+                    # Fallback to full for now since we don't have an ID input dialog yet
+                    modal.write("[yellow]Custom Message ID start not fully implemented, starting from beginning.[/yellow]")
+                    after_id = None
+                
+                # If we are here, we are proceeding with migration
+                break
+
+            # Phase 3: Progress
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
             modal.set_status("Migrating messages...")
 
-            total_messages = stats["messages"]
+            total_messages = stats_analysis["messages"]
+            total_threads = stats_analysis["threads"]
+            total_attachments = stats_analysis["attachments"]
+            
             self.engine.is_running = True
 
-            async def update_msg(count):
-                modal.set_status(f"[cyan]Migrated {count}/{total_messages} messages...")
-                modal.set_progress(count, total_messages)
-                modal.update_stats(messages=count)
+            async def update_msg(current_stats):
+                c_msgs = current_stats["messages"]
+                c_threads = current_stats["threads"]
+                c_files = current_stats["attachments"]
+                
+                modal.set_status(f"[cyan]Migrated {c_msgs}/{total_messages} messages...")
+                modal.set_progress(c_msgs, total_messages)
+                
+                modal.update_stats(
+                    messages=f"{c_msgs}/{total_messages}",
+                    threads=f"{c_threads}/{total_threads}",
+                    files=f"{c_files}/{total_attachments}"
+                )
+                
+                # optionally show a scrolling trace if the backend provided it
+                modal.write_live(f"Migrated message #{c_msgs}")
 
             result = await migrate_mod.migrate_messages(
                 self.engine,
@@ -676,15 +658,12 @@ class ShuttlePane(Container):
 
             if self.engine.is_running:
                 modal.write(f"[bold green]Success! {result['messages']} messages migrated.[/bold green]")
-                event_title = "Message History Migrated"
+                event_title = "Message Migration"
+                modal.phase_report(event_title)
             else:
                 modal.write(f"[bold yellow]Interrupted! {result['messages']} messages migrated.[/bold yellow]")
-                event_title = "Message History Migration Interrupted"
-
-            self.app.push_screen(ReportModal(
-                event_title, 
-                f"Successfully processed {result['messages']} messages, {result['attachments']} attachments, and {result['threads']} threads."
-            ))
+                event_title = "Message Migration"
+                modal.phase_report(event_title, "stopped")
 
             lines = [f"Migrated Discord #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
             lines.append(f"{result['messages']} messages, {result['attachments']} attachments, {result['threads']} threads")
@@ -696,10 +675,10 @@ class ShuttlePane(Container):
                 modal.write("[bold red]Bot is missing the 'Masquerade' permission.[/bold red]")
             else:
                 modal.write(f"[bold red]Error: {err}[/bold red]")
+            modal.phase_report("Message Migration", "error")
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
-            modal.allow_close()
 
     # ── (6) danger zone ───────────────────────────────────────────────────
 
@@ -722,10 +701,22 @@ class ShuttlePane(Container):
         self.app.push_screen(SubMenuModal("⚠ DANGER ZONE ⚠", options), on_result)
 
     def _confirm_danger(self, message: str, callback):
-        def on_confirm(confirmed: bool):
-            if confirmed:
+        async def do_confirm():
+            modal = ProgressScreen()
+            self.app.push_screen(modal)
+            await asyncio.sleep(0.1)
+            
+            modal.set_status(f"[bold red]DANGER:[/bold red] {message}")
+            modal.write("[bold red]WARNING: THIS WILL DELETE DATA PERMANENTLY! MUST PROCEED TO CONTINUE.[/bold red]")
+            
+            choice = await modal.phase_wait_confirm()
+            modal.dismiss()
+            if choice == "btn_start_first":
                 callback()
-        self.app.push_screen(ConfirmModal(message, danger=True), on_confirm)
+            elif choice == "btn_main_menu":
+                self.app.switch_screen("config_selection")
+
+        asyncio.create_task(do_confirm())
 
     @work(exclusive=True)
     async def run_dz_delete_channels(self) -> None:
@@ -737,6 +728,8 @@ class ShuttlePane(Container):
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
+        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+        modal.phase_progress()
 
         try:
             modal.set_status("[red]Deleting channels...")
@@ -747,14 +740,15 @@ class ShuttlePane(Container):
                 modal.set_progress(current, total)
 
             count = await danger_delete_all_channels(self.engine, progress_callback=on_deleted)
-            modal.write(f"[bold green]{count} channels/categories deleted.[/bold green]")
+            
+            modal.phase_report("Danger Zone: Channels Wiped")
+            modal.write(f"[bold green]Success! {count} channels/categories deleted.[/bold green]")
             await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Deleted {count} channels and categories.")
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Delete Channels", "error")
         finally:
             await self.engine.close_target_only()
-            modal.set_status("Finished.")
-            modal.allow_close()
 
     @work(exclusive=True)
     async def run_dz_reset_perms(self) -> None:
@@ -766,6 +760,8 @@ class ShuttlePane(Container):
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
+        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+        modal.phase_progress()
 
         try:
             modal.set_status("[red]Resetting permissions...")
@@ -776,14 +772,15 @@ class ShuttlePane(Container):
                 modal.set_progress(current, total)
 
             count = await danger_reset_channel_permissions(self.engine, progress_callback=on_reset)
-            modal.write(f"[bold green]Permissions reset on {count} items.[/bold green]")
+            
+            modal.phase_report("Danger Zone: Permissions Wiped")
+            modal.write(f"[bold green]Success! Permissions reset on {count} items.[/bold green]")
             await log_audit_event(self.engine, "Danger Zone: Permissions Wiped", f"Reset permissions on {count} items.")
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Wipe Permissions", "error")
         finally:
             await self.engine.close_target_only()
-            modal.set_status("Finished.")
-            modal.allow_close()
 
     @work(exclusive=True)
     async def run_dz_delete_roles(self) -> None:
@@ -795,6 +792,8 @@ class ShuttlePane(Container):
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
+        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+        modal.phase_progress()
 
         try:
             modal.set_status("[red]Deleting roles...")
@@ -805,14 +804,15 @@ class ShuttlePane(Container):
                 modal.set_progress(current, total)
 
             count = await danger_delete_all_roles(self.engine, progress_callback=on_deleted)
-            modal.write(f"[bold green]{count} roles deleted.[/bold green]")
+            
+            modal.phase_report("Danger Zone: Roles Wiped")
+            modal.write(f"[bold green]Success! {count} roles deleted.[/bold green]")
             await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Deleted {count} roles.")
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Wipe Roles", "error")
         finally:
             await self.engine.close_target_only()
-            modal.set_status("Finished.")
-            modal.allow_close()
 
     @work(exclusive=True)
     async def run_dz_delete_assets(self) -> None:
@@ -824,6 +824,8 @@ class ShuttlePane(Container):
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
+        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+        modal.phase_progress()
 
         try:
             modal.set_status("[red]Deleting assets...")
@@ -834,11 +836,12 @@ class ShuttlePane(Container):
                 modal.set_progress(current, total)
 
             counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_deleted)
-            modal.write(f"[bold green]{counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
+            
+            modal.phase_report("Danger Zone: Assets Wiped")
+            modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
             await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Wipe Assets", "error")
         finally:
             await self.engine.close_target_only()
-            modal.set_status("Finished.")
-            modal.allow_close()

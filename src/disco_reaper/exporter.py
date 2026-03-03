@@ -27,7 +27,7 @@ class DiscordExporter:
         # Create safe folder name
         import re
         safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', self.server_name)
-        self.export_path = self.base_dir / f"DISCORD-{self.server_id}"
+        self.export_path = self.base_dir / f"DISCORD_BACKUP-{self.server_id}"
         self.export_path.mkdir(parents=True, exist_ok=True)
         
         # Consolidate media into one folder

@@ -1223,7 +1223,7 @@ class MigrationCLI:
                 server_name = self.validation_results.get("discord_server_name", "server")
                 
                 # Check for existing migration
-                last_migrated_id = self.engine.state.get_last_message_id(str(source_channel.id))
+                last_migrated_id = self.engine.state.get_last_message_id(str(target_channel.get('id')))
                 next_msg = None
                 if last_migrated_id:
                     try:

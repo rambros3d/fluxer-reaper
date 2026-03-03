@@ -9,6 +9,22 @@ from textual.screen import ModalScreen, Screen
 
 
 import time
+import logging
+import asyncio
+
+class UILogHandler(logging.Handler):
+    """Custom logging handler to send logs to the Textual UI RichLog."""
+    def __init__(self, callback):
+        super().__init__()
+        self.callback = callback
+        self.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s', '%H:%M:%S'))
+
+    def emit(self, record):
+        try:
+            msg = self.format(record)
+            self.callback(msg)
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # ProgressScreen – unified full-screen progress / log / stats display
@@ -44,12 +60,17 @@ class ProgressScreen(Screen[None]):
     .stat_label { width: 1fr; content-align: center middle; text-style: bold; }
     
     #prog_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
+    #live_log { height: 10; margin-bottom: 1; border: solid yellow; }
     #prog_loader { margin-bottom: 1; }
-    #prog_bar_container { height: auto; width: 100%; }
+    #prog_bar_container { height: auto; width: 100%; align: center middle; }
     #prog_bar { margin-bottom: 1; width: 80%; }
     
-    #prog_actions { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; }
-    #btn_close_progress { width: 1fr; margin: 0 1; }
+    #info_container { height: auto; layout: vertical; border: solid $secondary; padding: 1; margin-bottom: 1; display: none; }
+    .info_label { text-style: bold; content-align: center middle; width: 100%; color: $secondary-lighten-2; }
+    
+    #prog_actions { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; layout: vertical; }
+    .action_row { height: auto; layout: horizontal; }
+    .action_row Button { width: 1fr; margin: 0 1; }
     """
 
     def compose(self) -> ComposeResult:
@@ -66,20 +87,58 @@ class ProgressScreen(Screen[None]):
                     yield Label("Files: 0", id="stat_files", classes="stat_label")
 
                 yield LoadingIndicator(id="prog_loader")
-                with Center(id="prog_bar_container"):
-                    pb = ProgressBar(total=None, show_eta=False, id="prog_bar")
-                    pb.display = False
-                    yield pb
+
+                with Vertical(id="info_container"):
+                    yield Label("No previous migration data.", id="info_migration_status", classes="info_label")
+                    yield Label("New items detected.", id="info_new_items", classes="info_label")
+                    
+                    # Progress bar moved inside info container
+                    with Center(id="prog_bar_container"):
+                        pb = ProgressBar(total=None, show_eta=False, id="prog_bar")
+                        pb.display = False
+                        yield pb
 
                 yield RichLog(id="prog_log", highlight=True, markup=True)
+                yield RichLog(id="live_log", highlight=True, markup=True)
                 
-                with Horizontal(id="prog_actions"):
-                    yield Button("Close", id="btn_close_progress", disabled=True)
+                with Vertical(id="prog_actions"):
+                    with Horizontal(classes="action_row", id="prog_actions_row1"):
+                        yield Button("Start from First", id="btn_start_first", disabled=True, variant="primary")
+                        yield Button("Continue Migration", id="btn_continue", disabled=True, variant="success")
+                        yield Button("Start from ID", id="btn_start_id", disabled=True, variant="warning")
+                    with Horizontal(classes="action_row", id="prog_actions_row2"):
+                        yield Button("Back", id="btn_back", disabled=False)
+                        yield Button("Main Menu", id="btn_main_menu", disabled=False)
+                    with Horizontal(classes="action_row", id="prog_actions_cancel"):
+                        yield Button("Cancel", id="btn_cancel", variant="error")
         yield Footer()
 
     def on_mount(self):
+        self.confirm_future = None
+        self.cancel_callback = None
         self.start_time = time.time()
         self.timer_event = self.set_interval(1.0, self.update_timer)
+        
+        # Hide all action rows by default (fetch phase = no buttons)
+        try: self.query_one("#prog_actions_row1", Horizontal).display = False
+        except Exception: pass
+        try: self.query_one("#prog_actions_row2", Horizontal).display = False
+        except Exception: pass
+        try: self.query_one("#prog_actions_cancel", Horizontal).display = False
+        except Exception: pass
+        
+        # Intercept Python logs and pipe to the #live_log
+        self.log_handler = UILogHandler(self.write_live)
+        # Attach to root logger
+        logging.getLogger().addHandler(self.log_handler)
+        # Also let's capture discord.py logs specifically if they aren't propagating
+        logging.getLogger("discord").addHandler(self.log_handler)
+
+    def on_unmount(self):
+        # Detach log handler when UI is cleanly removed
+        if hasattr(self, "log_handler"):
+            logging.getLogger().removeHandler(self.log_handler)
+            logging.getLogger("discord").removeHandler(self.log_handler)
 
     def update_timer(self):
         elapsed = int(time.time() - self.start_time)
@@ -90,14 +149,35 @@ class ProgressScreen(Screen[None]):
             pass
 
     def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_close_progress":
+        btn_id = event.button.id
+        if self.confirm_future and not self.confirm_future.done():
+            self.confirm_future.set_result(btn_id)
+            return
+
+        # If Cancel is pressed during operation, invoke callback and dismiss
+        if btn_id == "btn_cancel":
+            if self.cancel_callback:
+                self.cancel_callback()
             if self.timer_event:
                 self.timer_event.stop()
-            self.dismiss(None)
+            self.dismiss("btn_cancel")
+            return
+
+        # If operation is done (report phase), just dismiss with the action
+        if btn_id in ["btn_back", "btn_main_menu"]:
+            if self.timer_event:
+                self.timer_event.stop()
+            self.dismiss(btn_id)
 
     def write(self, message: str):
         try:
             self.query_one("#prog_log", RichLog).write(message)
+        except Exception:
+            pass
+
+    def write_live(self, message: str):
+        try:
+            self.query_one("#live_log", RichLog).write(message)
         except Exception:
             pass
 
@@ -132,79 +212,119 @@ class ProgressScreen(Screen[None]):
             except Exception:
                 pass
 
-    def allow_close(self):
-        if self.timer_event:
-            self.timer_event.stop()
+    async def phase_wait_confirm(self, show_continue: bool = False):
+        """Phase 2: Wait for user confirmation after analysis."""
+        try: self.query_one("#prog_loader", LoadingIndicator).display = False
+        except Exception: pass
+        
+        try: self.query_one("#prog_bar", ProgressBar).display = False
+        except Exception: pass
+        
+        # Show confirmation buttons
+        try: self.query_one("#prog_actions_row1", Horizontal).display = True
+        except Exception: pass
+        try: self.query_one("#prog_actions_row2", Horizontal).display = True
+        except Exception: pass
+        try: self.query_one("#prog_actions_cancel", Horizontal).display = False
+        except Exception: pass
+        
+        try: self.query_one("#btn_start_first", Button).disabled = False
+        except Exception: pass
+        
+        try: self.query_one("#btn_start_id", Button).disabled = False
+        except Exception: pass
+        
         try:
-            btn = self.query_one("#btn_close_progress", Button)
-            btn.disabled = False
-            btn.variant = "success"
-            self.query_one("#prog_loader", LoadingIndicator).display = False
-            bar = self.query_one("#prog_bar", ProgressBar)
-            bar.display = True
-            bar.update(total=100, progress=100)
+            if show_continue:
+                self.query_one("#btn_continue", Button).disabled = False
+                self.query_one("#btn_continue", Button).display = True
+            else:
+                self.query_one("#btn_continue", Button).display = False
+        except Exception:
+            pass
+            
+        loop = asyncio.get_running_loop()
+        self.confirm_future = loop.create_future()
+        
+        # Wait until the user clicks one of the buttons
+        choice = await self.confirm_future
+        return choice
+
+    def phase_progress(self):
+        """Phase 3: The actual operation begins. Only Cancel visible."""
+        try: self.query_one("#prog_actions_row1", Horizontal).display = False
+        except Exception: pass
+        
+        try: self.query_one("#prog_actions_row2", Horizontal).display = False
+        except Exception: pass
+        
+        # Show Cancel button
+        try: self.query_one("#prog_actions_cancel", Horizontal).display = True
+        except Exception: pass
+        
+        try: self.query_one("#prog_loader", LoadingIndicator).display = True
+        except Exception: pass
+        
+        try: self.query_one("#info_migration_status", Label).display = False
+        except Exception: pass
+        
+        try: self.query_one("#info_new_items", Label).display = False
+        except Exception: pass
+
+    def phase_report(self, operation_name: str, status: str = "complete"):
+        """Phase 4: Operation is done. Show Back + Main Menu.
+        
+        status can be: 'complete', 'stopped', 'error'
+        """
+        try:
+            if self.timer_event:
+                self.timer_event.stop()
+        except Exception:
+            pass
+        
+        # Format status title with color
+        status_map = {
+            "complete": ("[bold green]", "Complete"),
+            "stopped":  ("[bold yellow]", "Stopped"),
+            "error":    ("[bold red]", "Error"),
+        }
+        color, label = status_map.get(status, ("[bold]", status.capitalize()))
+        self.set_status(f"{color}{operation_name} {label}![/{color.split(']')[0].lstrip('[')}]")
+        
+        # Hide loader
+        try: self.query_one("#prog_loader", LoadingIndicator).display = False
+        except Exception: pass
+        
+        # Hide progress bar (no need to show 100% bar)
+        try: self.query_one("#prog_bar", ProgressBar).display = False
+        except Exception: pass
+        
+        # Hide Cancel, show Back + Main Menu
+        try: self.query_one("#prog_actions_cancel", Horizontal).display = False
+        except Exception: pass
+        try: self.query_one("#prog_actions_row1", Horizontal).display = False
+        except Exception: pass
+        try: self.query_one("#prog_actions_row2", Horizontal).display = True
+        except Exception: pass
+        
+        try:
+            back_btn = self.query_one("#btn_back", Button)
+            back_btn.disabled = False
         except Exception:
             pass
 
-# ---------------------------------------------------------------------------
-# ReportModal – simple post-operation report
-# ---------------------------------------------------------------------------
+    def show_info(self, migration_status: str, items_status: str):
+        try:
+            info = self.query_one("#info_container", Vertical)
+            info.display = True
+            self.query_one("#info_migration_status", Label).update(migration_status)
+            self.query_one("#info_new_items", Label).update(items_status)
+        except Exception:
+            pass
 
-class ReportModal(ModalScreen[None]):
-    """Modal to display a post-operation report."""
-
-    DEFAULT_CSS = """
-    ReportModal { align: center middle; }
-    #report_dialog {
-        width: 60;
-        height: auto;
-        border: thick $background 80%;
-        background: $surface;
-        padding: 1 2;
-    }
-    #report_title { text-style: bold; margin-bottom: 1; content-align: center middle; width: 100%; color: green; }
-    #report_content { margin-bottom: 2; height: auto; }
-    #report_btn { width: 1fr; margin: 0 1; }
-    """
-
-    def __init__(self, title: str, report_text: str):
-        super().__init__()
-        self.report_title = title
-        self.report_text = report_text
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="report_dialog"):
-            yield Label(self.report_title, id="report_title")
-            yield Label(self.report_text, id="report_content")
-            yield Button("OK", variant="primary", id="report_btn")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        self.dismiss(None)
-
-
-# ---------------------------------------------------------------------------
-# ConfirmModal – simple yes / no
-# ---------------------------------------------------------------------------
-
-class ConfirmModal(ModalScreen[bool]):
-    """Simple Yes / No confirmation modal."""
-    DEFAULT_CSS = "ConfirmModal { align: center middle; }"
-
-    def __init__(self, message: str, danger: bool = False):
-        super().__init__()
-        self._message = message
-        self._danger = danger
-
-    def compose(self) -> ComposeResult:
-        with Vertical(id="confirm_dialog"):
-            yield Label(self._message, id="confirm_msg")
-            with Horizontal(id="confirm_buttons"):
-                yield Button("Confirm", variant="error" if self._danger else "success", id="btn_yes")
-                yield Button("Cancel", variant="primary", id="btn_no")
-
-    def on_button_pressed(self, event: Button.Pressed):
-        self.dismiss(event.button.id == "btn_yes")
-
+    def allow_close(self):
+        """Legacy fallback: show Back + Main Menu buttons for early exit."""
+        self.phase_report("Operation", "error")
 
 # ---------------------------------------------------------------------------
 # SubMenuModal – generic labelled-button list
@@ -233,6 +353,71 @@ class SubMenuModal(ModalScreen[str]):
             self.dismiss(None)
         else:
             self.dismiss(event.button.id)
+
+
+# ---------------------------------------------------------------------------
+# OptionSelectModal – radio-button selection list
+# ---------------------------------------------------------------------------
+
+class OptionSelectModal(ModalScreen[list[str]]):
+    """A modal that presents a list of options using RadioButtons (for multi-select) and a Proceed button."""
+    DEFAULT_CSS = """
+    OptionSelectModal { align: center middle; }
+    #opt_dialog {
+        width: 60;
+        height: auto;
+        border: solid green;
+        background: $surface;
+        padding: 1 2;
+    }
+    #opt_title { text-style: bold; margin-bottom: 1; text-align: center; width: 100%; }
+    #opt_scroll { margin-bottom: 1; border: solid $primary; max-height: 12; padding: 1; }
+    #opt_buttons { height: auto; }
+    #opt_buttons Button { width: 1fr; margin: 0 1; }
+    #opt_batch_buttons { height: auto; margin-bottom: 1; }
+    #opt_batch_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, title: str, options: list[tuple[str, str]]):
+        """options: list of (option_id, label)"""
+        super().__init__()
+        self._title = title
+        self._options = options
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="opt_dialog"):
+            yield Label(self._title, id="opt_title")
+            with Horizontal(id="opt_batch_buttons"):
+                yield Button("Select All", id="btn_opt_all")
+                yield Button("Deselect All", id="btn_opt_none")
+            
+            with VerticalScroll(id="opt_scroll"):
+                for opt_id, label in self._options:
+                    yield RadioButton(label, id=f"opt_{opt_id}")
+            
+            yield Rule()
+            with Horizontal(id="opt_buttons"):
+                yield Button("Proceed", variant="success", id="btn_opt_ok")
+                yield Button("Back", id="btn_opt_back")
+
+    def on_button_pressed(self, event: Button.Pressed):
+        if event.button.id == "btn_opt_back":
+            self.dismiss(None)
+        elif event.button.id == "btn_opt_ok":
+            selected = []
+            for rb in self.query(RadioButton):
+                if rb.value:
+                    selected.append(rb.id.split("_", 1)[1])
+            if selected:
+                self.dismiss(selected)
+            else:
+                self.app.notify("Please select at least one option.", severity="warning")
+        elif event.button.id == "btn_opt_all":
+            for rb in self.query(RadioButton):
+                rb.value = True
+        elif event.button.id == "btn_opt_none":
+            for rb in self.query(RadioButton):
+                rb.value = False
 
 
 # ---------------------------------------------------------------------------
@@ -322,11 +507,11 @@ class ChannelPickerScreen(Screen[tuple]):
                 yield Rule()
                 with Horizontal(id="chanpick_buttons"):
                     yield Button("Select", variant="success", id="btn_pick_ok")
-                    yield Button("Cancel", id="btn_pick_cancel")
+                    yield Button("Back", id="btn_pick_back")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed):
-        if event.button.id == "btn_pick_cancel":
+        if event.button.id == "btn_pick_back":
             self.dismiss(None)
         elif event.button.id == "btn_pick_ok":
             src_val = None
@@ -442,7 +627,7 @@ class ChannelSelectScreen(Screen[dict]):
                         yield Button("Force Overwrite", variant="error", id="btn_force")
                     else:
                         yield Button("Backup", variant="success", id="btn_backup")
-                    yield Button("Cancel", id="btn_cancel_chan")
+                    yield Button("Back", id="btn_cancel_chan")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

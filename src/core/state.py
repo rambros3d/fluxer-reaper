@@ -22,10 +22,9 @@ class MigrationState:
         # audit log tracking
         self.audit_log_channel: str | None = None
         
-        # message tracking
-        self.message_map: Dict[str, str] = {}
-        self.last_message_ids: Dict[str, str] = {}
-        self.last_message_timestamps: Dict[str, str] = {}
+        # message tracking per target channel
+        # Format: { target_channel_id: {"message_map": {}, "last_message_id": "", "last_message_timestamp": ""} }
+        self.channel_messages: Dict[str, Dict[str, Any]] = {}
         
         self.load()
 
@@ -48,9 +47,25 @@ class MigrationState:
         if self.messages_file and self.messages_file.exists():
             with open(self.messages_file, "r", encoding="utf-8") as f:
                 msg_data = json.load(f)
-                self.message_map = msg_data.get("messages", {})
-                self.last_message_ids = msg_data.get("last_message_ids", {})
-                self.last_message_timestamps = msg_data.get("last_message_timestamps", {})
+                
+                # Check for new schema (nested under 'channels')
+                if "channels" in msg_data:
+                    self.channel_messages = msg_data.get("channels", {})
+                else:
+                    # Legacy schema detection & conversion to a default 'unknown_channel' just in case,
+                    # though new migrations shouldn't hit this based on previous removals.
+                    legacy_map = msg_data.get("messages", {})
+                    legacy_ids = msg_data.get("last_message_ids", {})
+                    legacy_times = msg_data.get("last_message_timestamps", {})
+                    
+                    if legacy_map or legacy_ids or legacy_times:
+                        self.channel_messages = {
+                            "legacy_migrated_channel": {
+                                "message_map": legacy_map,
+                                "last_message_id": list(legacy_ids.values())[-1] if legacy_ids else "",
+                                "last_message_timestamp": list(legacy_times.values())[-1] if legacy_times else ""
+                            }
+                        }
         
 
 
@@ -74,9 +89,7 @@ class MigrationState:
         if not self.messages_file:
             return
         data = {
-            "last_message_ids": self.last_message_ids,
-            "last_message_timestamps": self.last_message_timestamps,
-            "messages": self.message_map
+            "channels": self.channel_messages
         }
         with open(self.messages_file, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=4)
@@ -170,31 +183,55 @@ class MigrationState:
     def set_target_sticker_mapping(self, discord_id: str, target_id: str):
         self.set_sticker_mapping(discord_id, target_id)
         
-    def get_target_message_id(self, discord_id: str) -> str | None:
-        return self.get_fluxer_message_id(discord_id)
+    def get_target_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+        return self.get_fluxer_message_id(target_channel_id, discord_id)
 
-    def set_target_message_mapping(self, discord_id: str, target_id: str):
-        self.set_message_mapping(discord_id, target_id)
+    def set_target_message_mapping(self, target_channel_id: str, discord_id: str, target_id: str):
+        self.set_message_mapping(target_channel_id, discord_id, target_id)
 
     # --- Message Management ---
 
-    def set_message_mapping(self, discord_id: str, fluxer_id: str):
-        self.message_map[str(discord_id)] = str(fluxer_id)
+    def _ensure_channel_tracking(self, target_channel_id: str):
+        if str(target_channel_id) not in self.channel_messages:
+            self.channel_messages[str(target_channel_id)] = {
+                "message_map": {},
+                "last_message_id": "",
+                "last_message_timestamp": "",
+                "total_messages": 0,
+                "total_files": 0
+            }
+            
+    def increment_stats(self, target_channel_id: str, messages: int = 1, files: int = 0):
+        self._ensure_channel_tracking(target_channel_id)
+        c = self.channel_messages[str(target_channel_id)]
+        c["total_messages"] = c.get("total_messages", 0) + messages
+        c["total_files"] = c.get("total_files", 0) + files
+        self.save_messages()
+            
+    def set_message_mapping(self, target_channel_id: str, discord_id: str, fluxer_id: str):
+        self._ensure_channel_tracking(target_channel_id)
+        self.channel_messages[str(target_channel_id)]["message_map"][str(discord_id)] = str(fluxer_id)
         self.save_messages()
 
-    def get_fluxer_message_id(self, discord_id: str) -> str | None:
-        return self.message_map.get(str(discord_id))
+    def get_fluxer_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+        if str(target_channel_id) in self.channel_messages:
+            return self.channel_messages[str(target_channel_id)]["message_map"].get(str(discord_id))
+        return None
         
-    def update_last_message_timestamp(self, channel_id: str, timestamp: str):
-        self.last_message_timestamps[str(channel_id)] = timestamp
+    def update_last_message_timestamp(self, target_channel_id: str, timestamp: str):
+        self._ensure_channel_tracking(target_channel_id)
+        self.channel_messages[str(target_channel_id)]["last_message_timestamp"] = str(timestamp)
         self.save_messages()
 
-    def update_last_message_id(self, channel_id: str, message_id: str):
-        self.last_message_ids[str(channel_id)] = message_id
+    def update_last_message_id(self, target_channel_id: str, message_id: str):
+        self._ensure_channel_tracking(target_channel_id)
+        self.channel_messages[str(target_channel_id)]["last_message_id"] = str(message_id)
         self.save_messages()
         
-    def get_last_message_id(self, channel_id: str) -> str | None:
-        return self.last_message_ids.get(str(channel_id))
+    def get_last_message_id(self, target_channel_id: str) -> str | None:
+        if str(target_channel_id) in self.channel_messages:
+            return self.channel_messages[str(target_channel_id)].get("last_message_id")
+        return None
 
     # --- Danger Zone Clearing ---
 
@@ -217,9 +254,7 @@ class MigrationState:
 
     def clear_message_history(self):
         """Clears all message mappings and timestamps."""
-        self.message_map.clear()
-        self.last_message_ids.clear()
-        self.last_message_timestamps.clear()
+        self.channel_messages.clear()
         self.save_messages()
 
     def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
@@ -240,5 +275,4 @@ class MigrationState:
         self.state_file = new_folder / "state-migration.json"
         self.messages_file = new_folder / "message-tracker.json"
         
-        self.save_state()
-        self.save_messages()
+        self.load()
