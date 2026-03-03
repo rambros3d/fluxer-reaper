@@ -108,7 +108,9 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
         "threads": 0, 
         "attachments": 0,
         "first_message_url": "",
-        "last_message_url": ""
+        "last_message_url": "",
+        "last_message_content": "",
+        "last_message_author": ""
     }
     
     logger.info(f"Starting message migration: Discord #{source_channel_id} -> Stoat #{target_channel_id}")
@@ -220,6 +222,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
                 context.state.update_last_message_id(target_channel_id, str(msg.id))
                 stats["messages"] += 1
+                stats["last_message_content"] = content
+                stats["last_message_author"] = msg.author.display_name
                 context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
                 
                 # Periodic log

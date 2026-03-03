@@ -98,7 +98,13 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
 
 async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """Migrate messages for a specific channel and returns detailed statistics."""
-    stats = {"messages": 0, "threads": 0, "attachments": 0}
+    stats = {
+        "messages": 0, 
+        "threads": 0, 
+        "attachments": 0,
+        "last_message_content": "",
+        "last_message_author": ""
+    }
     
     logger.info(f"Starting message migration: Discord #{source_channel_id} -> Fluxer #{target_channel_id}")
     if after_message_id:
@@ -211,6 +217,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
                 context.state.update_last_message_id(target_channel_id, str(msg.id))
                 stats["messages"] += 1
+                stats["last_message_content"] = content
+                stats["last_message_author"] = msg.author.display_name
                 context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
 
                 # Periodic log

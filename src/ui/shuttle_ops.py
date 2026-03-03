@@ -790,6 +790,10 @@ class ShuttlePane(Container):
             total_threads = stats_analysis["threads"]
             total_attachments = stats_analysis["attachments"]
             
+            modal.set_status(f"Migrating: [cyan]#{source_channel.name}[/cyan] → [green]#{target_channel.get('name')}[/green]")
+            modal.write(f"[bold cyan]Migration Started:[/bold cyan] Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+            modal.write(f"[dim]Stats: {total_messages} messages, {total_threads} threads, {total_attachments} files[/dim]\n")
+            
             logger.info(f"Execution started for #{source_channel.name} -> {platform_name} @ {target_channel.get('name')}")
             self.engine.is_running = True
 
@@ -809,6 +813,13 @@ class ShuttlePane(Container):
                 
                 # optionally show a scrolling trace if the backend provided it
                 modal.write_live(f"Migrated message #{c_msgs}")
+
+                content = current_stats.get("last_message_content", "")
+                author = current_stats.get("last_message_author", "Unknown")
+                if content:
+                    # Clean up content for display (truncate long messages)
+                    disp_content = (content[:100] + '...') if len(content) > 100 else content
+                    modal.write(f"[bold]{author}:[/bold] {disp_content}")
 
             result = await migrate_mod.migrate_messages(
                 self.engine,
