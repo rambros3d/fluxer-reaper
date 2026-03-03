@@ -10,6 +10,7 @@ async def sync_roles_state(context: MigrationContext):
     """
     Scans Fluxer for roles matching Discord names and updates state file mappings.
     """
+    logger.info("Synchronizing role mappings with Fluxer...")
     discord_roles = await context.discord_reader.get_roles()
     fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_community_id)
     
@@ -39,6 +40,7 @@ async def sync_roles_state(context: MigrationContext):
 
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
+    logger.info("Starting permissions synchronization...")
     categories = await context.discord_reader.get_categories()
     channels = await context.discord_reader.get_channels()
     
@@ -56,7 +58,10 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
     current_idx = 0
     
     if total == 0:
+        logger.info("No mapped categories or channels found for permission sync.")
         return synced_info
+    
+    logger.info(f"Syncing permissions for {len(categories)} categories and {len(channels)} channels.")
 
     async def _sync_overwrites(discord_item, fluxer_id):
         """Helper to sync role overwrites for a given channel or category."""
@@ -120,6 +125,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, current_idx, total)
 
+    logger.info(f"Permissions sync complete: {len(synced_info['categories_synced'])} categories, {len(synced_info['channels_synced'])} channels.")
     return synced_info
 
 
@@ -133,12 +139,14 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
     total = len(roles)
     cloned_role_names = []
     
-    if total == 0:
-        return cloned_role_names
+    logger.info(f"Migrating {total} roles to Fluxer...")
 
     for idx, role in enumerate(roles):
-        if not context.is_running: break
+        if not context.is_running:
+            logger.warning("Role migration interrupted.")
+            break
             
+        logger.debug(f"Creating role: {role.name}")
         fluxer_id = await context.fluxer_writer.create_role(
             name=role.name,
             color=role.color.value,

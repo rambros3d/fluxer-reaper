@@ -365,17 +365,20 @@ class OptionSelectModal(ModalScreen[list[str]]):
     OptionSelectModal { align: center middle; }
     #opt_dialog {
         width: 60;
-        height: auto;
+        height: 80%;
         border: solid green;
         background: $surface;
         padding: 1 2;
     }
     #opt_title { text-style: bold; margin-bottom: 1; text-align: center; width: 100%; }
-    #opt_scroll { margin-bottom: 1; border: solid $primary; max-height: 12; padding: 1; }
+    #opt_scroll { margin-bottom: 1; height: 1fr; overflow-y: auto; }
     #opt_buttons { height: auto; }
     #opt_buttons Button { width: 1fr; margin: 0 1; }
     #opt_batch_buttons { height: auto; margin-bottom: 1; }
     #opt_batch_buttons Button { width: 1fr; margin: 0 1; }
+    RadioButton { background: transparent; }
+    RadioButton:focus { background: $accent 20%; }
+
     """
 
     def __init__(self, title: str, options: list[tuple[str, str]]):
@@ -391,7 +394,7 @@ class OptionSelectModal(ModalScreen[list[str]]):
                 yield Button("Select All", id="btn_opt_all")
                 yield Button("Deselect All", id="btn_opt_none")
             
-            with VerticalScroll(id="opt_scroll"):
+            with Vertical(id="opt_scroll"):
                 for opt_id, label in self._options:
                     yield RadioButton(label, id=f"opt_{opt_id}")
             

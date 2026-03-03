@@ -11,6 +11,7 @@ async def sync_roles_state(context: MigrationContext):
     """
     Scans Stoat for roles matching Discord names and updates state file mappings.
     """
+    logger.info("Synchronizing role mappings with Stoat...")
     discord_roles = await context.discord_reader.get_roles()
     server = await context.stoat_writer._get_server()
     stoat_roles = list(server.roles.values())
@@ -41,6 +42,7 @@ async def sync_roles_state(context: MigrationContext):
 
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
+    logger.info("Starting permissions synchronization for Stoat...")
     discord_categories = await context.discord_reader.get_categories()
     discord_channels = await context.discord_reader.get_channels()
     
@@ -58,7 +60,10 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
     current_idx = 0
     
     if total == 0:
+        logger.info("No mapped categories or channels found for Stoat permission sync.")
         return synced_info
+    
+    logger.info(f"Syncing permissions for {len(mapped_categories)} categories and {len(mapped_channels)} channels to Stoat.")
 
     cat_map = {cat.id: cat for cat in discord_categories}
     cat_names = {cat.id: cat.name for cat in discord_categories}
@@ -160,6 +165,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
         await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
 
 
+    logger.info(f"Stoat permissions sync complete: {len(synced_info['categories_synced'])} categories, {len(synced_info['channels_synced'])} channels.")
     return synced_info
 
 
@@ -176,20 +182,17 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
     except Exception as e:
         logger.error(f"Failed to sync default permissions: {e}")
 
-    roles = await context.discord_reader.get_roles()
-    
-    if not force:
-        roles = [r for r in roles if not context.state.get_target_role_id(str(r.id))]
-
     total = len(roles)
     cloned_role_names = []
     
-    if total == 0:
-        return cloned_role_names
+    logger.info(f"Migrating {total} roles to Stoat...")
 
     for idx, role in enumerate(roles):
-        if not context.is_running: break
+        if not context.is_running:
+            logger.warning("Stoat role migration interrupted.")
+            break
             
+        logger.debug(f"Creating role in Stoat: {role.name}")
         stoat_id = await context.stoat_writer.create_role(
             name=role.name,
             color=role.color.value,

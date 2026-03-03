@@ -99,16 +99,16 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
 
 async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """Migrate messages for a specific channel and returns detailed statistics."""
-    stats = {
-        "messages": 0,
-        "attachments": 0,
-        "threads": 0,
-        "first_message_url": None,
-        "last_message_url": None
-    }
+    stats = {"messages": 0, "threads": 0, "attachments": 0}
+    
+    logger.info(f"Starting message migration: Discord #{source_channel_id} -> Fluxer #{target_channel_id}")
+    if after_message_id:
+        logger.info(f"Resuming migration from after message ID: {after_message_id}")
+
     try:
         async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
             if not context.is_running:
+                logger.warning("Migration interrupted by user (is_running=False)")
                 break
                 
 
@@ -190,6 +190,10 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 reply_to_fluxer_id = None
                 if msg.reference and msg.reference.message_id:
                     reply_to_fluxer_id = context.state.get_fluxer_message_id(target_channel_id, str(msg.reference.message_id))
+                    if reply_to_fluxer_id:
+                        logger.debug(f"Detected reply to Discord ID {msg.reference.message_id} -> Fluxer ID {reply_to_fluxer_id}")
+                    else:
+                        logger.debug(f"Reply target Discord ID {msg.reference.message_id} not found in current session map.")
                 
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,
@@ -209,6 +213,10 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 context.state.update_last_message_id(target_channel_id, str(msg.id))
                 stats["messages"] += 1
                 context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
+
+                # Periodic log
+                if stats["messages"] % 50 == 0:
+                    logger.info(f"Progress: Migrated {stats['messages']}/{total_to_process} messages in this channel.")
 
                 # Check for associated thread (Normal case: parent message is migrated)
                 if hasattr(msg, 'thread') and msg.thread:

@@ -319,6 +319,7 @@ class ShuttlePane(Container):
             choice = await modal.phase_wait_confirm()
             if choice == "btn_back":
                 modal.dismiss()
+                self._open_clone_menu()
                 return
             elif choice == "btn_main_menu":
                 modal.dismiss()
@@ -358,6 +359,7 @@ class ShuttlePane(Container):
             choice = await modal.phase_wait_confirm()
             if choice == "btn_back":
                 modal.dismiss()
+                self._open_sync_menu()
                 return
             elif choice == "btn_main_menu":
                 modal.dismiss()
@@ -575,12 +577,14 @@ class ShuttlePane(Container):
                 async def update_scan(current_stats):
                     modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
 
+                logger.info(f"Analyzing message history for Discord #{source_channel.name}...")
                 stats_analysis = await migrate_mod.analyze_migration(
                     self.engine,
                     source_channel_id=source_channel.id,
                     after_message_id=int(last_migrated) if last_migrated else None,
                     progress_callback=update_scan,
                 )
+                logger.info(f"Analysis complete: {stats_analysis['messages']} new messages found.")
                 self.engine.is_running = False
 
                 # Set initial total stats for the confirmation block
@@ -599,6 +603,7 @@ class ShuttlePane(Container):
 
                 # Phase 2: Confirmation
                 choice = await modal.phase_wait_confirm(show_continue=has_previous)
+                logger.info(f"User confirmation choice: {choice}")
                 if choice == "btn_back":
                     modal.dismiss()
                     continue # Return to channel picker
@@ -611,11 +616,15 @@ class ShuttlePane(Container):
                     
                 after_id = None
                 if choice == "btn_continue" and last_migrated:
+                    logger.info("Proceeding with 'Continue Migration' (incremental sink).")
                     after_id = int(last_migrated)
                 elif choice == "btn_start_id":
                     # Fallback to full for now since we don't have an ID input dialog yet
                     modal.write("[yellow]Custom Message ID start not fully implemented, starting from beginning.[/yellow]")
+                    logger.info("Proceeding with 'Start from ID' (fallback to begin).")
                     after_id = None
+                else:
+                    logger.info("Proceeding with 'Start from First' (clean sink).")
                 
                 # If we are here, we are proceeding with migration
                 break
@@ -629,6 +638,7 @@ class ShuttlePane(Container):
             total_threads = stats_analysis["threads"]
             total_attachments = stats_analysis["attachments"]
             
+            logger.info(f"Execution started for #{source_channel.name} -> {platform_name} @ {target_channel.get('name')}")
             self.engine.is_running = True
 
             async def update_msg(current_stats):
@@ -684,164 +694,116 @@ class ShuttlePane(Container):
 
     def _open_danger_menu(self):
         options = [
-            ("dz_del_channels", "Delete ALL Channels & Categories", "error"),
-            ("dz_reset_perms", "Reset ALL Channel Permissions", "error"),
-            ("dz_del_roles", "Delete ALL Roles", "error"),
-            ("dz_del_assets", "Delete ALL Emojis & Stickers", "error"),
+            ("dz_del_channels", "Delete ALL Channels & Categories"),
+            ("dz_reset_perms", "Reset ALL Channel Permissions"),
+            ("dz_del_roles", "Delete ALL Roles"),
+            ("dz_del_assets", "Delete ALL Emojis & Stickers"),
         ]
-        def on_result(choice):
-            if choice == "dz_del_channels":
-                self._confirm_danger("Delete ALL channels and categories? This is IRREVERSIBLE.", self.run_dz_delete_channels)
-            elif choice == "dz_reset_perms":
-                self._confirm_danger("Reset ALL channel permissions? This is IRREVERSIBLE.", self.run_dz_reset_perms)
-            elif choice == "dz_del_roles":
-                self._confirm_danger("Delete ALL roles? This is IRREVERSIBLE.", self.run_dz_delete_roles)
-            elif choice == "dz_del_assets":
-                self._confirm_danger("Delete ALL emojis and stickers? This is IRREVERSIBLE.", self.run_dz_delete_assets)
-        self.app.push_screen(SubMenuModal("⚠ DANGER ZONE ⚠", options), on_result)
+        def on_result(selections: list[str] | None):
+            if selections:
+                self.run_batch_danger(selections)
+        self.app.push_screen(OptionSelectModal("⚠ DANGER ZONE ⚠", options), on_result)
 
-    def _confirm_danger(self, message: str, callback):
-        async def do_confirm():
-            modal = ProgressScreen()
-            self.app.push_screen(modal)
-            await asyncio.sleep(0.1)
-            
-            modal.set_status(f"[bold red]DANGER:[/bold red] {message}")
+    @work(exclusive=True)
+    async def run_batch_danger(self, selections: list[str]) -> None:
+        modal = ProgressScreen()
+        self.app.push_screen(modal)
+        await asyncio.sleep(0.1)
+        try:
+            modal.set_status(f"Awaiting Confirmation for {len(selections)} Destructive Operations...")
             modal.write("[bold red]WARNING: THIS WILL DELETE DATA PERMANENTLY! MUST PROCEED TO CONTINUE.[/bold red]")
             
             choice = await modal.phase_wait_confirm()
-            modal.dismiss()
-            if choice == "btn_start_first":
-                callback()
+            if choice == "btn_back":
+                modal.dismiss()
+                self._open_danger_menu()
+                return
             elif choice == "btn_main_menu":
+                modal.dismiss()
                 self.app.switch_screen("config_selection")
+                return
 
-        asyncio.create_task(do_confirm())
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
+            self.engine.is_running = True
+            await self.engine.start_target_only()
 
-    @work(exclusive=True)
-    async def run_dz_delete_channels(self) -> None:
+            for sel in selections:
+                if not self.engine.is_running: break
+                if sel == "dz_del_channels":
+                    await self._logic_dz_delete_channels(modal)
+                elif sel == "dz_reset_perms":
+                    await self._logic_dz_reset_perms(modal)
+                elif sel == "dz_del_roles":
+                    await self._logic_dz_delete_roles(modal)
+                elif sel == "dz_del_assets":
+                    await self._logic_dz_delete_assets(modal)
+            
+            modal.phase_report("Danger Zone Operations Complete")
+            modal.write("[bold green]All selected destructive operations finished.[/bold green]")
+        except Exception as e:
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Danger Zone Batch", "error")
+        finally:
+            self.engine.is_running = False
+            await self.engine.close_target_only()
+
+    async def _logic_dz_delete_channels(self, modal: ProgressScreen) -> None:
         if self.target_platform == "fluxer":
             from src.fluxer.danger_zone import danger_delete_all_channels
         else:
             from src.stoat.danger_zone import danger_delete_all_channels
 
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
-        modal.phase_progress()
+        modal.set_status("[red]Deleting channels...")
+        async def on_deleted(name, current, total):
+            modal.set_status(f"[red]Deleting: {name}")
+            modal.set_progress(current, total)
 
-        try:
-            modal.set_status("[red]Deleting channels...")
-            await self.engine.start_target_only()
+        count = await danger_delete_all_channels(self.engine, progress_callback=on_deleted)
+        modal.write(f"[bold green]Success! {count} channels/categories deleted.[/bold green]")
+        await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Deleted {count} channels and categories.")
 
-            async def on_deleted(name, current, total):
-                modal.set_status(f"[red]Deleting: {name}")
-                modal.set_progress(current, total)
-
-            count = await danger_delete_all_channels(self.engine, progress_callback=on_deleted)
-            
-            modal.phase_report("Danger Zone: Channels Wiped")
-            modal.write(f"[bold green]Success! {count} channels/categories deleted.[/bold green]")
-            await log_audit_event(self.engine, "Danger Zone: Channels Wiped", f"Deleted {count} channels and categories.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Delete Channels", "error")
-        finally:
-            await self.engine.close_target_only()
-
-    @work(exclusive=True)
-    async def run_dz_reset_perms(self) -> None:
+    async def _logic_dz_reset_perms(self, modal: ProgressScreen) -> None:
         if self.target_platform == "fluxer":
             from src.fluxer.danger_zone import danger_reset_channel_permissions
         else:
             from src.stoat.danger_zone import danger_reset_channel_permissions
 
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
-        modal.phase_progress()
+        modal.set_status("[red]Resetting permissions...")
+        async def on_reset(name, current, total):
+            modal.set_status(f"[red]Resetting: {name}")
+            modal.set_progress(current, total)
 
-        try:
-            modal.set_status("[red]Resetting permissions...")
-            await self.engine.start_target_only()
+        count = await danger_reset_channel_permissions(self.engine, progress_callback=on_reset)
+        modal.write(f"[bold green]Success! Permissions reset on {count} items.[/bold green]")
+        await log_audit_event(self.engine, "Danger Zone: Permissions Wiped", f"Reset permissions on {count} items.")
 
-            async def on_reset(name, current, total):
-                modal.set_status(f"[red]Resetting: {name}")
-                modal.set_progress(current, total)
-
-            count = await danger_reset_channel_permissions(self.engine, progress_callback=on_reset)
-            
-            modal.phase_report("Danger Zone: Permissions Wiped")
-            modal.write(f"[bold green]Success! Permissions reset on {count} items.[/bold green]")
-            await log_audit_event(self.engine, "Danger Zone: Permissions Wiped", f"Reset permissions on {count} items.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Wipe Permissions", "error")
-        finally:
-            await self.engine.close_target_only()
-
-    @work(exclusive=True)
-    async def run_dz_delete_roles(self) -> None:
+    async def _logic_dz_delete_roles(self, modal: ProgressScreen) -> None:
         if self.target_platform == "fluxer":
             from src.fluxer.danger_zone import danger_delete_all_roles
         else:
             from src.stoat.danger_zone import danger_delete_all_roles
 
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
-        modal.phase_progress()
+        modal.set_status("[red]Deleting roles...")
+        async def on_deleted(name, current, total):
+            modal.set_status(f"[red]Deleting role: {name}")
+            modal.set_progress(current, total)
 
-        try:
-            modal.set_status("[red]Deleting roles...")
-            await self.engine.start_target_only()
+        count = await danger_delete_all_roles(self.engine, progress_callback=on_deleted)
+        modal.write(f"[bold green]Success! {count} roles deleted.[/bold green]")
+        await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Deleted {count} roles.")
 
-            async def on_deleted(name, current, total):
-                modal.set_status(f"[red]Deleting role: {name}")
-                modal.set_progress(current, total)
-
-            count = await danger_delete_all_roles(self.engine, progress_callback=on_deleted)
-            
-            modal.phase_report("Danger Zone: Roles Wiped")
-            modal.write(f"[bold green]Success! {count} roles deleted.[/bold green]")
-            await log_audit_event(self.engine, "Danger Zone: Roles Wiped", f"Deleted {count} roles.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Wipe Roles", "error")
-        finally:
-            await self.engine.close_target_only()
-
-    @work(exclusive=True)
-    async def run_dz_delete_assets(self) -> None:
+    async def _logic_dz_delete_assets(self, modal: ProgressScreen) -> None:
         if self.target_platform == "fluxer":
             from src.fluxer.danger_zone import danger_delete_all_emojis_and_stickers
         else:
             from src.stoat.danger_zone import danger_delete_all_emojis_and_stickers
 
-        modal = ProgressScreen()
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-        modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
-        modal.phase_progress()
+        modal.set_status("[red]Deleting assets...")
+        async def on_deleted(name, asset_type, current, total):
+            modal.set_status(f"[red]Deleting {asset_type}: {name}")
+            modal.set_progress(current, total)
 
-        try:
-            modal.set_status("[red]Deleting assets...")
-            await self.engine.start_target_only()
-
-            async def on_deleted(name, asset_type, current, total):
-                modal.set_status(f"[red]Deleting {asset_type}: {name}")
-                modal.set_progress(current, total)
-
-            counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_deleted)
-            
-            modal.phase_report("Danger Zone: Assets Wiped")
-            modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
-            await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Wipe Assets", "error")
-        finally:
-            await self.engine.close_target_only()
+        counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_deleted)
+        modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
+        await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")

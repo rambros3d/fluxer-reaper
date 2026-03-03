@@ -10,6 +10,7 @@ async def sync_assets_state(context: MigrationContext):
     """
     Scans Fluxer for emojis and stickers matching Discord names and updates state file mappings.
     """
+    logger.info("Synchronizing asset mappings (emojis/stickers) with Fluxer...")
     discord_emojis = await context.discord_reader.get_emojis()
     discord_stickers = await context.discord_reader.get_stickers()
     
@@ -80,14 +81,16 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
     total = len(objs)
     cloned_assets: dict[str, dict[str, str]] = {"Emoji": {}, "Sticker": {}}
     
-    if total == 0:
-        return cloned_assets
+    logger.info(f"Migrating {total} assets to Fluxer (Types: {', '.join(types_to_include)})...")
 
     for idx, (obj, obj_type) in enumerate(objs):
-        if not context.is_running: break
+        if not context.is_running:
+            logger.warning("Asset migration interrupted.")
+            break
             
         try:
             if obj_type == "Emoji":
+                logger.debug(f"Migrating emoji: {obj.name}")
                 img_data = await context.discord_reader.download_emoji(obj)
                 fluxer_id = await context.fluxer_writer.create_emoji(
                     name=obj.name,
@@ -97,6 +100,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
                     context.state.set_emoji_mapping(str(obj.id), fluxer_id)
                     cloned_assets["Emoji"][obj.name] = fluxer_id
             else:
+                logger.debug(f"Migrating sticker: {obj.name}")
                 img_data = await context.discord_reader.download_sticker(obj)
                 fluxer_id = await context.fluxer_writer.create_sticker(
                     name=obj.name,

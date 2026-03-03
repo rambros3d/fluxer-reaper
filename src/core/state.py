@@ -45,27 +45,33 @@ class MigrationState:
 
         # 2. Load separate messages file
         if self.messages_file and self.messages_file.exists():
-            with open(self.messages_file, "r", encoding="utf-8") as f:
-                msg_data = json.load(f)
-                
-                # Check for new schema (nested under 'channels')
-                if "channels" in msg_data:
-                    self.channel_messages = msg_data.get("channels", {})
-                else:
-                    # Legacy schema detection & conversion to a default 'unknown_channel' just in case,
-                    # though new migrations shouldn't hit this based on previous removals.
-                    legacy_map = msg_data.get("messages", {})
-                    legacy_ids = msg_data.get("last_message_ids", {})
-                    legacy_times = msg_data.get("last_message_timestamps", {})
+            logger.info(f"Loading messages from {self.messages_file.name}")
+            try:
+                with open(self.messages_file, "r", encoding="utf-8") as f:
+                    msg_data = json.load(f)
                     
-                    if legacy_map or legacy_ids or legacy_times:
-                        self.channel_messages = {
-                            "legacy_migrated_channel": {
-                                "message_map": legacy_map,
-                                "last_message_id": list(legacy_ids.values())[-1] if legacy_ids else "",
-                                "last_message_timestamp": list(legacy_times.values())[-1] if legacy_times else ""
+                    # Check for new schema (nested under 'channels')
+                    if "channels" in msg_data:
+                        self.channel_messages = msg_data.get("channels", {})
+                        logger.debug(f"Loaded {len(self.channel_messages)} tracked channels.")
+                    else:
+                        logger.warning("Legacy schema or empty tracker detected in messages file.")
+                        # Legacy schema detection & conversion to a default 'unknown_channel' just in case,
+                        # though new migrations shouldn't hit this based on previous removals.
+                        legacy_map = msg_data.get("messages", {})
+                        legacy_ids = msg_data.get("last_message_ids", {})
+                        legacy_times = msg_data.get("last_message_timestamps", {})
+                        
+                        if legacy_map or legacy_ids or legacy_times:
+                            self.channel_messages = {
+                                "legacy_migrated_channel": {
+                                    "message_map": legacy_map,
+                                    "last_message_id": list(legacy_ids.values())[-1] if legacy_ids else "",
+                                    "last_message_timestamp": list(legacy_times.values())[-1] if legacy_times else ""
+                                }
                             }
-                        }
+            except Exception as e:
+                logger.error(f"Failed to load messages file: {e}")
         
 
 
@@ -73,6 +79,8 @@ class MigrationState:
         """Saves only the core server configuration (channels, roles, emojis)."""
         if not self.state_file:
             return
+            
+        logger.debug(f"Saving state to {self.state_file.name}")
         data = {
             "channels": self.channel_map,
             "categories": self.category_map,
@@ -81,18 +89,26 @@ class MigrationState:
             "stickers": self.sticker_map,
             "audit_log_channel": self.audit_log_channel
         }
-        with open(self.state_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(self.state_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            logger.error(f"Failed to save state file: {e}")
 
     def save_messages(self):
         """Saves only the message tracking data."""
         if not self.messages_file:
             return
+            
+        logger.debug(f"Saving messages to {self.messages_file.name}")
         data = {
             "channels": self.channel_messages
         }
-        with open(self.messages_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4)
+        try:
+            with open(self.messages_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            logger.error(f"Failed to save messages file: {e}")
 
     # --- Type Specific Getters/Setters ---
 
@@ -260,11 +276,13 @@ class MigrationState:
     def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
         base = Path(base_dir) if base_dir else Path(".")
         new_folder = base / f"{clean_name}-{server_id}"
+        logger.info(f"Setting active migration folder: {new_folder}")
         
         # If we have an existing folder that is different, rename it
         if self.state_file and self.state_file.parent.exists() and self.state_file.parent != new_folder:
             # Check if it's actually in a server-specific folder (not roots)
             if self.state_file.parent.name.endswith(f"-{server_id}"):
+                logger.info(f"Renaming active folder from {self.state_file.parent.name} to {new_folder.name}")
                 try:
                     self.state_file.parent.rename(new_folder)
                 except Exception as e:
@@ -275,4 +293,5 @@ class MigrationState:
         self.state_file = new_folder / "state-migration.json"
         self.messages_file = new_folder / "message-tracker.json"
         
+        logger.debug("Re-loading data from new folder location.")
         self.load()

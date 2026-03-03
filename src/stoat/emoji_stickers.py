@@ -10,6 +10,7 @@ async def sync_assets_state(context: MigrationContext):
     """
     Scans Stoat for emojis matching Discord names and updates state file mappings.
     """
+    logger.info("Synchronizing asset mappings (emojis) with Stoat...")
     discord_emojis = await context.discord_reader.get_emojis()
     # Stickers not supported on Stoat based on current library investigation
     
@@ -74,11 +75,16 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
     if total == 0:
         return cloned_assets
 
+    logger.info(f"Migrating {total} assets to Stoat (Types: {', '.join(types_to_include)})...")
+
     for idx, (obj, obj_type) in enumerate(objs):
-        if not context.is_running: break
+        if not context.is_running:
+            logger.warning("Stoat asset migration interrupted.")
+            break
             
         try:
             if obj_type == "Emoji":
+                logger.debug(f"Migrating emoji to Stoat: {obj.name}")
                 img_data = await context.discord_reader.download_emoji(obj)
                 stoat_id = await context.writer.create_emoji(
                     name=obj.name,

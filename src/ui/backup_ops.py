@@ -63,12 +63,12 @@ class BackupPane(Container):
 
     # ── validation ────────────────────────────────────────────────────────
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def _validate(self) -> None:
         fillers = ["DISCORD_BOT_TOKEN", "000000000000000000", "DISCORD_SERVER_ID", "", None]
         d_token = self.config.discord_bot_token
         if d_token in fillers or self.config.discord_server_id in fillers:
-            self.app.call_from_thread(self._update_ui, "[red]NOT CONFIGURED[/red]", "", "", False)
+            self._update_ui("[red]NOT CONFIGURED[/red]", "", "", False)
             return
         try:
             res = await self.engine.discord_reader.validate()
@@ -83,9 +83,9 @@ class BackupPane(Container):
             if info:
                 backup_text = f"Last backup: [cyan]{info}[/cyan]"
 
-            self.app.call_from_thread(self._update_ui, s_text, b_text, backup_text, valid)
+            self._update_ui(s_text, b_text, backup_text, valid)
         except Exception as e:
-            self.app.call_from_thread(self._update_ui, f"[red]Error: {e}[/red]", "", "", False)
+            self._update_ui(f"[red]Error: {e}[/red]", "", "", False)
 
     def _get_backup_info(self) -> str | None:
         profile_file = Path(f"Reaper-{self.cfg_name}") / "server_profile.json"
@@ -121,49 +121,49 @@ class BackupPane(Container):
 
     # ── workers ───────────────────────────────────────────────────────────
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_profile(self) -> None:
         modal = ProgressScreen()
-        self.app.call_from_thread(self.app.push_screen, modal)
+        self.app.push_screen(modal)
         await asyncio.sleep(0.1)
-        self.app.call_from_thread(modal.phase_progress)
+        modal.phase_progress()
 
         try:
-            self.app.call_from_thread(modal.set_status, "Starting readers...")
+            modal.set_status("Starting readers...")
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
-            self.app.call_from_thread(modal.write, "[yellow]Backing up server profile & skeleton...[/yellow]")
+            modal.write("[yellow]Backing up server profile & skeleton...[/yellow]")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()
 
-            self.app.call_from_thread(modal.write, "Exporting structure...")
+            modal.write("Exporting structure...")
             _, cat_count, chan_count = await self.exporter.export_channels_structure()
 
-            self.app.call_from_thread(modal.write, "Exporting assets...")
+            modal.write("Exporting assets...")
             e_count, s_count = await self.exporter.export_assets()
 
-            self.app.call_from_thread(modal.write, f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
-            self.app.call_from_thread(modal.write, f"- {e_count} emojis, {s_count} stickers.")
-            self.app.call_from_thread(modal.phase_report, "Profile Backup")
+            modal.write(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+            modal.write(f"- {e_count} emojis, {s_count} stickers.")
+            modal.phase_report("Profile Backup")
 
         except discord.Forbidden as e:
-            self.app.call_from_thread(modal.write, f"[bold red]Backup failed: {e}[/bold red]")
-            self.app.call_from_thread(modal.phase_report, "Profile Backup", "error")
+            modal.write(f"[bold red]Backup failed: {e}[/bold red]")
+            modal.phase_report("Profile Backup", "error")
         except Exception as e:
-            self.app.call_from_thread(modal.write, f"[bold red]Error: {e}[/bold red]")
-            self.app.call_from_thread(modal.phase_report, "Profile Backup", "error")
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Profile Backup", "error")
         finally:
             await self.engine.close_connections()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_messages(self) -> None:
         modal_prog = ProgressScreen()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
 
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Fetching channels...")
+            modal_prog.set_status("Fetching channels...")
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
@@ -178,8 +178,8 @@ class BackupPane(Container):
             ]
 
             if not eligible_channels:
-                self.app.call_from_thread(modal_prog.write, "[yellow]No text/news channels found to backup.[/yellow]")
-                self.app.call_from_thread(modal_prog.allow_close)
+                modal_prog.write("[yellow]No text/news channels found to backup.[/yellow]")
+                modal_prog.allow_close()
                 return
 
             any_found = False
@@ -189,7 +189,7 @@ class BackupPane(Container):
                     any_found = True
                     backed_up_ids.add(chan.id)
 
-            self.app.call_from_thread(self.app.pop_screen)
+            self.app.pop_screen()
 
             while True:
                 loop = asyncio.get_running_loop()
@@ -199,8 +199,7 @@ class BackupPane(Container):
                     if not future.done():
                         future.set_result(reply)
 
-                self.app.call_from_thread(
-                    self.app.push_screen,
+                self.app.push_screen(
                     ChannelSelectScreen(eligible_channels, cat_map, backed_up_ids, any_found),
                     check_channels,
                 )
@@ -214,69 +213,69 @@ class BackupPane(Container):
                 selected_channels = [c for c in eligible_channels if c.id in selected_ids]
 
                 # Phase 2: Confirmation
-                self.app.call_from_thread(self.app.push_screen, modal_prog)
+                self.app.push_screen(modal_prog)
                 await asyncio.sleep(0.1)
                 
                 msg = "Sync existing backups" if not force_overwrite else "Overwriting existing backups"
-                self.app.call_from_thread(modal_prog.set_status, f"Awaiting Confirmation to backup [bold]{len(selected_channels)}[/bold] channels...")
-                self.app.call_from_thread(modal_prog.show_info, f"[cyan]{msg}[/cyan]", f"Targets: {', '.join([c.name for c in selected_channels[:3]])}{'...' if len(selected_channels) > 3 else ''}")
+                modal_prog.set_status(f"Awaiting Confirmation to backup [bold]{len(selected_channels)}[/bold] channels...")
+                modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {', '.join([c.name for c in selected_channels[:3]])}{'...' if len(selected_channels) > 3 else ''}")
 
                 choice = await modal_prog.phase_wait_confirm()
                 if choice == "btn_back":
-                    self.app.call_from_thread(modal_prog.dismiss)
+                    modal_prog.dismiss()
                     continue
                 elif choice == "btn_main_menu":
-                    self.app.call_from_thread(modal_prog.dismiss)
-                    self.app.call_from_thread(self.app.switch_screen, "config_selection")
+                    modal_prog.dismiss()
+                    self.app.switch_screen("config_selection")
                     return
                 
                 # Proceed to progress
                 break
 
-            self.app.call_from_thread(modal_prog.phase_progress)
+            modal_prog.phase_progress()
 
             total_chans = len(selected_channels)
-            self.app.call_from_thread(modal_prog.set_status, "Backing up messages...")
-            self.app.call_from_thread(modal_prog.write, f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
+            modal_prog.set_status("Backing up messages...")
+            modal_prog.write(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
 
             for chan in selected_channels:
                 backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
                 is_sync = backup_exists and not force_overwrite
 
                 label = "Syncing Backup" if is_sync else "Backing up"
-                self.app.call_from_thread(modal_prog.write, f"[cyan]{label}: {chan.name}[/cyan]")
+                modal_prog.write(f"[cyan]{label}: {chan.name}[/cyan]")
 
                 async def update_msg_count(name, count):
-                    self.app.call_from_thread(modal_prog.set_status, f"{name}: {count} messages")
+                    modal_prog.set_status(f"{name}: {count} messages")
 
                 await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=force_overwrite)
                 await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=force_overwrite)
 
-                self.app.call_from_thread(modal_prog.write, f"[green]Completed: {chan.name}[/green]")
+                modal_prog.write(f"[green]Completed: {chan.name}[/green]")
 
             await self.exporter.export_metadata()
-            self.app.call_from_thread(modal_prog.write, "[bold green]Message backup complete![/bold green]")
-            self.app.call_from_thread(modal_prog.phase_report, "Message Backup")
+            modal_prog.write("[bold green]Message backup complete![/bold green]")
+            modal_prog.phase_report("Message Backup")
 
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write, f"[bold red]Message backup failed: {e}[/bold red]")
-            self.app.call_from_thread(modal_prog.phase_report, "Message Backup", "error")
+            modal_prog.write(f"[bold red]Message backup failed: {e}[/bold red]")
+            modal_prog.phase_report("Message Backup", "error")
         finally:
             await self.engine.close_connections()
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True)
     async def run_backup_sync(self) -> None:
         modal_prog = ProgressScreen()
-        self.app.call_from_thread(self.app.push_screen, modal_prog)
+        self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
-        self.app.call_from_thread(modal_prog.phase_progress)
+        modal_prog.phase_progress()
 
         try:
-            self.app.call_from_thread(modal_prog.set_status, "Starting sync...")
+            modal_prog.set_status("Starting sync...")
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
-            self.app.call_from_thread(modal_prog.write, "Updating structure...")
+            modal_prog.write("Updating structure...")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()
             await self.exporter.export_channels_structure()
@@ -294,25 +293,25 @@ class BackupPane(Container):
             ]
 
             if not selected_channels:
-                self.app.call_from_thread(modal_prog.write, "[yellow]No existing backups found to sync.[/yellow]")
+                modal_prog.write("[yellow]No existing backups found to sync.[/yellow]")
             else:
-                self.app.call_from_thread(modal_prog.write, f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
+                modal_prog.write(f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
                 for chan in selected_channels:
-                    self.app.call_from_thread(modal_prog.write, f"[cyan]Syncing: {chan.name}[/cyan]")
+                    modal_prog.write(f"[cyan]Syncing: {chan.name}[/cyan]")
 
                     async def update_msg_count(name, count):
-                        self.app.call_from_thread(modal_prog.set_status, f"{name}: {count} messages")
+                        modal_prog.set_status(f"{name}: {count} messages")
 
                     await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=False)
                     await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=False)
-                    self.app.call_from_thread(modal_prog.write, f"[green]Synced: {chan.name}[/green]")
+                    modal_prog.write(f"[green]Synced: {chan.name}[/green]")
 
             await self.exporter.export_metadata()
-            self.app.call_from_thread(modal_prog.write, "[bold green]Sync operation complete![/bold green]")
-            self.app.call_from_thread(modal_prog.phase_report, "Backup Sync")
+            modal_prog.write("[bold green]Sync operation complete![/bold green]")
+            modal_prog.phase_report("Backup Sync")
 
         except Exception as e:
-            self.app.call_from_thread(modal_prog.write, f"[bold red]Sync failed: {e}[/bold red]")
-            self.app.call_from_thread(modal_prog.phase_report, "Backup Sync", "error")
+            modal_prog.write(f"[bold red]Sync failed: {e}[/bold red]")
+            modal_prog.phase_report("Backup Sync", "error")
         finally:
             await self.engine.close_connections()

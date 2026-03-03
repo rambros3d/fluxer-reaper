@@ -14,10 +14,12 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
     if "name" in components:
         try:
             name = metadata.get("name")
+            logger.info(f"Syncing server name: {name}")
             await context.writer.update_guild_metadata(name=name)
             cloned_data["name"] = name
             await progress_callback("Server Name", "DONE")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to sync server name: {e}")
             await progress_callback("Server Name", "ERROR")
 
     # 2. Sync Icon
@@ -28,12 +30,15 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
                 icon_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.icon)
             
             if icon_bytes:
+                logger.info(f"Uploading server icon ({len(icon_bytes)} bytes)...")
                 await context.writer.update_guild_metadata(icon=icon_bytes)
                 cloned_data["icon"] = icon_bytes
                 await progress_callback("Server Icon", "DONE")
             else:
+                logger.info("No server icon found to sync.")
                 await progress_callback("Server Icon", "SKIP")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to sync server icon: {e}")
             await progress_callback("Server Icon", "ERROR")
         
     # 3. Sync Banner
@@ -44,12 +49,15 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
                 banner_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.banner)
             
             if banner_bytes:
+                logger.info(f"Uploading server banner ({len(banner_bytes)} bytes)...")
                 await context.writer.update_guild_metadata(banner=banner_bytes)
                 cloned_data["banner"] = banner_bytes
                 await progress_callback("Server Banner", "DONE")
             else:
+                logger.info("No server banner found to sync.")
                 await progress_callback("Server Banner", "SKIP")
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to sync server banner: {e}")
             await progress_callback("Server Banner", "ERROR")
             
     return cloned_data

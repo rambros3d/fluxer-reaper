@@ -31,11 +31,15 @@ class MigrationContext:
         messages_file: str | Path = ""
         
         if server_id != "unconfigured":
+            logger.info(f"Probing for existing migration folder for Server ID: {server_id}")
             for d in Path(".").iterdir():
                 if d.is_dir() and d.name.endswith(f"-{server_id}"):
+                    logger.info(f"Targeting existing folder: {d.name}")
                     state_file = d / "state-migration.json"
                     messages_file = d / "message-tracker.json"
                     break
+            else:
+                logger.info(f"No existing folder found for {server_id}. A new one will be created upon first state change.")
 
         self.state = MigrationState(
             state_file=state_file,
