@@ -68,7 +68,13 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
     """
     Scans channel history to count messages, threads, and attachments.
     """
-    stats = {"messages": 0, "threads": 0, "attachments": 0}
+    stats = {
+        "messages": 0, 
+        "threads": 0, 
+        "attachments": 0,
+        "first_message_url": "",
+        "last_message_url": ""
+    }
     
     async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
         if not context.is_running:
@@ -97,7 +103,13 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
 
 async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, Any]:
     """Migrate messages for a specific channel using Stoat masquerade for author impersonation."""
-    stats = {"messages": 0, "threads": 0, "attachments": 0}
+    stats = {
+        "messages": 0, 
+        "threads": 0, 
+        "attachments": 0,
+        "first_message_url": "",
+        "last_message_url": ""
+    }
     
     logger.info(f"Starting message migration: Discord #{source_channel_id} -> Stoat #{target_channel_id}")
     if after_message_id:

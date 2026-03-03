@@ -181,6 +181,11 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
     except Exception as e:
         logger.error(f"Failed to sync default permissions: {e}")
 
+    # 2. Fetch and filter roles
+    roles = await context.discord_reader.get_roles()
+    if not force:
+        roles = [r for r in roles if not context.state.get_target_role_id(str(r.id))]
+
     total = len(roles)
     cloned_role_names = []
     

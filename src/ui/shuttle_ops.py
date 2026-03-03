@@ -9,6 +9,7 @@ import logging
 import re
 import time
 import aiohttp
+import traceback
 from pathlib import Path
 
 from textual.app import ComposeResult
@@ -38,6 +39,8 @@ import src.stoat.migrate_message as stoat_migrate
 # ---------------------------------------------------------------------------
 global_rate_limit_msg = ""
 global_rate_limit_expires = 0.0
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimitHandler(logging.Handler):
@@ -412,6 +415,7 @@ class ShuttlePane(Container):
             report = self._format_clone_report(results)
             modal.write(report)
         except Exception as e:
+            logger.error(f"Batch Cloning Error: {e}\n{traceback.format_exc()}")
             modal.write(f"[bold red]Error: {e}[/bold red]")
             modal.phase_report("Batch Operation", "error")
         finally:
@@ -464,6 +468,7 @@ class ShuttlePane(Container):
             report = self._format_sync_report(results)
             modal.write(report)
         except Exception as e:
+            logger.error(f"Batch Sync Error: {e}\n{traceback.format_exc()}")
             modal.write(f"[bold red]Error: {e}[/bold red]")
             modal.phase_report("Batch Operation", "error")
         finally:
