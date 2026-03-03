@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import discord
 from typing import Callable, Awaitable
 
 from src.core.base import MigrationContext
@@ -106,7 +105,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
                     # Merge logic: channel overwrites specific settings, but 
                     # keeps inherited settings for any permission marked as 'None' in channel
                     cat_ow = final_overwrites[target.id]
-                    merged = discord.PermissionOverwrite()
+                    merged = context.discord_reader.create_permission_overwrite()
                     # Apply category settings
                     for name, value in cat_ow:
                         setattr(merged, name, value)

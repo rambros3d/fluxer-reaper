@@ -1,5 +1,4 @@
 import asyncio
-import discord
 import logging
 import re
 from typing import Callable, Awaitable, Dict, Any
@@ -33,10 +32,10 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     def replace_role(match):
         rid = int(match.group(1))
         # 1. Try provided guild cache/list
-        role = guild.get_role(rid) or discord.utils.get(guild.roles, id=rid)
+        role = guild.get_role(rid) or next((r for r in guild.roles if r.id == rid), None)
         # 2. Try message's role_mentions
         if not role and role_mentions:
-            role = discord.utils.get(role_mentions, id=rid)
+            role = next((r for r in role_mentions if r.id == rid), None)
         
         # 3. Try all guilds the client is aware of (fallback for cache issues)
         if not role and hasattr(guild, 'client'):
@@ -85,7 +84,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             stats["threads"] += thread_stats["threads"] # Nested threads (rare in Discord but possible in forum channels)
 
         # Consistent filtering with migrate_messages
-        if msg.type not in [discord.MessageType.default, discord.MessageType.reply, discord.MessageType.thread_starter_message]:
+        if msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY, context.discord_reader.MESSAGE_TYPE_THREAD_STARTER]:
             continue
 
         stats["messages"] += 1
@@ -115,9 +114,9 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
 
             # Skip system messages like "pinned a message", etc.
             # We treat thread_starter_message (type 21) as our thread marker.
-            if msg.type == discord.MessageType.thread_starter_message:
+            if msg.type == context.discord_reader.MESSAGE_TYPE_THREAD_STARTER:
                 content = f"> <<< THREAD: **{msg.channel.name}** >>>"
-            elif msg.type not in [discord.MessageType.default, discord.MessageType.reply]:
+            elif msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread

@@ -5,6 +5,24 @@ from typing import AsyncGenerator, Dict, Any
 logger = logging.getLogger(__name__)
 
 class DiscordReader:
+    # -- Provider constants (used by migration scripts instead of importing discord) --
+    MESSAGE_TYPE_DEFAULT = discord.MessageType.default
+    MESSAGE_TYPE_REPLY = discord.MessageType.reply
+    MESSAGE_TYPE_THREAD_STARTER = discord.MessageType.thread_starter_message
+
+    @staticmethod
+    def find_item(iterable, **attrs):
+        """Find first item in iterable matching all attrs. Drop-in for discord.utils.get()."""
+        for item in iterable:
+            if all(getattr(item, k, None) == v for k, v in attrs.items()):
+                return item
+        return None
+
+    @staticmethod
+    def create_permission_overwrite():
+        """Factory for discord.PermissionOverwrite, keeps the import centralized."""
+        return discord.PermissionOverwrite()
+
     def __init__(self, token: str, server_id: str):
         self.token = token
         try:
