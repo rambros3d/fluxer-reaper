@@ -314,26 +314,29 @@ class ShuttlePane(Container):
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
-        discord_started = False
+        connections_started = False
         try:
-            # Phase 1: Connect early to fetch source server structure for preview
-            modal.set_status("Connecting to Source Server (Discord) for Preview...")
+            # Phase 1: Connect early to fetch both source and target structure for preview
+            modal.set_status("Connecting to Source and Target Servers for Preview...")
             try:
-                await self.engine.discord_reader.start()
-                discord_started = True
+                await self.engine.start_connections()
+                connections_started = True
             except Exception as e:
-                logger.warning(f"Could not pre-connect to Discord for Clone preview: {e}")
+                logger.warning(f"Could not pre-connect for Clone preview: {e}")
 
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Operations...")
             
-            # Fetch and display live preview from Discord
-            preview = await self._fetch_clone_preview(selections) if discord_started else {}
+            # Fetch and display live preview with presence highlighting
+            preview = await self._fetch_clone_preview(selections) if connections_started else {}
             
             if "roles" in preview:
                 roles = preview["roles"]
                 modal.write(f"[bold cyan]Roles to be Cloned ({len(roles)}):[/bold cyan]")
-                for r in roles[:15]:
-                    modal.write(f"  - {r}")
+                for name, exists in roles[:15]:
+                    if exists:
+                        modal.write(f"  - [green]{name}[/green]")
+                    else:
+                        modal.write(f"  - {name}")
                 if len(roles) > 15:
                     modal.write(f"  [dim]... and {len(roles)-15} more[/dim]")
                 modal.write("")
@@ -341,11 +344,35 @@ class ShuttlePane(Container):
             if "structure" in preview:
                 structure = preview["structure"]
                 total_ch = sum(len(chans) for chans in structure.values())
-                modal.write(f"[bold cyan]Server Structure ({len(structure)} Categories, {total_ch} Channels):[/bold cyan]")
-                for cat_name, channels in structure.items():
-                    modal.write(f"  [bold yellow]📁 {cat_name}[/bold yellow]")
-                    for ch_name in channels:
-                        modal.write(f"    - # {ch_name}")
+                num_cats = sum(1 for k in structure if k is not None)
+                modal.write(f"[bold cyan]Server Structure ({num_cats} Categories, {total_ch} Channels):[/bold cyan]")
+                
+                # Show uncategorized channels first at the top
+                if None in structure:
+                    _, _, uncat_channels = structure[None]
+                    for ch_name, ch_exists in uncat_channels:
+                        if ch_exists:
+                            modal.write(f"  - [green]# {ch_name}[/green]")
+                        else:
+                            modal.write(f"  - # {ch_name}")
+                
+                for cat_id, (cat_name, cat_exists, channels) in structure.items():
+                    if cat_id is None:
+                        continue  # already shown above
+                    cat_color = "green" if cat_exists else "bold yellow"
+                    modal.write(f"  [{cat_color}]📁 {cat_name}[/{cat_color}]")
+                    for ch_name, ch_exists in channels:
+                        if ch_exists:
+                            modal.write(f"    - [green]# {ch_name}[/green]")
+                        else:
+                            modal.write(f"    - # {ch_name}")
+                modal.write("")
+
+            if connections_started:
+                # Add highlighting note
+                target_valid = await self.engine.writer.validate()
+                community_name = target_valid.get("community_name", "the target")
+                modal.write(f"[dim]Note: entities shown in 'green' are already present in {community_name} community[/dim]")
                 modal.write("")
 
             choice = await modal.phase_wait_confirm(
@@ -366,8 +393,9 @@ class ShuttlePane(Container):
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             
-            # Re-confirm connections (reader is already started, writer starts now)
-            await self.engine.start_connections()
+            # Connections already started above
+            if not connections_started:
+                await self.engine.start_connections()
             self.engine.is_running = True
 
             results = {}
@@ -972,33 +1000,56 @@ class ShuttlePane(Container):
         return preview
 
     async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
-        """Fetches preview data from Discord (source server) for cloning confirmation."""
+        """Fetches preview data from Discord (source server) for cloning confirmation,
+        comparing with existing entities on the target server for presence highlighting."""
         preview = {}
         reader = self.engine.discord_reader
+        writer = self.engine.writer
+        is_fluxer = self.target_platform == "fluxer"
+
+        # Fetch target data for comparison
+        target_roles = []
+        target_channels = []
+        try:
+            if is_fluxer:
+                target_roles_raw = await writer.client.get_guild_roles(self.engine.config.target_server_id)
+                target_roles = [r.get("name", "").lower() for r in target_roles_raw]
+            else:
+                server = await writer._get_server()
+                target_roles = [r.name.lower() for r in server.roles.values()]
+            
+            target_chans_raw = await writer.get_channels()
+            target_channels = [c.get("name", "").lower() for c in target_chans_raw]
+        except Exception as e:
+            logger.warning(f"Clone Preview: failed to fetch target data for comparison: {e}")
+
         try:
             if "sub_clone_roles" in selections:
                 roles = await reader.get_roles()
-                preview["roles"] = [r.name for r in roles]
+                preview["roles"] = [(r.name, r.name.lower() in target_roles) for r in roles]
         except Exception as e:
             logger.warning(f"Clone Preview: failed to fetch roles: {e}")
 
         try:
             if "sub_clone_channels" in selections:
                 # Build hierarchy
-                categories = await reader.get_categories()
-                channels = await reader.get_channels()
+                src_categories = await reader.get_categories()
+                src_channels = await reader.get_channels()
                 
-                # group channels by category parent
+                # structure[cat_id] = (cat_name, cat_exists, [(ch_name, ch_exists), ...])
                 structure = {}
-                # Handle categorization
-                for cat in categories:
-                    # In discord.py fetch_channels() returns full objects
-                    structure[cat.name] = [ch.name for ch in channels if ch.category_id == cat.id]
+                for cat in src_categories:
+                    cat_exists = cat.name.lower() in target_channels
+                    structure[cat.id] = (cat.name, cat_exists, [])
                 
-                # Handle uncategorized
-                uncategorized = [ch.name for ch in channels if ch.category_id is None]
-                if uncategorized:
-                    structure["No Category"] = uncategorized
+                for ch in src_channels:
+                    ch_exists = ch.name.lower() in target_channels
+                    if ch.category_id in structure:
+                        structure[ch.category_id][2].append((ch.name, ch_exists))
+                    else:
+                        if None not in structure:
+                            structure[None] = ("No Category", False, [])
+                        structure[None][2].append((ch.name, ch_exists))
                 
                 preview["structure"] = structure
         except Exception as e:
