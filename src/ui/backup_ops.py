@@ -49,8 +49,8 @@ class BackupPane(Container):
                 yield Label("", id="bp_lbl_backup")
             with Vertical(id="bp_actions"):
                 yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True)
-                yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True)
-                yield Button("Update & Sync Backup", id="bp_backup_sync", disabled=True)
+                yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary")
+                yield Button("Update & Sync Backup", id="bp_backup_sync", disabled=True, variant="success")
 
     def on_mount(self) -> None:
         self._validate()
@@ -220,7 +220,7 @@ class BackupPane(Container):
                 modal_prog.set_status(f"Awaiting Confirmation to backup [bold]{len(selected_channels)}[/bold] channels...")
                 modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {', '.join([c.name for c in selected_channels[:3]])}{'...' if len(selected_channels) > 3 else ''}")
 
-                choice = await modal_prog.phase_wait_confirm()
+                choice = await modal_prog.phase_wait_confirm(btn_start_label="Start Channel Backup", show_id=False)
                 if choice == "btn_back":
                     modal_prog.dismiss()
                     continue

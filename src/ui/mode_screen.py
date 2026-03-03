@@ -130,7 +130,7 @@ class ModeScreen(Screen):
                 with Horizontal(id="bottom_actions"):
                     if mode == "backup_transfer":
                         yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary")
-                    yield Button("Configuration", id="btn_config")
+                    yield Button("Configuration", id="btn_config", variant="success")
                     yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()

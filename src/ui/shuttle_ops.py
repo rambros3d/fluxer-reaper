@@ -107,9 +107,9 @@ class ShuttlePane(Container):
             with Vertical(id="sp_actions"):
                 yield Button("Clone Server Template", id="sp_clone", disabled=True)
                 yield Button("Sync Server Settings", id="sp_sync", disabled=True)
-                yield Button("Migrate Message History", id="sp_messages", disabled=True)
+                yield Button("Migrate Message History", id="sp_messages", disabled=True, variant="primary")
                 yield Rule()
-                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True)
+                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True, flat=True)
 
     def on_mount(self) -> None:
         self._rebuild_engine()
@@ -281,9 +281,9 @@ class ShuttlePane(Container):
 
     def _open_clone_menu(self):
         options = [
-            ("sub_clone_roles", "Clone Roles & Role Permissions"),
-            ("sub_clone_channels", "Clone Channels & Categories"),
-            ("sub_sync_perms", "Sync Channel & Category Permissions"),
+            ("sub_clone_roles", "Roles & Role Permissions"),
+            ("sub_clone_channels", "Server Structure [Channels & Categories]"),
+            ("sub_sync_perms", "Channel & Category Permissions"),
         ]
         def on_result(choices):
             if choices:
@@ -316,7 +316,11 @@ class ShuttlePane(Container):
         await asyncio.sleep(0.1)
         try:
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Operations...")
-            choice = await modal.phase_wait_confirm()
+            choice = await modal.phase_wait_confirm(
+                btn_start_label="Start Cloning",
+                btn_id_label="Force Copy",
+                show_id=True
+            )
             if choice == "btn_back":
                 modal.dismiss()
                 self._open_clone_menu()
@@ -326,22 +330,25 @@ class ShuttlePane(Container):
                 self.app.switch_screen("config_selection")
                 return
 
+            force_mode = (choice == "btn_start_id")
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             await self.engine.start_connections()
             self.engine.is_running = True
 
+            results = {}
             for sel in selections:
                 if not self.engine.is_running: break
                 if sel == "sub_clone_roles":
-                    await self._logic_clone_roles(modal)
+                    results["roles"] = await self._logic_clone_roles(modal, force=force_mode)
                 elif sel == "sub_clone_channels":
-                    await self._logic_clone_channels(modal)
+                    results["channels"] = await self._logic_clone_channels(modal, force=force_mode)
                 elif sel == "sub_sync_perms":
-                    await self._logic_sync_permissions(modal)
+                    results["perms"] = await self._logic_sync_permissions(modal)
             
             modal.phase_report("Clone Template Complete")
-            modal.write("[bold green]All selected cloning operations finished.[/bold green]")
+            report = self._format_clone_report(results)
+            modal.write(report)
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
             modal.phase_report("Batch Operation", "error")
@@ -356,7 +363,11 @@ class ShuttlePane(Container):
         await asyncio.sleep(0.1)
         try:
             modal.set_status("Awaiting Confirmation to Sync Server Settings...")
-            choice = await modal.phase_wait_confirm()
+            choice = await modal.phase_wait_confirm(
+                btn_start_label="Start Syncing",
+                btn_id_label="Force Sync",
+                show_id=True
+            )
             if choice == "btn_back":
                 modal.dismiss()
                 self._open_sync_menu()
@@ -366,27 +377,30 @@ class ShuttlePane(Container):
                 self.app.switch_screen("config_selection")
                 return
 
+            force_mode = (choice == "btn_start_id")
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             await self.engine.start_connections()
             self.engine.is_running = True
 
+            results = {}
             # Separate asset sync from metadata sync
             asset_types = []
             if "sub_emoji" in selections: asset_types.append("Emoji")
             if "sub_sticker" in selections: asset_types.append("Sticker")
             if asset_types:
-                await self._logic_copy_assets(modal, asset_types)
+                results["assets"] = await self._logic_copy_assets(modal, asset_types, force=force_mode)
             
             meta_comps = []
             if "sub_name" in selections: meta_comps.append("name")
             if "sub_icon" in selections: meta_comps.append("icon")
             if "sub_banner" in selections: meta_comps.append("banner")
             if meta_comps:
-                await self._logic_sync_metadata(modal, meta_comps)
+                results["metadata"] = await self._logic_sync_metadata(modal, meta_comps)
             
             modal.phase_report("Sync Settings Complete")
-            modal.write("[bold green]All selected synchronization operations finished.[/bold green]")
+            report = self._format_sync_report(results)
+            modal.write(report)
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
             modal.phase_report("Batch Operation", "error")
@@ -396,7 +410,7 @@ class ShuttlePane(Container):
 
     # ── logic blocks (internal) ────────────────────────────────────────
 
-    async def _logic_clone_channels(self, modal: ProgressScreen):
+    async def _logic_clone_channels(self, modal: ProgressScreen, force: bool = False):
         if self.target_platform == "fluxer":
             from src.fluxer.clone_server import sync_channel_state, migrate_channels
         else:
@@ -412,7 +426,7 @@ class ShuttlePane(Container):
             modal.set_status(f"[{color}]{status}: {item_name}[/{color}]")
             modal.set_progress(current, total)
         
-        cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=False)
+        cloned_info = await migrate_channels(self.engine, progress_callback=update_progress, force=force)
         if cloned_info and cloned_info.get("structure"):
             lines = ["Successfully cloned channels and categories:"]
             cats = sorted(cloned_info["structure"].keys(), key=lambda x: (x == "No Category", x))
@@ -422,8 +436,9 @@ class ShuttlePane(Container):
                     lines.append(f"- **{cat_name}**")
                     for n in sorted(ch_names): lines.append(f"  - {n}")
             await log_audit_event(self.engine, "Channels Cloned", "\n".join(lines))
+        return cloned_info
 
-    async def _logic_clone_roles(self, modal: ProgressScreen):
+    async def _logic_clone_roles(self, modal: ProgressScreen, force: bool = False):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
         modal.set_status("Processing Roles...")
         await roles_mod.sync_roles_state(self.engine)
@@ -432,9 +447,10 @@ class ShuttlePane(Container):
             modal.set_status(f"[cyan]Copying Role: {name}[/cyan]")
             modal.set_progress(current, total)
         
-        cloned = await roles_mod.migrate_roles(self.engine, progress_callback=update, force=False)
+        cloned = await roles_mod.migrate_roles(self.engine, progress_callback=update, force=force)
         if cloned:
             await log_audit_event(self.engine, "Roles Cloned", "Successfully cloned roles:\n" + "\n".join(f"- {r}" for r in cloned))
+        return cloned
 
     async def _logic_sync_permissions(self, modal: ProgressScreen):
         roles_mod = fluxer_roles if self.target_platform == "fluxer" else stoat_roles
@@ -454,8 +470,9 @@ class ShuttlePane(Container):
                     lines.append(f"- **{cat_name}**")
                     for n in sorted(ch_names): lines.append(f"  - {n}")
             await log_audit_event(self.engine, "Permissions Synced", "\n".join(lines))
+        return synced
 
-    async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str]):
+    async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str], force: bool = False):
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
         modal.set_status("Processing Assets...")
         await asset_mod.sync_assets_state(self.engine)
@@ -464,7 +481,7 @@ class ShuttlePane(Container):
             modal.set_status(f"[cyan]Copying {item_type}: {name}[/cyan]")
             modal.set_progress(current, total)
             
-        cloned = await asset_mod.migrate_emojis(self.engine, progress_callback=update, types_to_include=types_to_include, force=False)
+        cloned = await asset_mod.migrate_emojis(self.engine, progress_callback=update, types_to_include=types_to_include, force=force)
         if cloned and (cloned.get("Emoji") or cloned.get("Sticker")):
             lines = []
             if cloned.get("Emoji"):
@@ -472,6 +489,7 @@ class ShuttlePane(Container):
             if cloned.get("Sticker"):
                 lines.append("Stickers cloned:"); lines.extend([f"- {n}" for n in cloned["Sticker"]])
             await log_audit_event(self.engine, "Assets Cloned", "\n".join(lines))
+        return cloned
 
     async def _logic_sync_metadata(self, modal: ProgressScreen, components: list[str]):
         meta_mod = fluxer_metadata if self.target_platform == "fluxer" else stoat_metadata
@@ -496,6 +514,67 @@ class ShuttlePane(Container):
                 ext = "gif" if cloned["banner"].startswith(b"GIF") else "png"
                 files.append({"filename": f"banner.{ext}", "data": cloned["banner"]})
             await log_audit_event(self.engine, "Profile Synced", "\n".join(lines), files=files)
+        return cloned
+
+    # ── report formatting ───────────────────────────────────────────────
+
+    def _format_sync_report(self, results: dict) -> str:
+        lines = ["[bold green]Synchronization Report[/bold green]\n"]
+        
+        meta = results.get("metadata", {})
+        if meta:
+            lines.append("[bold cyan]Server Profile:[/bold cyan]")
+            if "name" in meta: lines.append(f"- Name: [white]{meta['name']}[/white]")
+            if "icon" in meta: lines.append("- Icon")
+            if "banner" in meta: lines.append("- Banner")
+            lines.append("")
+
+        assets = results.get("assets", {})
+        emojis = assets.get("Emoji", {})
+        if emojis:
+            lines.append("[bold cyan]Emojis:[/bold cyan]")
+            for name, eid in emojis.items():
+                lines.append(f"- {name} ([dim]{eid}[/dim])")
+            lines.append("")
+
+        stickers = assets.get("Sticker", {})
+        if stickers:
+            lines.append("[bold cyan]Stickers:[/bold cyan]")
+            for name, sid in stickers.items():
+                lines.append(f"- {name} ([dim]{sid}[/dim])")
+            lines.append("")
+            
+        if not meta and not emojis and not stickers:
+            lines.append("[yellow]No items were synchronized.[/yellow]")
+            
+        return "\n".join(lines)
+
+    def _format_clone_report(self, results: dict) -> str:
+        lines = ["[bold green]Cloning Template Report[/bold green]\n"]
+        
+        roles = results.get("roles", [])
+        if roles:
+            lines.append(f"[bold cyan]Roles ({len(roles)}):[/bold cyan]")
+            for r in sorted(roles): lines.append(f"- {r}")
+            lines.append("")
+
+        channels = results.get("channels", {})
+        structure = channels.get("structure", {})
+        if structure:
+            lines.append("[bold cyan]Server Structure:[/bold cyan]")
+            cats = sorted(structure.keys(), key=lambda x: (x == "No Category", x))
+            for cat in cats:
+                chans = structure[cat]
+                if cat in channels.get("categories_created", []) or chans:
+                    lines.append(f"[bold]{cat}[/bold]")
+                    for ch in sorted(chans):
+                        lines.append(f"  - {ch}")
+            lines.append("")
+
+        if not roles and not structure:
+            lines.append("[yellow]No items were cloned.[/yellow]")
+
+        return "\n".join(lines)
 
     # ── (5) message migration ─────────────────────────────────────────────
 
@@ -602,7 +681,13 @@ class ShuttlePane(Container):
                 modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
 
                 # Phase 2: Confirmation
-                choice = await modal.phase_wait_confirm(show_continue=has_previous)
+                choice = await modal.phase_wait_confirm(
+                    show_continue=has_previous,
+                    show_id=True,
+                    btn_start_label="Start Migration",
+                    btn_continue_label="Continue Migration",
+                    btn_id_label="Start from ID"
+                )
                 logger.info(f"User confirmation choice: {choice}")
                 if choice == "btn_back":
                     modal.dismiss()
@@ -704,16 +789,91 @@ class ShuttlePane(Container):
                 self.run_batch_danger(selections)
         self.app.push_screen(OptionSelectModal("⚠ DANGER ZONE ⚠", options), on_result)
 
+    async def _analyze_danger_zone(self, selections: list[str]) -> dict:
+        """Analyzes the target server to find items that will be deleted."""
+        results = {}
+        writer = self.engine.fluxer_writer if self.target_platform == "fluxer" else self.engine.writer
+        
+        for sel in selections:
+            if sel == "dz_del_channels":
+                chans = await writer.get_channels()
+                # filter reaper logs
+                chans = [c for c in chans if str(c.get("name", "")).lower() not in ["reaper-logs", "reaper_logs"]]
+                results["channels"] = [c.get("name", "Unknown") for c in chans]
+            
+            elif sel == "dz_del_roles":
+                roles = []
+                if self.target_platform == "fluxer":
+                    role_data = await writer.client.get_guild_roles(writer.community_id)
+                    roles = [r.get("name", "Unknown") for r in role_data if not r.get("managed") and r.get("name") != "@everyone"]
+                else:
+                    server = await writer._get_server()
+                    # Stoat roles are in a dict .roles
+                    for r_id, role in server.roles.items():
+                        if str(r_id) != writer.community_id:
+                            roles.append(getattr(role, "name", "Unknown Role"))
+                results["roles"] = roles
+
+            elif sel == "dz_del_assets":
+                assets = []
+                if self.target_platform == "fluxer":
+                    emojis = await writer.client.get_guild_emojis(writer.community_id)
+                    stickers = await writer.client.get_guild_stickers(writer.community_id)
+                    assets.extend([e.get("name", "Unknown Emoji") for e in emojis])
+                    assets.extend([s.get("name", "Unknown Sticker") for s in stickers])
+                else:
+                    server = await writer._get_server()
+                    emojis = await server.fetch_emojis()
+                    assets.extend([getattr(e, "name", "Unknown Emoji") for e in emojis])
+                results["assets"] = assets
+                
+            elif sel == "dz_reset_perms":
+                # For reset perms, we just list channels affected.
+                if "channels" not in results:
+                    chans = await writer.get_channels()
+                    chans = [c for c in chans if str(c.get("name", "")).lower() not in ["reaper-logs", "reaper_logs"]]
+                    results["channels_perms"] = [c.get("name", "Unknown") for c in chans]
+                else:
+                    results["channels_perms"] = results["channels"]
+
+        return results
+
     @work(exclusive=True)
     async def run_batch_danger(self, selections: list[str]) -> None:
         modal = ProgressScreen()
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         try:
+            modal.set_status("Analyzing Target Server...")
+            modal.write("[bold cyan]Analyzing target server for destructive impact...[/bold cyan]")
+            
+            await self.engine.start_target_only()
+            analysis = await self._analyze_danger_zone(selections)
+            
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Destructive Operations...")
             modal.write("[bold red]WARNING: THIS WILL DELETE DATA PERMANENTLY! MUST PROCEED TO CONTINUE.[/bold red]")
+            modal.write("")
+            modal.write("[bold cyan]Scheduled for Destruction/Reset:[/bold cyan]")
             
-            choice = await modal.phase_wait_confirm()
+            if "channels" in analysis:
+                names = analysis["channels"]
+                modal.write(f"- [red]Channels ({len(names)}):[/red] {', '.join(names[:10])}{'...' if len(names) > 10 else ''}")
+            
+            if "roles" in analysis:
+                names = analysis["roles"]
+                modal.write(f"- [red]Roles ({len(names)}):[/red] {', '.join(names[:10])}{'...' if len(names) > 10 else ''}")
+                
+            if "assets" in analysis:
+                names = analysis["assets"]
+                modal.write(f"- [red]Emojis/Stickers ({len(names)}):[/red] {', '.join(names[:10])}{'...' if len(names) > 10 else ''}")
+                
+            if "channels_perms" in analysis and "channels" not in analysis:
+                names = analysis["channels_perms"]
+                modal.write(f"- [red]Permission Resets on {len(names)} Channels[/red]")
+            
+            modal.write("")
+            
+            choice = await modal.phase_wait_confirm(btn_start_label="WIPE ALL DATA", show_id=False)
             if choice == "btn_back":
                 modal.dismiss()
                 self._open_danger_menu()
@@ -726,8 +886,8 @@ class ShuttlePane(Container):
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             self.engine.is_running = True
-            await self.engine.start_target_only()
-
+            # Connection already started above
+            
             for sel in selections:
                 if not self.engine.is_running: break
                 if sel == "dz_del_channels":
@@ -742,7 +902,7 @@ class ShuttlePane(Container):
             modal.phase_report("Danger Zone Operations Complete")
             modal.write("[bold green]All selected destructive operations finished.[/bold green]")
         except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.write(f"[bold red]Error during analysis: {e}[/bold red]")
             modal.phase_report("Danger Zone Batch", "error")
         finally:
             self.engine.is_running = False

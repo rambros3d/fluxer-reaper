@@ -45,9 +45,10 @@ class ProgressScreen(Screen[None]):
         margin: 2 0;
         background: $surface;
     }
-    #prog_header { height: auto; margin-bottom: 1; dock: top; }
+    #prog_header { height: 3; margin-bottom: 1; dock: top; align: left middle; }
     #prog_status { text-style: bold; width: 1fr; content-align: left middle; }
-    #prog_timer { text-style: bold; width: 20; content-align: right middle; color: yellow; }
+    #prog_loader { width: 10; height: 1; margin: 0 1; }
+    #prog_timer { text-style: bold; width: 15; content-align: right middle; color: yellow; }
     
     #prog_stats { 
         height: auto; 
@@ -61,7 +62,7 @@ class ProgressScreen(Screen[None]):
     
     #prog_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
     #live_log { height: 10; margin-bottom: 1; border: solid yellow; }
-    #prog_loader { margin-bottom: 1; }
+    
     #prog_bar_container { height: auto; width: 100%; align: center middle; }
     #prog_bar { margin-bottom: 1; width: 80%; }
     
@@ -79,6 +80,7 @@ class ProgressScreen(Screen[None]):
             with Container(id="prog_dialog"):
                 with Horizontal(id="prog_header"):
                     yield Label("Operation Status...", id="prog_status")
+                    yield LoadingIndicator(id="prog_loader")
                     yield Label("00:00", id="prog_timer")
                 
                 with Horizontal(id="prog_stats"):
@@ -86,7 +88,6 @@ class ProgressScreen(Screen[None]):
                     yield Label("Threads: 0", id="stat_threads", classes="stat_label")
                     yield Label("Files: 0", id="stat_files", classes="stat_label")
 
-                yield LoadingIndicator(id="prog_loader")
 
                 with Vertical(id="info_container"):
                     yield Label("No previous migration data.", id="info_migration_status", classes="info_label")
@@ -212,7 +213,14 @@ class ProgressScreen(Screen[None]):
             except Exception:
                 pass
 
-    async def phase_wait_confirm(self, show_continue: bool = False):
+    async def phase_wait_confirm(
+        self, 
+        show_continue: bool = False, 
+        show_id: bool = True,
+        btn_start_label: str = "Start from First",
+        btn_continue_label: str = "Continue Migration",
+        btn_id_label: str = "Start from ID"
+    ):
         """Phase 2: Wait for user confirmation after analysis."""
         try: self.query_one("#prog_loader", LoadingIndicator).display = False
         except Exception: pass
@@ -220,6 +228,14 @@ class ProgressScreen(Screen[None]):
         try: self.query_one("#prog_bar", ProgressBar).display = False
         except Exception: pass
         
+        # Update button labels
+        try: self.query_one("#btn_start_first", Button).label = btn_start_label
+        except Exception: pass
+        try: self.query_one("#btn_continue", Button).label = btn_continue_label
+        except Exception: pass
+        try: self.query_one("#btn_start_id", Button).label = btn_id_label
+        except Exception: pass
+
         # Show confirmation buttons
         try: self.query_one("#prog_actions_row1", Horizontal).display = True
         except Exception: pass
@@ -231,7 +247,10 @@ class ProgressScreen(Screen[None]):
         try: self.query_one("#btn_start_first", Button).disabled = False
         except Exception: pass
         
-        try: self.query_one("#btn_start_id", Button).disabled = False
+        try: 
+            btn_id = self.query_one("#btn_start_id", Button)
+            btn_id.disabled = not show_id
+            btn_id.display = show_id
         except Exception: pass
         
         try:
@@ -391,8 +410,8 @@ class OptionSelectModal(ModalScreen[list[str]]):
         with Vertical(id="opt_dialog"):
             yield Label(self._title, id="opt_title")
             with Horizontal(id="opt_batch_buttons"):
-                yield Button("Select All", id="btn_opt_all")
-                yield Button("Deselect All", id="btn_opt_none")
+                yield Button("Select All", id="btn_opt_all", flat=True)
+                yield Button("Deselect All", id="btn_opt_none", flat=True)
             
             with Vertical(id="opt_scroll"):
                 for opt_id, label in self._options:

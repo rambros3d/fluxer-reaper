@@ -94,7 +94,7 @@ class ConfigSelectionScreen(Screen):
             with VerticalScroll(id="config_list_container"):
                 yield ListView(id="config_list")
             with Horizontal(id="config_sel_actions"):
-                yield Button("Create New Config", id="btn_new_config", variant="success")
+                yield Button("New Config", id="btn_new_config", variant="success")
                 yield Button("Exit", id="btn_exit", variant="error")
         yield Footer()
 
@@ -264,7 +264,7 @@ class ConfigScreen(Screen):
 
                 yield Rule()
                 with Horizontal(id="cfg_actions"):
-                    yield Button("Save Configuration", variant="primary", id="btn_save")
+                    yield Button("Save Configuration", variant="success", id="btn_save")
                     yield Button("Back", id="btn_back")
         yield Footer()
 
@@ -330,10 +330,10 @@ class ConfigScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ReaperApp(App):
-    theme = "dracula"
 
     def on_mount(self) -> None:
         self.push_screen(ConfigSelectionScreen())
+        self.theme = "dracula"
 
 
 def run_disco_reaper_tui():
