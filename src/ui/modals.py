@@ -116,7 +116,9 @@ class ProgressScreen(Screen[None]):
                         yield Button("Cancel", id="btn_cancel", variant="error")
         yield Footer()
 
-    def on_mount(self):
+    def __init__(self, log_level: str = "INFO", *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.log_level = log_level.upper()
         self.confirm_future = None
         self.cancel_callback = None
         self.start_time = time.time()
@@ -132,10 +134,19 @@ class ProgressScreen(Screen[None]):
         
         # Intercept Python logs and pipe to the #live_log
         self.log_handler = UILogHandler(self.write_live)
+        
+        # Set level based on config
+        level = getattr(logging, self.log_level, logging.INFO)
+        
         # Attach to root logger
-        logging.getLogger().addHandler(self.log_handler)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(self.log_handler)
+        root_logger.setLevel(level)
+
         # Also let's capture discord.py logs specifically if they aren't propagating
-        logging.getLogger("discord").addHandler(self.log_handler)
+        discord_logger = logging.getLogger("discord")
+        discord_logger.addHandler(self.log_handler)
+        discord_logger.setLevel(level)
 
     def on_unmount(self):
         # Detach log handler when UI is cleanly removed
@@ -513,8 +524,13 @@ class ChannelPickerScreen(Screen[tuple]):
 
     def _render_pane(self, channels, categories, pane_id, prefix):
         cat_grouped: dict[int | None, list] = {}
+        seen_ids = set()  # Prevent duplicate widget IDs
         for c in channels:
             cat_id = getattr(c, "category_id", None) if not isinstance(c, dict) else c.get("parent_id")
+            cid = c.get("id") if isinstance(c, dict) else c.id
+            if cid in seen_ids:
+                continue
+            seen_ids.add(cid)
             cat_grouped.setdefault(cat_id, []).append(c)
 
         with VerticalScroll(classes="split_pane", id=pane_id):
