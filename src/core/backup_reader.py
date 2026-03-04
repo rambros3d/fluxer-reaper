@@ -89,8 +89,82 @@ class BackupPermissions:
 
 
 class BackupPermissionOverwrite:
-    """Minimal stand-in for discord.PermissionOverwrite."""
-    pass
+    """Minimal stand-in for discord.PermissionOverwrite.
+    
+    Supports:
+      - .pair() -> (BackupPermissions(allow), BackupPermissions(deny))
+      - iteration: yields (perm_name, True|False|None) tuples
+      - setattr(ow, perm_name, value) for merging
+    """
+
+    # Standard Discord permission flag names and their bit positions
+    VALID_NAMES = {
+        "create_instant_invite": 0, "kick_members": 1, "ban_members": 2,
+        "administrator": 3, "manage_channels": 4, "manage_guild": 5,
+        "add_reactions": 6, "view_audit_log": 7, "priority_speaker": 8,
+        "stream": 9, "view_channel": 10, "send_messages": 11,
+        "send_tts_messages": 12, "manage_messages": 13, "embed_links": 14,
+        "attach_files": 15, "read_message_history": 16, "mention_everyone": 17,
+        "use_external_emojis": 18, "view_guild_insights": 19, "connect": 20,
+        "speak": 21, "mute_members": 22, "deafen_members": 23,
+        "move_members": 24, "use_vad": 25, "change_nickname": 26,
+        "manage_nicknames": 27, "manage_roles": 28, "manage_webhooks": 29,
+        "manage_emojis_and_stickers": 30, "use_application_commands": 31,
+        "request_to_speak": 32, "manage_events": 33, "manage_threads": 34,
+        "create_public_threads": 35, "create_private_threads": 36,
+        "use_external_stickers": 37, "send_messages_in_threads": 38,
+        "use_embedded_activities": 39, "moderate_members": 40,
+    }
+
+    def __init__(self, allow: int = 0, deny: int = 0):
+        self._allow = allow
+        self._deny = deny
+
+    def pair(self):
+        """Returns (Permissions(allow), Permissions(deny))."""
+        return BackupPermissions(self._allow), BackupPermissions(self._deny)
+
+    def __iter__(self):
+        """Yields (perm_name, True|False|None) for each known permission."""
+        for name, bit in self.VALID_NAMES.items():
+            mask = 1 << bit
+            if self._allow & mask:
+                yield name, True
+            elif self._deny & mask:
+                yield name, False
+            else:
+                yield name, None
+
+    def __setattr__(self, name, value):
+        if name.startswith("_") or name not in self.VALID_NAMES:
+            super().__setattr__(name, value)
+            return
+        bit = self.VALID_NAMES[name]
+        mask = 1 << bit
+        # Clear both first
+        self._allow &= ~mask
+        self._deny &= ~mask
+        if value is True:
+            self._allow |= mask
+        elif value is False:
+            self._deny |= mask
+        # None = neutral, both cleared
+
+
+class BackupOverwriteTarget:
+    """Stand-in for the target (role) key in overwrites dict.
+    
+    Satisfies: type(target).__name__ == 'Role' and target.id
+    """
+    def __init__(self, role_id: int):
+        self.id = role_id
+
+    def __repr__(self):
+        return f"Role(id={self.id})"
+
+# Allow `type(target).__name__` to return "Role"
+BackupOverwriteTarget.__name__ = "Role"
+BackupOverwriteTarget.__qualname__ = "Role"
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +224,17 @@ class BackupRole:
         return f"BackupRole(id={self.id}, name='{self.name}')"
 
 
+def _parse_overwrites(raw_list: list) -> dict:
+    """Parse overwrites JSON list into {BackupOverwriteTarget: BackupPermissionOverwrite} dict."""
+    result = {}
+    for entry in raw_list:
+        target = BackupOverwriteTarget(int(entry["id"]))
+        ow = BackupPermissionOverwrite(allow=int(entry.get("allow", 0)),
+                                        deny=int(entry.get("deny", 0)))
+        result[target] = ow
+    return result
+
+
 class BackupCategory:
     """Minimal stand-in for discord.CategoryChannel."""
 
@@ -163,7 +248,7 @@ class BackupCategory:
         self.name = data["name"]
         self.position = data.get("position", 0)
         self.type = ChannelType.category
-        self.overwrites = {}
+        self.overwrites = _parse_overwrites(data.get("overwrites", []))
 
     def __repr__(self) -> str:
         return f"BackupCategory(id={self.id}, name='{self.name}')"
@@ -194,7 +279,7 @@ class BackupChannel:
         self.parent_id = category_id
         self.available_tags = data.get("available_tags", [])
         self.guild = guild
-        self.overwrites = {}
+        self.overwrites = _parse_overwrites(data.get("overwrites", []))
 
     @property
     def mention(self) -> str:

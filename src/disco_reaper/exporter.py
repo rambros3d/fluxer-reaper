@@ -228,11 +228,23 @@ class DiscordExporter:
             cat_channels = [c for c in channels if c.category_id == cat.id]
             formatted_channels = await asyncio.gather(*[self._format_channel(c) for c in cat_channels])
             chan_count += len(formatted_channels)
+            # Serialize role-only permission overwrites
+            cat_overwrites = []
+            for target, ow in cat.overwrites.items():
+                if isinstance(target, discord.Role):
+                    allow, deny = ow.pair()
+                    cat_overwrites.append({
+                        "id": str(target.id),
+                        "allow": allow.value,
+                        "deny": deny.value
+                    })
+
             structure.append({
                 "type": "category",
                 "id": str(cat.id),
                 "name": cat.name,
                 "position": cat.position,
+                "overwrites": cat_overwrites,
                 "channels": list(formatted_channels)
             })
             
@@ -255,13 +267,25 @@ class DiscordExporter:
         return structure, cat_count, chan_count
 
     async def _format_channel(self, c):
+        # Serialize role-only permission overwrites
+        ch_overwrites = []
+        for target, ow in c.overwrites.items():
+            if isinstance(target, discord.Role):
+                allow, deny = ow.pair()
+                ch_overwrites.append({
+                    "id": str(target.id),
+                    "allow": allow.value,
+                    "deny": deny.value
+                })
+
         data = {
             "id": str(c.id),
             "name": c.name,
             "type": str(c.type),
             "position": c.position,
             "topic": getattr(c, "topic", None),
-            "nsfw": getattr(c, "nsfw", False)
+            "nsfw": getattr(c, "nsfw", False),
+            "overwrites": ch_overwrites
         }
         
         if isinstance(c, discord.ForumChannel):
