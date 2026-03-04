@@ -101,7 +101,14 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
     return stats
 
 
-async def migrate_messages(context: MigrationContext, source_channel_id: int, target_channel_id: str, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, Any]:
+async def migrate_messages(
+    context: MigrationContext, 
+    source_channel_id: int, 
+    target_channel_id: str, 
+    after_message_id: int | None = None, 
+    progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
+    thread_id: str | None = None
+) -> Dict[str, Any]:
     """Migrate messages for a specific channel using Stoat masquerade for author impersonation."""
     stats = {
         "messages": 0, 
@@ -145,7 +152,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     thread_stats = await migrate_messages(
                         context=context,
                         source_channel_id=thread.id,
-                        target_channel_id=target_channel_id
+                        target_channel_id=target_channel_id,
+                        thread_id=str(thread.id)
                     )
                     stats["messages"] += thread_stats["messages"]
                     stats["attachments"] += thread_stats["attachments"]
@@ -217,14 +225,23 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                 )
                 
                 if stoat_msg_id:
-                    context.state.set_message_mapping(target_channel_id, str(msg.id), stoat_msg_id)
+                    if thread_id:
+                        context.state.set_thread_message_mapping(target_channel_id, thread_id, str(msg.id), stoat_msg_id)
+                    else:
+                        context.state.set_message_mapping(target_channel_id, str(msg.id), stoat_msg_id)
 
-                context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
-                context.state.update_last_message_id(target_channel_id, str(msg.id))
+                if thread_id:
+                    context.state.update_thread_last_message_timestamp(target_channel_id, thread_id, str(msg.created_at))
+                    context.state.update_thread_last_message_id(target_channel_id, thread_id, str(msg.id))
+                    context.state.increment_thread_stats(target_channel_id, thread_id, messages=1, files=len(files) if files else 0)
+                else:
+                    context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
+                    context.state.update_last_message_id(target_channel_id, str(msg.id))
+                    context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
+                
                 stats["messages"] += 1
                 stats["last_message_content"] = content
                 stats["last_message_author"] = msg.author.display_name
-                context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
                 
                 # Periodic log
                 if stats["messages"] % 50 == 0:
@@ -242,7 +259,8 @@ async def migrate_messages(context: MigrationContext, source_channel_id: int, ta
                     thread_stats = await migrate_messages(
                         context=context,
                         source_channel_id=thread.id,
-                        target_channel_id=target_channel_id
+                        target_channel_id=target_channel_id,
+                        thread_id=str(thread.id)
                     )
                     stats["messages"] += thread_stats["messages"]
                     stats["attachments"] += thread_stats["attachments"]

@@ -165,7 +165,11 @@ class ShuttlePane(Container):
             s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
             
         self.query_one("#sp_lbl_d_server", Label).update(f"Server: {s_disp}")
-        self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
+        if self.config.tool_mode == "backup_transfer":
+            b_disp = "[green]LOCAL BACKUP[/green]" if v.get("discord_server") else "[red]NOT FOUND[/red]"
+            self.query_one("#sp_lbl_d_bot", Label).update(f"Source: {b_disp}")
+        else:
+            self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
 
         # Target
         plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
@@ -690,6 +694,12 @@ class ShuttlePane(Container):
             await self.engine.start_connections()
 
             full_d = await self.engine.discord_reader.get_channels()
+            
+            # If reading from backup, only show channels that have actual message backup data
+            if getattr(self.engine, "source_mode", "live") == "backup" and hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
+                valid_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+                full_d = [c for c in full_d if c.id in valid_ids]
+                
             d_channels = [c for c in full_d if c.type in [self.engine.discord_reader.CHANNEL_TYPE_TEXT, self.engine.discord_reader.CHANNEL_TYPE_NEWS]]
             d_cats = await self.engine.discord_reader.get_categories()
             d_cat_map = {c.id: c.name for c in d_cats}

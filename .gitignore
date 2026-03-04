@@ -37,6 +37,7 @@ config.yaml
 *.json
 
 # Temporary Test Scripts
+tmp/
 test_*.py
 test_release.zip
 test_release/

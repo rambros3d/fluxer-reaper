@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 from typing import Dict, Any
 
 from src.core.configuration import AppConfig
@@ -12,8 +13,9 @@ logger = logging.getLogger(__name__)
 class MigrationContext:
     """Holds state and connections for reading from Discord and writing to the target platform."""
     
-    def __init__(self, config: AppConfig, target_platform: str | None = None):
+    def __init__(self, config: AppConfig, target_platform: str | None = None, source_mode: str = "live"):
         self.config = config
+        self.source_mode = source_mode
         # If caller didn't specify, fall back to config value
         self.target_platform = target_platform or config.target_platform or "fluxer"
         
@@ -25,7 +27,6 @@ class MigrationContext:
         
         # Try to find an existing state folder for this server_id
         import os
-        from pathlib import Path
         
         state_file: str | Path = ""
         messages_file: str | Path = ""
@@ -46,10 +47,18 @@ class MigrationContext:
             messages_file=messages_file
         )
         
-        self.discord_reader = DiscordReader(
-            token=config.discord_bot_token,
-            server_id=config.discord_server_id
-        )
+        # Select the appropriate source reader
+        if source_mode == "backup":
+            from src.core.backup_reader import BackupReader
+            backup_path = self._find_backup_path(config.discord_server_id)
+            self.discord_reader = BackupReader(backup_path)
+            logger.info(f"Source mode: BACKUP — reading from {backup_path}")
+        else:
+            self.discord_reader = DiscordReader(
+                token=config.discord_bot_token,
+                server_id=config.discord_server_id
+            )
+            logger.info("Source mode: LIVE — using Discord API")
         
         # Build the writer for the active target platform only
         token = config.target_bot_token or ""
@@ -66,6 +75,18 @@ class MigrationContext:
             self.stoat_writer = StoatWriter(token="", community_id="", api_url="default")
         
         self.is_running = False
+
+    @staticmethod
+    def _find_backup_path(server_id: str) -> Path:
+        """Searches workspace for a DISCORD_BACKUP-{server_id} directory."""
+        for d in Path(".").rglob(f"DISCORD_BACKUP-{server_id}"):
+            if d.is_dir():
+                logger.info(f"Found backup directory: {d}")
+                return d
+        raise FileNotFoundError(
+            f"No backup found for server {server_id}. "
+            f"Expected a directory named DISCORD_BACKUP-{server_id}"
+        )
 
     async def validate_all(self) -> Dict[str, Any]:
         """Returns connection validation status as a dictionary."""

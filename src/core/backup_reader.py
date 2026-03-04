@@ -36,10 +36,10 @@ class MessageType(IntEnum):
 
 
 # ---------------------------------------------------------------------------
-# Mock colour / permissions helpers
+# Backup colour / permissions helpers
 # ---------------------------------------------------------------------------
 
-class MockColor:
+class BackupColor:
     """Minimal stand-in for discord.Color."""
 
     __slots__ = ("value",)
@@ -51,16 +51,16 @@ class MockColor:
         return f"#{self.value:06x}"
 
     def __repr__(self) -> str:
-        return f"MockColor(value={self.value})"
+        return f"BackupColor(value={self.value})"
 
     def __eq__(self, other):
-        if isinstance(other, (MockColor, int)):
-            return self.value == (other.value if isinstance(other, MockColor) else other)
+        if isinstance(other, (BackupColor, int)):
+            return self.value == (other.value if isinstance(other, BackupColor) else other)
         return NotImplemented
 
     @classmethod
-    def from_hex(cls, hex_str: str) -> "MockColor":
-        """Parse '#rrggbb' or '0x...' to MockColor."""
+    def from_hex(cls, hex_str: str) -> "BackupColor":
+        """Parse '#rrggbb' or '0x...' to BackupColor."""
         hex_str = hex_str.lstrip("#")
         try:
             return cls(int(hex_str, 16))
@@ -68,7 +68,7 @@ class MockColor:
             return cls(0)
 
 
-class MockPermissions:
+class BackupPermissions:
     """Minimal stand-in for discord.Permissions."""
 
     __slots__ = ("value",)
@@ -85,19 +85,19 @@ class MockPermissions:
         return bool(self.value & 0x10000)
 
     def __repr__(self) -> str:
-        return f"MockPermissions(value={self.value})"
+        return f"BackupPermissions(value={self.value})"
 
 
-class MockPermissionOverwrite:
+class BackupPermissionOverwrite:
     """Minimal stand-in for discord.PermissionOverwrite."""
     pass
 
 
 # ---------------------------------------------------------------------------
-# Mock discord.py model objects
+# Backup discord.py model objects
 # ---------------------------------------------------------------------------
 
-class MockAsset:
+class BackupAsset:
     """Minimal stand-in for discord.Asset.  Points to a local file."""
 
     __slots__ = ("_path", "url")
@@ -120,33 +120,40 @@ class MockAsset:
         return self._path is not None and self._path.exists()
 
 
-class MockRole:
+class BackupRole:
     """Minimal stand-in for discord.Role."""
 
-    __slots__ = ("id", "name", "color", "position", "permissions",
-                 "hoist", "mentionable", "managed")
+    __slots__ = ("id", "name", "color", "position", "permissions", "hoist", "managed", "mentionable")
 
     def __init__(self, data: dict):
         self.id = int(data["id"])
         self.name = data["name"]
-        self.color = MockColor.from_hex(data.get("color", "#000000"))
+        self.color = BackupColor.from_hex(data.get("color", "#000000"))
         self.position = data.get("position", 0)
-        self.permissions = MockPermissions(int(data.get("permissions", 0)))
+        self.permissions = BackupPermissions(int(data.get("permissions", 0)))
         self.hoist = data.get("hoist", False)
-        self.mentionable = data.get("mentionable", False)
-        self.managed = False
+        self.managed = data.get("managed", False)
+        self.mentionable = data.get("mentionable", True)
+
+    @property
+    def mention(self) -> str:
+        return f"<@&{self.id}>"
+
+    @property
+    def created_at(self) -> datetime:
+        return datetime.now(timezone.utc)
 
     def is_default(self) -> bool:
         return self.name == "@everyone"
 
     def __repr__(self) -> str:
-        return f"MockRole(id={self.id}, name='{self.name}')"
+        return f"BackupRole(id={self.id}, name='{self.name}')"
 
 
-class MockCategory:
+class BackupCategory:
     """Minimal stand-in for discord.CategoryChannel."""
 
-    __slots__ = ("id", "name", "position", "type")
+    __slots__ = ("id", "name", "position", "type", "overwrites")
 
     def __init__(self, data: dict):
         try:
@@ -156,16 +163,17 @@ class MockCategory:
         self.name = data["name"]
         self.position = data.get("position", 0)
         self.type = ChannelType.category
+        self.overwrites = {}
 
     def __repr__(self) -> str:
-        return f"MockCategory(id={self.id}, name='{self.name}')"
+        return f"BackupCategory(id={self.id}, name='{self.name}')"
 
 
-class MockChannel:
+class BackupChannel:
     """Minimal stand-in for discord.TextChannel / ForumChannel / VoiceChannel."""
 
     __slots__ = ("id", "name", "type", "position", "topic", "nsfw",
-                 "category_id", "available_tags", "parent_id")
+                 "category_id", "available_tags", "parent_id", "guild", "overwrites")
 
     _TYPE_MAP = {
         "text": ChannelType.text,
@@ -175,7 +183,7 @@ class MockChannel:
         "thread": ChannelType.public_thread,
     }
 
-    def __init__(self, data: dict, category_id: int | None = None):
+    def __init__(self, data: dict, category_id: int | None = None, guild: "BackupGuild|None" = None):
         self.id = int(data["id"])
         self.name = data["name"]
         self.type = self._TYPE_MAP.get(data.get("type", "text"), ChannelType.text)
@@ -185,38 +193,77 @@ class MockChannel:
         self.category_id = category_id
         self.parent_id = category_id
         self.available_tags = data.get("available_tags", [])
+        self.guild = guild
+        self.overwrites = {}
+
+    @property
+    def mention(self) -> str:
+        return f"<#{self.id}>"
+
+    @property
+    def created_at(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+    @property
+    def jump_url(self) -> str:
+        return f"https://discord.com/channels/{self.guild.id if self.guild else 0}/{self.id}"
+
+    def permissions_for(self, member):
+        """Minimal mock for permissions_for. Returns full permissions for now."""
+        return BackupPermissions(0x7FFFFFFF)
 
     def __repr__(self) -> str:
-        return f"MockChannel(id={self.id}, name='{self.name}', type={self.type})"
+        return f"BackupChannel(id={self.id}, name='{self.name}', type={self.type})"
 
 
-class MockMember:
+class BackupMember:
     """Minimal stand-in for discord.Member / discord.User."""
 
     __slots__ = ("id", "name", "display_name", "bot", "color",
-                 "roles", "avatar", "guild_permissions")
+                 "roles", "avatar", "guild_permissions", "discriminator",
+                 "global_name", "created_at", "joined_at", "status", "activity", "system")
 
     def __init__(self, data: dict, role_objects: list | None = None,
                  avatar_base: Path | None = None):
         self.id = int(data["userID"])
         self.name = data.get("username", "Unknown")
         self.display_name = data.get("userNickname") or self.name
+        self.global_name = self.display_name
         self.bot = data.get("userIsBot", False)
-        self.color = MockColor.from_hex(data.get("userColor") or "#000000")
-        self.roles = role_objects or []
-        self.guild_permissions = MockPermissions(0)
+        self.system = False
+        self.discriminator = "0000"
+        self.color = BackupColor.from_hex(data.get("userColor") or "#000000")
+        self.roles = sorted(role_objects or [], key=lambda r: r.position, reverse=True)
+        self.guild_permissions = BackupPermissions(0)
+        
+        self.created_at = datetime.now(timezone.utc)
+        self.joined_at = datetime.now(timezone.utc)
+        self.status = type("Status", (), {"value": "offline"})()
+        self.activity = None
 
         avatar_rel = data.get("userAvatar")
         if avatar_rel and avatar_base:
-            self.avatar = MockAsset(avatar_base / avatar_rel)
+            self.avatar = BackupAsset(avatar_base / avatar_rel)
         else:
-            self.avatar = MockAsset(None)
+            self.avatar = BackupAsset(None)
+
+    @property
+    def mention(self) -> str:
+        return f"<@{self.id}>"
+
+    @property
+    def top_role(self) -> "BackupRole|None":
+        return self.roles[0] if self.roles else None
+
+    @property
+    def display_avatar(self) -> BackupAsset:
+        return self.avatar
 
     def __repr__(self) -> str:
-        return f"MockMember(id={self.id}, name='{self.name}')"
+        return f"BackupMember(id={self.id}, name='{self.name}')"
 
 
-class MockAttachment:
+class BackupAttachment:
     """Minimal stand-in for discord.Attachment."""
 
     __slots__ = ("id", "filename", "size", "url", "proxy_url", "_backup_root")
@@ -241,10 +288,10 @@ class MockAttachment:
         Path(path).write_bytes(data)
 
     def __repr__(self) -> str:
-        return f"MockAttachment(id={self.id}, filename='{self.filename}')"
+        return f"BackupAttachment(id={self.id}, filename='{self.filename}')"
 
 
-class MockEmoji:
+class BackupEmoji:
     """Minimal stand-in for discord.Emoji."""
 
     __slots__ = ("id", "name", "animated", "url", "_file_path")
@@ -263,10 +310,10 @@ class MockEmoji:
         return b""
 
     def __repr__(self) -> str:
-        return f"MockEmoji(id={self.id}, name='{self.name}')"
+        return f"BackupEmoji(id={self.id}, name='{self.name}')"
 
 
-class MockSticker:
+class BackupSticker:
     """Minimal stand-in for discord.GuildSticker."""
 
     __slots__ = ("id", "name", "url", "format", "_file_path")
@@ -285,10 +332,10 @@ class MockSticker:
         return b""
 
     def __repr__(self) -> str:
-        return f"MockSticker(id={self.id}, name='{self.name}')"
+        return f"BackupSticker(id={self.id}, name='{self.name}')"
 
 
-class MockPartialEmoji:
+class BackupPartialEmoji:
     """Minimal stand-in for discord.PartialEmoji."""
 
     __slots__ = ("name", "id", "animated")
@@ -304,7 +351,7 @@ class MockPartialEmoji:
         return self.name
 
 
-class MockReaction:
+class BackupReaction:
     """Minimal stand-in for discord.Reaction."""
 
     __slots__ = ("emoji", "count")
@@ -316,17 +363,17 @@ class MockReaction:
         if ":" in emoji_raw and not emoji_raw.startswith("<"):
             parts = emoji_raw.split(":", 1)
             try:
-                self.emoji = MockPartialEmoji(name=parts[0], id=int(parts[1]))
+                self.emoji = BackupPartialEmoji(name=parts[0], id=int(parts[1]))
             except (ValueError, IndexError):
-                self.emoji = MockPartialEmoji(name=emoji_raw)
+                self.emoji = BackupPartialEmoji(name=emoji_raw)
         else:
-            self.emoji = MockPartialEmoji(name=emoji_raw)
+            self.emoji = BackupPartialEmoji(name=emoji_raw)
 
     def is_custom_emoji(self) -> bool:
         return self.emoji.id is not None
 
 
-class MockMessageReference:
+class BackupMessageReference:
     """Minimal stand-in for discord.MessageReference."""
 
     __slots__ = ("message_id", "channel_id")
@@ -336,7 +383,7 @@ class MockMessageReference:
         self.channel_id = int(data["channelId"])
 
 
-class MockThread:
+class BackupThread:
     """Minimal stand-in for discord.Thread metadata attached to a starter message."""
 
     __slots__ = ("id", "name", "message_count", "archived",
@@ -345,14 +392,14 @@ class MockThread:
     def __init__(self, data: dict, parent_id: int | None = None):
         self.id = int(data["id"])
         self.name = data.get("name", "")
-        self.message_count = data.get("messageCount", 0)
+        self.message_count = data.get("message_count", 0)
         self.archived = data.get("archived", False)
-        self.auto_archive_duration = data.get("archiveDuration", 1440)
+        self.auto_archive_duration = data.get("auto_archive_duration", 1440)
         self.locked = data.get("locked", False)
         self.parent_id = parent_id
 
 
-class MockMessage:
+class BackupMessage:
     """Minimal stand-in for discord.Message."""
 
     _TYPE_MAP = {
@@ -365,18 +412,41 @@ class MockMessage:
 
     __slots__ = ("id", "type", "created_at", "pinned", "content", "author",
                  "attachments", "embeds", "stickers", "reactions",
-                 "reference", "thread", "channel_id", "flags")
+                 "reference", "thread", "channel_id", "flags", "guild", "channel",
+                 "mentions", "role_mentions", "channel_mentions", "mention_everyone",
+                 "tts", "nonce", "webhook_id", "application_id", "activity",
+                 "application", "interaction", "components", "jump_url")
 
     def __init__(self, data: dict, *,
-                 author: MockMember | None = None,
-                 channel_id: int | None = None,
+                 author: BackupMember | None = None,
+                 guild: "BackupGuild | None" = None,
+                 channel: BackupChannel | None = None,
                  backup_root: Path | None = None):
         self.id = int(data["messageID"])
         self.type = self._TYPE_MAP.get(data.get("type", "Default"), MessageType.default)
         self.pinned = data.get("isPinned", False)
         self.content = data.get("content", "")
         self.author = author
-        self.channel_id = channel_id
+        self.guild = guild
+        self.channel = channel
+        self.channel_id = channel.id if channel else (int(data.get("channelID")) if data.get("channelID") else None)
+
+        # Mentions (if not in backup, default to empty)
+        self.mentions = []
+        self.role_mentions = []
+        self.channel_mentions = []
+        self.mention_everyone = data.get("mentionEveryone", False)
+
+        # Standard discord.Message properties
+        self.tts = False
+        self.nonce = None
+        self.webhook_id = None
+        self.application_id = None
+        self.activity = None
+        self.application = None
+        self.interaction = None
+        self.components = []
+        self.jump_url = f"https://discord.com/channels/{guild.id if guild else 0}/{self.channel_id}/{self.id}"
 
         # Timestamp
         ts = data.get("timestamp")
@@ -390,7 +460,7 @@ class MockMessage:
 
         # Attachments
         self.attachments = [
-            MockAttachment(a, backup_root=backup_root)
+            BackupAttachment(a, backup_root=backup_root)
             for a in data.get("attachments", [])
         ]
 
@@ -401,37 +471,60 @@ class MockMessage:
         self.stickers = data.get("stickers", [])
 
         # Reactions
-        self.reactions = [MockReaction(r) for r in data.get("reactions", [])]
+        self.reactions = [BackupReaction(r) for r in data.get("reactions", [])]
 
         # Reference (replies)
         ref = data.get("reference")
-        self.reference = MockMessageReference(ref) if ref else None
+        self.reference = BackupMessageReference(ref) if ref else None
 
         # Thread info
         thread_data = data.get("thread")
-        self.thread = MockThread(thread_data, parent_id=channel_id) if thread_data else None
+        self.thread = BackupThread(thread_data, parent_id=self.channel_id) if thread_data else None
 
         # Flags placeholder
-        self.flags = type("Flags", (), {"forwarded": data.get("type") == "Forward"})()
+        self.flags = type("Flags", (), {
+            "forwarded": data.get("type") == "Forward",
+            "value": 0  # Bitmask value
+        })()
 
     def __repr__(self) -> str:
-        return f"MockMessage(id={self.id}, author={self.author})"
+        return f"BackupMessage(id={self.id}, author={self.author})"
 
 
-class MockGuild:
+class BackupGuild:
     """Minimal stand-in for discord.Guild."""
 
-    __slots__ = ("id", "name", "icon", "banner")
+    __slots__ = ("id", "name", "icon", "banner", "_reader")
 
-    def __init__(self, data: dict, backup_path: Path):
+    def __init__(self, data: dict, backup_path: Path, reader: "BackupReader" = None):
         self.id = int(data["id"])
         self.name = data["name"]
+        self._reader = reader
 
         icon_rel = data.get("icon")
-        self.icon = MockAsset(backup_path / icon_rel) if icon_rel else MockAsset(None)
+        self.icon = BackupAsset(backup_path / icon_rel) if icon_rel else BackupAsset(None)
 
         banner_rel = data.get("banner")
-        self.banner = MockAsset(backup_path / banner_rel) if banner_rel else MockAsset(None)
+        self.banner = BackupAsset(backup_path / banner_rel) if banner_rel else BackupAsset(None)
+
+    @property
+    def roles(self) -> List[BackupRole]:
+        return self._reader._roles if self._reader else []
+
+    @property
+    def members(self) -> List[BackupMember]:
+        return self._reader._members if self._reader else []
+
+    @property
+    def channels(self) -> List[BackupChannel]:
+        return self._reader._channels if self._reader else []
+
+    @property
+    def categories(self) -> List[BackupCategory]:
+        return self._reader._categories if self._reader else []
+
+    def __repr__(self) -> str:
+        return f"BackupGuild(id={self.id}, name='{self.name}')"
 
 
 # ---------------------------------------------------------------------------
@@ -462,7 +555,7 @@ class BackupReader:
     Forbidden = BackupForbidden
 
     CHANNEL_TYPE_TEXT = ChannelType.text
-    CHANNEL_TYPE_NEWS = ChannelType.news
+    CHANNEL_TYPE_NEWS = ChannelType.voice  # simplified
     CHANNEL_TYPE_FORUM = ChannelType.forum
 
     @staticmethod
@@ -476,21 +569,21 @@ class BackupReader:
     @staticmethod
     def create_permission_overwrite():
         """Factory for a PermissionOverwrite mock."""
-        return MockPermissionOverwrite()
+        return BackupPermissionOverwrite()
 
     def __init__(self, backup_path: str | Path):
         self.backup_path = Path(backup_path)
-        self.guild: MockGuild | None = None
+        self.guild: BackupGuild | None = None
         self.role_map: Dict[int, str] = {}
 
         # Internal caches populated by start()
-        self._categories: List[MockCategory] = []
-        self._channels: List[MockChannel] = []
-        self._roles: List[MockRole] = []
-        self._emojis: List[MockEmoji] = []
-        self._stickers: List[MockSticker] = []
-        self._members: List[MockMember] = []
-        self._member_map: Dict[int, MockMember] = {}
+        self._categories: List[BackupCategory] = []
+        self._channels: List[BackupChannel] = []
+        self._roles: List[BackupRole] = []
+        self._emojis: List[BackupEmoji] = []
+        self._stickers: List[BackupSticker] = []
+        self._members: List[BackupMember] = []
+        self._member_map: Dict[int, BackupMember] = {}
 
     # ── startup ──────────────────────────────────────────────────────────
 
@@ -498,11 +591,11 @@ class BackupReader:
         """Loads all JSON files from the backup directory into memory."""
         bp = self.backup_path
 
-        # 1. Server profile -> MockGuild
+        # 1. Server profile -> BackupGuild
         profile_file = bp / "server_profile.json"
         if profile_file.exists():
             profile = json.loads(profile_file.read_text(encoding="utf-8"))
-            self.guild = MockGuild(profile, bp)
+            self.guild = BackupGuild(profile, bp, reader=self)
             logger.info(f"[Backup] Loaded server profile: {self.guild.name} ({self.guild.id})")
         else:
             logger.warning(f"[Backup] server_profile.json not found in {bp}")
@@ -512,7 +605,7 @@ class BackupReader:
         roles_file = bp / "server_roles.json"
         if roles_file.exists():
             roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
-            self._roles = [MockRole(r) for r in roles_data]
+            self._roles = [BackupRole(r) for r in roles_data]
             self.role_map = {r.id: r.name for r in self._roles}
             logger.info(f"[Backup] Loaded {len(self._roles)} roles")
 
@@ -521,13 +614,13 @@ class BackupReader:
         if struct_file.exists():
             structure = json.loads(struct_file.read_text(encoding="utf-8"))
             for cat_data in structure:
-                cat = MockCategory(cat_data)
+                cat = BackupCategory(cat_data)
                 if cat.id != 0:  # skip 'uncategorized' as a real category
                     self._categories.append(cat)
 
                 for ch_data in cat_data.get("channels", []):
                     ch_cat_id = cat.id if cat.id != 0 else None
-                    channel = MockChannel(ch_data, category_id=ch_cat_id)
+                    channel = BackupChannel(ch_data, category_id=ch_cat_id, guild=self.guild)
                     self._channels.append(channel)
 
             logger.info(f"[Backup] Loaded {len(self._categories)} categories, "
@@ -538,8 +631,8 @@ class BackupReader:
         media_dir = bp / "server_media"
         if assets_file.exists():
             assets = json.loads(assets_file.read_text(encoding="utf-8"))
-            self._emojis = [MockEmoji(e, media_dir) for e in assets.get("emojis", [])]
-            self._stickers = [MockSticker(s, media_dir) for s in assets.get("stickers", [])]
+            self._emojis = [BackupEmoji(e, media_dir) for e in assets.get("emojis", [])]
+            self._stickers = [BackupSticker(s, media_dir) for s in assets.get("stickers", [])]
             logger.info(f"[Backup] Loaded {len(self._emojis)} emojis, "
                         f"{len(self._stickers)} stickers")
 
@@ -552,7 +645,7 @@ class BackupReader:
                 for u in users:
                     user_role_ids = {int(r["id"]) for r in u.get("userRoles", [])}
                     role_objs = [r for r in self._roles if r.id in user_role_ids]
-                    member = MockMember(u, role_objects=role_objs, avatar_base=backup_root)
+                    member = BackupMember(u, role_objects=role_objs, avatar_base=backup_root)
                     self._members.append(member)
                     self._member_map[member.id] = member
                 logger.info(f"[Backup] Loaded {len(self._members)} users")
@@ -601,21 +694,37 @@ class BackupReader:
             "banner_url": self.guild.banner.url if self.guild.banner else None,
         }
 
-    async def download_asset(self, asset: MockAsset) -> bytes:
+    async def download_asset(self, asset: BackupAsset) -> bytes:
         return await asset.read()
 
     # ── categories & channels ────────────────────────────────────────────
 
-    async def get_categories(self) -> List[MockCategory]:
+    async def get_categories(self) -> List[BackupCategory]:
         return list(self._categories)
 
-    async def get_channels(self, category_id: int | None = None) -> List[MockChannel]:
+    async def get_channels(self, category_id: int | None = None) -> List[BackupChannel]:
         channels = [c for c in self._channels if c.type != ChannelType.category]
         if category_id is not None:
             channels = [c for c in channels if c.category_id == category_id]
         return channels
 
-    async def get_channel(self, channel_id: int) -> MockChannel | None:
+    async def get_backed_up_channel_ids(self) -> List[int]:
+        """Returns a list of channel IDs that have corresponding backup JSON files."""
+        backup_dir = self.backup_path / "message_backup"
+        if not backup_dir.exists():
+            return []
+        
+        ids = []
+        for f in backup_dir.glob("*.json"):
+            if f.name == "user_info.json":
+                continue
+            try:
+                ids.append(int(f.stem))
+            except ValueError:
+                pass
+        return ids
+
+    async def get_channel(self, channel_id: int) -> BackupChannel | None:
         for c in self._channels:
             if c.id == channel_id:
                 return c
@@ -623,26 +732,26 @@ class BackupReader:
 
     # ── roles, emojis, stickers, members ─────────────────────────────────
 
-    async def get_roles(self) -> List[MockRole]:
+    async def get_roles(self) -> List[BackupRole]:
         return [r for r in self._roles if not r.is_default()]
 
-    async def get_emojis(self) -> List[MockEmoji]:
+    async def get_emojis(self) -> List[BackupEmoji]:
         return list(self._emojis)
 
-    async def get_stickers(self) -> List[MockSticker]:
+    async def get_stickers(self) -> List[BackupSticker]:
         return list(self._stickers)
 
-    async def get_members(self) -> List[MockMember]:
+    async def get_members(self) -> List[BackupMember]:
         return list(self._members)
 
     # ── messages ─────────────────────────────────────────────────────────
 
-    def _resolve_author(self, user_id_str: str) -> MockMember:
-        """Returns MockMember for a userID, creating a stub if missing."""
+    def _resolve_author(self, user_id_str: str) -> BackupMember:
+        """Returns BackupMember for a userID, creating a stub if missing."""
         uid = int(user_id_str)
         if uid in self._member_map:
             return self._member_map[uid]
-        stub = MockMember({
+        stub = BackupMember({
             "userID": user_id_str,
             "username": f"User#{user_id_str[-4:]}",
             "userIsBot": False,
@@ -672,24 +781,29 @@ class BackupReader:
             logger.error(f"[Backup] Failed to load messages for channel {channel_id}: {e}")
             return []
 
-    def _hydrate_message(self, msg_data: dict, channel_id: int) -> MockMessage:
+    def _hydrate_message(self, msg_data: dict, channel_id: int) -> BackupMessage:
         author = self._resolve_author(msg_data.get("userID", "0"))
         backup_root = self.backup_path / "message_backup"
-        return MockMessage(
+        
+        # Resolve channel object
+        channel = next((c for c in self._channels if c.id == channel_id), None)
+        
+        return BackupMessage(
             msg_data,
             author=author,
-            channel_id=channel_id,
+            guild=self.guild,
+            channel=channel,
             backup_root=backup_root,
         )
 
-    async def get_message(self, channel_id: int, message_id: int) -> MockMessage | None:
+    async def get_message(self, channel_id: int, message_id: int) -> BackupMessage | None:
         messages = self._load_channel_messages(channel_id)
         for m in messages:
             if int(m["messageID"]) == message_id:
                 return self._hydrate_message(m, channel_id)
         return None
 
-    async def get_first_message(self, channel_id: int) -> MockMessage | None:
+    async def get_first_message(self, channel_id: int) -> BackupMessage | None:
         messages = self._load_channel_messages(channel_id)
         if messages:
             return self._hydrate_message(messages[0], channel_id)
@@ -700,8 +814,8 @@ class BackupReader:
         channel_id: int,
         limit: int = None,
         after_id: int = None,
-    ) -> AsyncGenerator["MockMessage", None]:
-        """Yields MockMessages from the backup, respecting after_id and limit."""
+    ) -> AsyncGenerator["BackupMessage", None]:
+        """Yields BackupMessages from the backup, respecting after_id and limit."""
         messages = self._load_channel_messages(channel_id)
         count = 0
 
@@ -718,13 +832,13 @@ class BackupReader:
 
     # ── download helpers ─────────────────────────────────────────────────
 
-    async def download_emoji(self, emoji: MockEmoji) -> bytes:
+    async def download_emoji(self, emoji: BackupEmoji) -> bytes:
         return await emoji.read()
 
-    async def download_sticker(self, sticker: MockSticker) -> bytes:
+    async def download_sticker(self, sticker: BackupSticker) -> bytes:
         return await sticker.read()
 
-    async def download_attachment(self, attachment: MockAttachment) -> bytes:
+    async def download_attachment(self, attachment: BackupAttachment) -> bytes:
         return await attachment.read()
 
     # ── lifecycle ────────────────────────────────────────────────────────

@@ -214,7 +214,8 @@ class MigrationState:
                 "last_message_id": "",
                 "last_message_timestamp": "",
                 "total_messages": 0,
-                "total_files": 0
+                "total_files": 0,
+                "threads": {}
             }
             
     def increment_stats(self, target_channel_id: str, messages: int = 1, files: int = 0):
@@ -223,6 +224,50 @@ class MigrationState:
         c["total_messages"] = c.get("total_messages", 0) + messages
         c["total_files"] = c.get("total_files", 0) + files
         self.save_messages()
+
+    # --- Thread Tracking ---
+
+    def _ensure_thread_tracking(self, target_channel_id: str, thread_id: str):
+        self._ensure_channel_tracking(target_channel_id)
+        threads = self.channel_messages[str(target_channel_id)].setdefault("threads", {})
+        if str(thread_id) not in threads:
+            threads[str(thread_id)] = {
+                "thread_map": {},
+                "last_message_id": "",
+                "last_message_timestamp": "",
+                "total_messages": 0,
+                "total_files": 0
+            }
+
+    def increment_thread_stats(self, target_channel_id: str, thread_id: str, messages: int = 1, files: int = 0):
+        self._ensure_thread_tracking(target_channel_id, thread_id)
+        t = self.channel_messages[str(target_channel_id)]["threads"][str(thread_id)]
+        t["total_messages"] = t.get("total_messages", 0) + messages
+        t["total_files"] = t.get("total_files", 0) + files
+        self.save_messages()
+
+    def set_thread_message_mapping(self, target_channel_id: str, thread_id: str, discord_id: str, target_id: str):
+        self._ensure_thread_tracking(target_channel_id, thread_id)
+        self.channel_messages[str(target_channel_id)]["threads"][str(thread_id)]["thread_map"][str(discord_id)] = str(target_id)
+        # Also add to main message_map for global message resolution (like replies)
+        self.set_message_mapping(target_channel_id, discord_id, target_id)
+
+    def update_thread_last_message_timestamp(self, target_channel_id: str, thread_id: str, timestamp: str):
+        self._ensure_thread_tracking(target_channel_id, thread_id)
+        self.channel_messages[str(target_channel_id)]["threads"][str(thread_id)]["last_message_timestamp"] = str(timestamp)
+        self.save_messages()
+
+    def update_thread_last_message_id(self, target_channel_id: str, thread_id: str, message_id: str):
+        self._ensure_thread_tracking(target_channel_id, thread_id)
+        self.channel_messages[str(target_channel_id)]["threads"][str(thread_id)]["last_message_id"] = str(message_id)
+        self.save_messages()
+
+    def get_thread_message_id(self, target_channel_id: str, thread_id: str, discord_id: str) -> str | None:
+        if str(target_channel_id) in self.channel_messages:
+            threads = self.channel_messages[str(target_channel_id)].get("threads", {})
+            if str(thread_id) in threads:
+                return threads[str(thread_id)]["thread_map"].get(str(discord_id))
+        return None
             
     def set_message_mapping(self, target_channel_id: str, discord_id: str, fluxer_id: str):
         self._ensure_channel_tracking(target_channel_id)
