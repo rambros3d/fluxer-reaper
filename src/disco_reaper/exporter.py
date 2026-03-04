@@ -354,6 +354,7 @@ class DiscordExporter:
         # 1. Fetch new messages - Handle Forbidden gracefully
         try:
             async for msg in self.reader.fetch_message_history(channel_id, after_id=last_id):
+                await asyncio.sleep(0) # Yield control
                 msg_data = await self._format_message(msg, asset_dir, base_filename, avatar_dir, avatar_rel_base)
                 messages.append(msg_data)
                 new_count += 1
@@ -393,6 +394,7 @@ class DiscordExporter:
 
         thread_count = len(all_threads)
         for t in all_threads:
+            await asyncio.sleep(0) # Yield for safety
             thread_msg_count += (t.message_count or 0)
 
         msg_type = "Text"
@@ -428,6 +430,7 @@ class DiscordExporter:
                     output_data[k] = v
         
         # Save channel messages
+        await asyncio.sleep(0) # Yield before writing large JSON
         with open(json_file, "w", encoding="utf-8") as f:
             json.dump(output_data, f, indent=4, ensure_ascii=False)
             
@@ -646,6 +649,8 @@ class DiscordExporter:
             logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
             
         for thread in all_threads:
+            await asyncio.sleep(0) # important yield between threads
+            
             # First backup the full thread — this creates {thread_id}.json with totalAttachmentSizeBytes
             accumulated_count = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count)
             thread_count += 1
@@ -726,6 +731,7 @@ class DiscordExporter:
                             # Keep chronological order
                             forum_data["messages"].sort(key=lambda x: x["timestamp"])
                             
+                            await asyncio.sleep(0) # Yield before writing
                             with open(forum_json_file, "w", encoding="utf-8") as f:
                                 json.dump(forum_data, f, indent=4, ensure_ascii=False)
                             logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")

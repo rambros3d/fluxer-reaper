@@ -6,8 +6,12 @@ Embedded inside ModeScreen's "Backup" tab.
 import asyncio
 import json
 import re
+import logging
+import traceback
 from pathlib import Path
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, VerticalScroll
@@ -139,11 +143,14 @@ class BackupPane(Container):
             modal.write("Exporting structure...")
             _, cat_count, chan_count = await self.exporter.export_channels_structure()
 
+            modal.write("Exporting roles...")
+            roles = await self.exporter.export_roles()
+
             modal.write("Exporting assets...")
             e_count, s_count = await self.exporter.export_assets()
 
             modal.write(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
-            modal.write(f"- {e_count} emojis, {s_count} stickers.")
+            modal.write(f"- {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
             modal.phase_report("Profile Backup")
 
         except self.engine.discord_reader.Forbidden as e:
@@ -216,6 +223,7 @@ class BackupPane(Container):
                 selected_channels = [c for c in eligible_channels if c.id in selected_ids]
 
                 # Phase 2: Confirmation
+                modal_prog = ProgressScreen() # Re-instantiate to avoid Textual re-push UI freeze
                 self.app.push_screen(modal_prog)
                 await asyncio.sleep(0.1)
                 
@@ -242,11 +250,14 @@ class BackupPane(Container):
             modal_prog.write(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
 
             for chan in selected_channels:
+                await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
+                
                 backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
                 is_sync = backup_exists and not force_overwrite
 
                 label = "Syncing Backup" if is_sync else "Backing up"
                 modal_prog.write(f"[cyan]{label}: {chan.name}[/cyan]")
+                logger.info(f"{label} for channel: #{chan.name} ({chan.id})")
 
                 async def update_msg_count(name, count):
                     modal_prog.set_status(f"{name}: {count} messages")
@@ -258,9 +269,11 @@ class BackupPane(Container):
 
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Message backup complete![/bold green]")
+            logger.info("Message backup operation completed successfully.")
             modal_prog.phase_report("Message Backup")
 
         except Exception as e:
+            logger.error(f"Message backup failed: {e}\n{traceback.format_exc()}")
             modal_prog.write(f"[bold red]Message backup failed: {e}[/bold red]")
             modal_prog.phase_report("Message Backup", "error")
         finally:
@@ -304,7 +317,10 @@ class BackupPane(Container):
             else:
                 modal_prog.write(f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
                 for chan in selected_channels:
+                    await asyncio.sleep(0.01) # Yield to UI thread
+                    
                     modal_prog.write(f"[cyan]Syncing: {chan.name}[/cyan]")
+                    logger.info(f"Syncing backup for channel: #{chan.name} ({chan.id})")
 
                     async def update_msg_count(name, count):
                         modal_prog.set_status(f"{name}: {count} messages")
@@ -315,9 +331,11 @@ class BackupPane(Container):
 
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Sync operation complete![/bold green]")
+            logger.info("Sync operation completed successfully.")
             modal_prog.phase_report("Backup Sync")
 
         except Exception as e:
+            logger.error(f"Sync failed: {e}\n{traceback.format_exc()}")
             modal_prog.write(f"[bold red]Sync failed: {e}[/bold red]")
             modal_prog.phase_report("Backup Sync", "error")
         finally:
