@@ -523,7 +523,8 @@ class DiscordExporter:
                 "userColor": str(author.color) if hasattr(author, "color") else None,
                 "userIsBot": author.bot,
                 "userRoles": roles,
-                "userAvatar": f"user_avatars/{user_id}.png" if author.avatar else None
+                "userAvatar": f"user_avatars/{user_id}.png" if author.avatar else None,
+                "userAvatarUrl": str(author.display_avatar.url) if author.avatar else None
             }
 
         reactions = []

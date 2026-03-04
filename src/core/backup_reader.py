@@ -221,7 +221,8 @@ class BackupMember:
 
     __slots__ = ("id", "name", "display_name", "bot", "color",
                  "roles", "avatar", "guild_permissions", "discriminator",
-                 "global_name", "created_at", "joined_at", "status", "activity", "system")
+                 "global_name", "created_at", "joined_at", "status", "activity", "system",
+                 "_avatar_url")
 
     def __init__(self, data: dict, role_objects: list | None = None,
                  avatar_base: Path | None = None):
@@ -241,6 +242,10 @@ class BackupMember:
         self.status = type("Status", (), {"value": "offline"})()
         self.activity = None
 
+        # CDN URL from Discord (saved during backup)
+        self._avatar_url = data.get("userAvatarUrl")
+
+        # Local file asset (for reading bytes)
         avatar_rel = data.get("userAvatar")
         if avatar_rel and avatar_base:
             self.avatar = BackupAsset(avatar_base / avatar_rel)
@@ -257,6 +262,11 @@ class BackupMember:
 
     @property
     def display_avatar(self) -> BackupAsset:
+        """Returns an asset with the CDN URL if available, otherwise the local file asset."""
+        if self._avatar_url:
+            asset = BackupAsset(None)
+            asset.url = self._avatar_url
+            return asset
         return self.avatar
 
     def __repr__(self) -> str:

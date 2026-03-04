@@ -208,10 +208,14 @@ async def migrate_messages(
                     else:
                         logger.debug(f"Reply target Discord ID {msg.reference.message_id} not found in current session map.")
                 
+                avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar.url else None
+                if avatar_url and not avatar_url.startswith("http"):
+                    avatar_url = None
+
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,
                     author_name=msg.author.display_name,
-                    author_avatar_url=str(msg.author.display_avatar.url),
+                    author_avatar_url=avatar_url,
                     content=content,
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     files=files if files else None,
