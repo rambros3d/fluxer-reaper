@@ -360,7 +360,16 @@ class DiscordExporter:
                 new_count += 1
                 accumulated_count += 1
                 if progress_callback:
-                    await progress_callback(channel_name, accumulated_count)
+                    author = getattr(msg, "author", None)
+                    author_name = getattr(author, "display_name", "Unknown") if author else "Unknown"
+                    content = msg.content or ""
+                    attachments_len = len(msg.attachments) if hasattr(msg, "attachments") else 0
+                    preview = content[:150] + ("..." if len(content) > 150 else "")
+                    if attachments_len:
+                        preview += f" [dim]({attachments_len} attachments)[/dim]"
+                    if not preview:
+                        preview = "[dim](no content)[/dim]"
+                    await progress_callback(channel_name, accumulated_count, author_name=author_name, message_preview=preview)
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to read messages in {channel_name} ({channel_id})")
             if not messages: return accumulated_count

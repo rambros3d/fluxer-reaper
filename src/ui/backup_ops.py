@@ -53,7 +53,7 @@ class BackupPane(Container):
             with Vertical(id="bp_actions"):
                 yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True)
                 yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary")
-                yield Button("Update & Sync Backup", id="bp_backup_sync", disabled=True, variant="success")
+                yield Button("Update Existing Backup", id="bp_backup_sync", disabled=True, variant="success")
 
     def on_mount(self) -> None:
         self._validate()
@@ -228,8 +228,12 @@ class BackupPane(Container):
                 await asyncio.sleep(0.1)
                 
                 msg = "Sync existing backups" if not force_overwrite else "Overwriting existing backups"
+                target_preview = ", ".join([c.name for c in selected_channels[:3]])
+                if len(selected_channels) > 3:
+                    target_preview += "..."
+
                 modal_prog.set_status(f"Awaiting Confirmation to backup [bold]{len(selected_channels)}[/bold] channels...")
-                modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {', '.join([c.name for c in selected_channels[:3]])}{'...' if len(selected_channels) > 3 else ''}")
+                modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {target_preview}")
 
                 choice = await modal_prog.phase_wait_confirm(btn_start_label="Start Channel Backup", show_id=False)
                 if choice == "btn_back":
@@ -244,28 +248,44 @@ class BackupPane(Container):
                 break
 
             modal_prog.phase_progress()
+            modal_prog.show_stats()
 
             total_chans = len(selected_channels)
             modal_prog.set_status("Backing up messages...")
             modal_prog.write(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
 
-            for chan in selected_channels:
+            accumulated_msgs = 0
+
+            for i, chan in enumerate(selected_channels):
                 await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
                 
                 backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
                 is_sync = backup_exists and not force_overwrite
 
                 label = "Syncing Backup" if is_sync else "Backing up"
+                modal_prog.set_item_status(f"[cyan]Processing ({i+1}/{total_chans}): #{chan.name}[/cyan]")
+                modal_prog.set_progress(i, total_chans)
                 modal_prog.write(f"[cyan]{label}: {chan.name}[/cyan]")
                 logger.info(f"{label} for channel: #{chan.name} ({chan.id})")
 
-                async def update_msg_count(name, count):
-                    modal_prog.set_status(f"{name}: {count} messages")
+                async def update_msg_count(name, count, author_name=None, message_preview=None):
+                    modal_prog.update_stats(messages=str(count))
+                    if author_name and message_preview:
+                        modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
-                await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=force_overwrite)
-                await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=force_overwrite)
+                accumulated_msgs = await self.exporter.export_channel_messages(
+                    chan.id, progress_callback=update_msg_count, force=force_overwrite,
+                    accumulated_count=accumulated_msgs
+                )
+                accumulated_msgs = await self.exporter.export_threads(
+                    chan.id, progress_callback=update_msg_count, force=force_overwrite,
+                    accumulated_count=accumulated_msgs
+                )
 
                 modal_prog.write(f"[green]Completed: {chan.name}[/green]")
+
+            modal_prog.set_progress(total_chans, total_chans)
+            modal_prog.set_item_status("[bold green]Backup completed successfully![/bold green]")
 
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Message backup complete![/bold green]")
@@ -315,19 +335,38 @@ class BackupPane(Container):
             if not selected_channels:
                 modal_prog.write("[yellow]No existing backups found to sync.[/yellow]")
             else:
-                modal_prog.write(f"[yellow]Syncing {len(selected_channels)} channels...[/yellow]")
-                for chan in selected_channels:
+                total_chans = len(selected_channels)
+                modal_prog.show_stats()
+                modal_prog.set_status("Syncing messages...")
+                modal_prog.write(f"[yellow]Syncing {total_chans} channels...[/yellow]")
+                
+                accumulated_msgs = 0
+                
+                for i, chan in enumerate(selected_channels):
                     await asyncio.sleep(0.01) # Yield to UI thread
                     
+                    modal_prog.set_item_status(f"[cyan]Syncing ({i+1}/{total_chans}): #{chan.name}[/cyan]")
+                    modal_prog.set_progress(i, total_chans)
                     modal_prog.write(f"[cyan]Syncing: {chan.name}[/cyan]")
                     logger.info(f"Syncing backup for channel: #{chan.name} ({chan.id})")
 
-                    async def update_msg_count(name, count):
-                        modal_prog.set_status(f"{name}: {count} messages")
+                    async def update_msg_count(name, count, author_name=None, message_preview=None):
+                        modal_prog.update_stats(messages=str(count))
+                        if author_name and message_preview:
+                            modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
-                    await self.exporter.export_channel_messages(chan.id, progress_callback=update_msg_count, force=False)
-                    await self.exporter.export_threads(chan.id, progress_callback=update_msg_count, force=False)
+                    accumulated_msgs = await self.exporter.export_channel_messages(
+                        chan.id, progress_callback=update_msg_count, force=False,
+                        accumulated_count=accumulated_msgs
+                    )
+                    accumulated_msgs = await self.exporter.export_threads(
+                        chan.id, progress_callback=update_msg_count, force=False,
+                        accumulated_count=accumulated_msgs
+                    )
                     modal_prog.write(f"[green]Synced: {chan.name}[/green]")
+                
+                modal_prog.set_progress(total_chans, total_chans)
+                modal_prog.set_item_status("[bold green]Sync operation complete![/bold green]")
 
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Sync operation complete![/bold green]")
