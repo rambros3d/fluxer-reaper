@@ -4,7 +4,6 @@ Embedded inside ModeScreen's "Migrate" tab.
 """
 
 import asyncio
-import discord
 import logging
 import re
 import time
@@ -13,7 +12,7 @@ import traceback
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, VerticalScroll
+from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.widgets import Button, Label, Rule
 from textual import work
 
@@ -86,6 +85,11 @@ class ShuttlePane(Container):
     ShuttlePane #sp_info {
         height: auto; border: tall cyan; padding: 1; margin-bottom: 1;
     }
+    #sp_info_split { height: auto; layout: horizontal; }
+    .info_pane { width: 1fr; height: auto; }
+    .info_pane Label { width: 100%; }
+    .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
+    
     ShuttlePane #sp_actions { height: auto; }
     ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
     """
@@ -104,8 +108,18 @@ class ShuttlePane(Container):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             with Vertical(id="sp_info"):
-                yield Label("Discord: [yellow]Loading...[/yellow]", id="sp_lbl_discord")
-                yield Label("Target: [yellow]Loading...[/yellow]", id="sp_lbl_target")
+                with Horizontal(id="sp_info_split"):
+                    with Vertical(classes="info_pane"):
+                        yield Label("Discord", classes="pane_header")
+                        yield Label("Server: [yellow]Loading...[/yellow]", id="sp_lbl_d_server")
+                        yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_d_bot")
+                    
+                    with Vertical(classes="info_pane"):
+                        yield Label("Target", id="sp_lbl_t_header", classes="pane_header")
+                        yield Label("Community: [yellow]Loading...[/yellow]", id="sp_lbl_t_comm")
+                        yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_t_bot")
+                
+                yield Rule()
                 yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_status")
             with Vertical(id="sp_actions"):
                 yield Button("Clone Server Template", id="sp_clone", disabled=True)
@@ -138,28 +152,39 @@ class ShuttlePane(Container):
         # Discord
         d_name = v.get("discord_server_name")
         d_bot = v.get("discord_bot_name")
+        
         if v.get("discord_timeout"):
-            d_disp = "[red]TIMEOUT[/red]"
-        elif d_name and v.get("discord_token") and v.get("discord_server"):
-            d_disp = f'[green]"{d_name}"[/green]  Bot: [green]{d_bot}[/green]'
+            s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
+        elif v.get("discord_token") and v.get("discord_server"):
+            s_disp = f'[green]"{d_name}"[/green]'
+            b_disp = f'[green]{d_bot}[/green]'
         elif v.get("discord_token") is False:
-            d_disp = "[red]INVALID TOKEN[/red]"
+            s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
-            d_disp = "[red]NOT SET UP[/red]"
-        self.query_one("#sp_lbl_discord", Label).update(f"Discord: {d_disp}")
+            s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
+            
+        self.query_one("#sp_lbl_d_server", Label).update(f"Server: {s_disp}")
+        self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
 
         # Target
         plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
         t_name = v.get("target_community_name")
+        t_bot = v.get("target_bot_name")
+        
+        self.query_one("#sp_lbl_t_header", Label).update(plat)
+        
         if v.get("target_timeout"):
-            t_disp = "[red]TIMEOUT[/red]"
-        elif t_name and v.get("target_token") and v.get("target_community"):
-            t_disp = f'[green]"{t_name}"[/green]'
+            c_disp, tb_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
+        elif v.get("target_token") and v.get("target_community"):
+            c_disp = f'[green]"{t_name}"[/green]'
+            tb_disp = f'[green]{t_bot}[/green]'
         elif v.get("target_token") is False:
-            t_disp = "[red]INVALID TOKEN[/red]"
+            c_disp, tb_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
-            t_disp = "[red]NOT SET UP[/red]"
-        self.query_one("#sp_lbl_target", Label).update(f"{plat}: {t_disp}")
+            c_disp, tb_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
+            
+        self.query_one("#sp_lbl_t_comm", Label).update(f"Community: {c_disp}")
+        self.query_one("#sp_lbl_t_bot", Label).update(f"Bot: {tb_disp}")
 
         # Status
         if not self.tokens_valid:
@@ -299,11 +324,11 @@ class ShuttlePane(Container):
 
     def _open_sync_menu(self):
         options = [
-            ("sub_emoji", "Sync Emojis"),
-            ("sub_sticker", "Sync Stickers"),
-            ("sub_name", "Sync Server Name"),
-            ("sub_icon", "Sync Server Icon"),
-            ("sub_banner", "Sync Server Banner"),
+            ("sub_emoji", "Custom Emojis"),
+            ("sub_sticker", "Custom Stickers"),
+            ("sub_name", "Server Name"),
+            ("sub_icon", "Server Icon"),
+            ("sub_banner", "Server Banner"),
         ]
         def on_result(choices):
             if choices:
@@ -664,7 +689,7 @@ class ShuttlePane(Container):
             await self.engine.start_connections()
 
             full_d = await self.engine.discord_reader.get_channels()
-            d_channels = [c for c in full_d if c.type in [discord.ChannelType.text, discord.ChannelType.news]]
+            d_channels = [c for c in full_d if c.type in [self.engine.discord_reader.CHANNEL_TYPE_TEXT, self.engine.discord_reader.CHANNEL_TYPE_NEWS]]
             d_cats = await self.engine.discord_reader.get_categories()
             d_cat_map = {c.id: c.name for c in d_cats}
 

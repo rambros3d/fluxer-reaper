@@ -9,6 +9,14 @@ class DiscordReader:
     MESSAGE_TYPE_DEFAULT = discord.MessageType.default
     MESSAGE_TYPE_REPLY = discord.MessageType.reply
     MESSAGE_TYPE_THREAD_STARTER = discord.MessageType.thread_starter_message
+    
+    # Exceptions
+    Forbidden = discord.Forbidden
+    
+    # Channel Types
+    CHANNEL_TYPE_TEXT = discord.ChannelType.text
+    CHANNEL_TYPE_NEWS = discord.ChannelType.news
+    CHANNEL_TYPE_FORUM = discord.ChannelType.forum
 
     @staticmethod
     def find_item(iterable, **attrs):

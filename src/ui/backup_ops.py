@@ -4,7 +4,6 @@ Embedded inside ModeScreen's "Backup" tab.
 """
 
 import asyncio
-import discord
 import json
 import re
 from pathlib import Path
@@ -147,7 +146,7 @@ class BackupPane(Container):
             modal.write(f"- {e_count} emojis, {s_count} stickers.")
             modal.phase_report("Profile Backup")
 
-        except discord.Forbidden as e:
+        except self.engine.discord_reader.Forbidden as e:
             modal.write(f"[bold red]Backup failed: {e}[/bold red]")
             modal.phase_report("Profile Backup", "error")
         except Exception as e:
@@ -174,7 +173,11 @@ class BackupPane(Container):
 
             eligible_channels = [
                 c for c in all_channels
-                if c.type in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum]
+                if c.type in [
+                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                ]
             ]
 
             if not eligible_channels:
@@ -284,7 +287,11 @@ class BackupPane(Container):
             all_channels = await self.engine.discord_reader.get_channels()
             eligible_channels = [
                 c for c in all_channels
-                if c.type in [discord.ChannelType.text, discord.ChannelType.news, discord.ChannelType.forum]
+                if c.type in [
+                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                ]
             ]
 
             selected_channels = [
