@@ -13,17 +13,17 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            artifact_name: server-shuttle-linux
-            asset_name: server-shuttle-linux.zip
-            executable_path: dist/server-shuttle
+            artifact_name: disco-reaper-linux
+            asset_name: disco-reaper-linux.zip
+            executable_path: dist/DiscoReaper
           - os: windows-latest
-            artifact_name: server-shuttle-windows
-            asset_name: server-shuttle-windows.zip
-            executable_path: dist/server-shuttle.exe
+            artifact_name: disco-reaper-windows
+            asset_name: disco-reaper-windows.zip
+            executable_path: dist/DiscoReaper.exe
           - os: macos-latest
-            artifact_name: server-shuttle-macos
-            asset_name: server-shuttle-macos.zip
-            executable_path: dist/server-shuttle
+            artifact_name: disco-reaper-macos
+            asset_name: disco-reaper-macos.zip
+            executable_path: dist/DiscoReaper
 
     steps:
       - name: Checkout code
@@ -45,27 +45,27 @@ jobs:
         shell: python
         run: |
           from PIL import Image
-          img = Image.open('server-shuttle-icon.png')
-          img.save('server-shuttle-icon.ico', format='ICO', sizes=[(256, 256)])
+          img = Image.open('disco-reaper-icon.png')
+          img.save('disco-reaper-icon.ico', format='ICO', sizes=[(256, 256)])
 
       - name: Build with PyInstaller
         run: |
           echo "Listing directory contents:"
           ls -R || dir /s
-          pyinstaller server-shuttle.spec
+          pyinstaller disco-reaper.spec
 
       - name: Prepare Release Asset (Linux/MacOS)
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: |
-          cp ${{ matrix.executable_path }} server-shuttle
-          chmod +x server-shuttle
-          zip ${{ matrix.asset_name }} server-shuttle
+          cp ${{ matrix.executable_path }} DiscoReaper
+          chmod +x DiscoReaper
+          zip ${{ matrix.asset_name }} DiscoReaper
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          copy ${{ matrix.executable_path }} server-shuttle.exe
-          powershell Compress-Archive -Path "server-shuttle.exe" -DestinationPath "${{ matrix.asset_name }}"
+          copy ${{ matrix.executable_path }} DiscoReaper.exe
+          powershell Compress-Archive -Path "DiscoReaper.exe" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -88,8 +88,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/server-shuttle-linux/server-shuttle-linux.zip
-            artifacts/server-shuttle-windows/server-shuttle-windows.zip
-            artifacts/server-shuttle-macos/server-shuttle-macos.zip
+            artifacts/disco-reaper-linux/disco-reaper-linux.zip
+            artifacts/disco-reaper-windows/disco-reaper-windows.zip
+            artifacts/disco-reaper-macos/disco-reaper-macos.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

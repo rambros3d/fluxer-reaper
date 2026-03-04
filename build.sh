@@ -3,7 +3,7 @@
 # Exit on error
 set -e
 
-echo "--- Server Shuttle Cross-Distro Build Script ---"
+echo "--- Disco-Reaper Cross-Distro Build Script ---"
 echo "NOTE: For maximum compatibility (glibc), run this on your oldest target Linux distribution."
 
 # Check for venv
@@ -38,32 +38,31 @@ echo "Cleaning previous build artifacts..."
 rm -rf build/ dist/
 
 echo "Starting PyInstaller build..."
-pyinstaller --clean server-shuttle.spec
+pyinstaller --clean disco-reaper.spec
 
-echo "Generating Launch-Shuttle.sh launcher..."
-cat << 'EOF' > dist/Launch-Shuttle.sh
+echo "Generating Launch-Reaper.sh launcher..."
+cat << 'EOF' > dist/Launch-Reaper.sh
 #!/bin/bash
-# Convenient launcher for Server Shuttle
+# Convenient launcher for Disco-Reaper
 # Ensures it runs in a terminal if possible, but the binary also has internal auto-terminal logic.
 
 BASEDIR=$(dirname "$0")
 cd "$BASEDIR"
 
-if [ -f "./server-shuttle" ]; then
-    ./server-shuttle
+if [ -f "./DiscoReaper" ]; then
+    ./DiscoReaper
 else
-    echo "Error: server-shuttle binary not found in $(pwd)"
+    echo "Error: DiscoReaper binary not found in $(pwd)"
     read -p "Press enter to exit..."
 fi
 EOF
-chmod +x dist/Launch-Shuttle.sh
+chmod +x dist/Launch-Reaper.sh
 
-echo "Packaging release: server-shuttle-linux.zip..."
-cp config.example.yaml dist/
+echo "Packaging release: disco-reaper-linux.zip..."
 cd dist
 if command -v zip >/dev/null 2>&1; then
-    zip -q server-shuttle-linux.zip server-shuttle Launch-Shuttle.sh config.example.yaml
-    echo "Package created: dist/server-shuttle-linux.zip"
+    zip -q disco-reaper-linux.zip DiscoReaper Launch-Reaper.sh
+    echo "Package created: dist/disco-reaper-linux.zip"
 else
     echo "Warning: 'zip' command not found. Skipping zip creation."
     echo "Files available in dist/ directory."
@@ -72,7 +71,7 @@ cd ..
 
 echo "-----------------------------------"
 echo "Build complete!"
-echo "Standalone executable: dist/server-shuttle"
-echo "Launcher script:       dist/Launch-Shuttle.sh"
-echo "Release Package:       dist/server-shuttle-linux.zip"
+echo "Standalone executable: dist/DiscoReaper"
+echo "Launcher script:       dist/Launch-Reaper.sh"
+echo "Release Package:       dist/disco-reaper-linux.zip"
 echo "---"
