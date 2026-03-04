@@ -227,13 +227,18 @@ class BackupPane(Container):
                 self.app.push_screen(modal_prog)
                 await asyncio.sleep(0.1)
                 
-                msg = "Sync existing backups" if not force_overwrite else "Overwriting existing backups"
+                msg = "Backup Channels" if not force_overwrite else "Overwriting existing backups"
                 target_preview = ", ".join([c.name for c in selected_channels[:3]])
                 if len(selected_channels) > 3:
                     target_preview += "..."
 
-                modal_prog.set_status(f"Awaiting Confirmation to backup [bold]{len(selected_channels)}[/bold] channels...")
+                modal_prog.set_status(f"Confirm to proceed with Backup of [bold]{len(selected_channels)}[/bold] channels")
                 modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {target_preview}")
+
+                # Show full target list in the bottom log
+                modal_prog.write("[bold]Target Channels:[/bold]")
+                for idx, c in enumerate(selected_channels):
+                    modal_prog.write(f"  {idx+1}. #{c.name}")
 
                 choice = await modal_prog.phase_wait_confirm(btn_start_label="Start Channel Backup", show_id=False)
                 if choice == "btn_back":
@@ -249,6 +254,10 @@ class BackupPane(Container):
 
             modal_prog.phase_progress()
             modal_prog.show_stats()
+            
+            # Reset running flag and set cancel callback
+            self.exporter.is_running = True
+            modal_prog.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
 
             total_chans = len(selected_channels)
             modal_prog.set_status("Backing up messages...")
@@ -257,6 +266,9 @@ class BackupPane(Container):
             accumulated_msgs = 0
 
             for i, chan in enumerate(selected_channels):
+                if not self.exporter.is_running:
+                    modal_prog.write("[bold red]Backup cancelled by user.[/bold red]")
+                    break
                 await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
                 
                 backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
@@ -283,6 +295,11 @@ class BackupPane(Container):
                 )
 
                 modal_prog.write(f"[green]Completed: {chan.name}[/green]")
+
+            if not self.exporter.is_running:
+                modal_prog.set_item_status("[bold red]Backup Cancelled.[/bold red]")
+                modal_prog.phase_report("Message Backup", "stopped")
+                return
 
             modal_prog.set_progress(total_chans, total_chans)
             modal_prog.set_item_status("[bold green]Backup completed successfully![/bold green]")
@@ -340,9 +357,16 @@ class BackupPane(Container):
                 modal_prog.set_status("Syncing messages...")
                 modal_prog.write(f"[yellow]Syncing {total_chans} channels...[/yellow]")
                 
+                # Reset running flag and set cancel callback
+                self.exporter.is_running = True
+                modal_prog.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
+                
                 accumulated_msgs = 0
                 
                 for i, chan in enumerate(selected_channels):
+                    if not self.exporter.is_running:
+                        modal_prog.write("[bold red]Sync cancelled by user.[/bold red]")
+                        break
                     await asyncio.sleep(0.01) # Yield to UI thread
                     
                     modal_prog.set_item_status(f"[cyan]Syncing ({i+1}/{total_chans}): #{chan.name}[/cyan]")
@@ -365,6 +389,11 @@ class BackupPane(Container):
                     )
                     modal_prog.write(f"[green]Synced: {chan.name}[/green]")
                 
+                if not self.exporter.is_running:
+                    modal_prog.set_item_status("[bold red]Sync Cancelled.[/bold red]")
+                    modal_prog.phase_report("Backup Sync", "stopped")
+                    return
+
                 modal_prog.set_progress(total_chans, total_chans)
                 modal_prog.set_item_status("[bold green]Sync operation complete![/bold green]")
 

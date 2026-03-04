@@ -157,13 +157,18 @@ class ProgressScreen(Screen[None]):
             self.confirm_future.set_result(btn_id)
             return
 
-        # If Cancel is pressed during operation, invoke callback and dismiss
+        # If Cancel is pressed during operation, invoke callback and stay on screen
         if btn_id == "btn_cancel":
             if self.cancel_callback:
                 self.cancel_callback()
-            if self.timer_event:
-                self.timer_event.stop()
-            self.dismiss("btn_cancel")
+            
+            # Show cancelling message and disable button
+            self.set_status("[bold red]Cancelling... waiting for tasks to finish...[/bold red]")
+            try:
+                event.button.disabled = True
+                event.button.label = "Stopping..."
+            except Exception:
+                pass
             return
 
         # If operation is done (report phase), just dismiss with the action
@@ -660,7 +665,7 @@ class ChannelSelectScreen(Screen[dict]):
                     if self.any_found:
                         yield Label("Existing backups found:", classes="label_warning")
                         yield Button("Sync", variant="success", id="btn_sync")
-                        yield Button("Force Overwrite", variant="error", id="btn_force")
+                        yield Button("Force Overwrite", variant="warning", id="btn_force")
                     else:
                         yield Button("Backup", variant="success", id="btn_backup")
                     yield Button("Back", id="btn_cancel_chan")

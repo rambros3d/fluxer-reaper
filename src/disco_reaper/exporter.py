@@ -17,13 +17,14 @@ class DiscordExporter:
         self.server_id = ""
         self.user_cache = {}
         self.base_dir = Path(base_dir) if base_dir else Path(".")
+        self.is_running = True
 
     async def setup(self):
         """Prepares the output directory and fetches server metadata."""
         metadata = await self.reader.get_server_metadata()
         self.server_name = metadata.get("name", "Unknown Server")
         self.server_id = metadata.get("id", "0")
-        
+
         # Create safe folder name
         import re
         safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', self.server_name)
@@ -37,6 +38,15 @@ class DiscordExporter:
         logger.info(f"Export directory set to: {self.export_path}")
         logger.info(f"Targeting server: {self.server_name} ({self.server_id})")
         return metadata
+
+    def _save_json_sync(self, file_path, data):
+        """Sync helper for saving JSON, meant to be run in a thread."""
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4, ensure_ascii=False)
+
+    async def _save_json(self, file_path, data):
+        """Async wrapper for saving JSON in a thread."""
+        await asyncio.to_thread(self._save_json_sync, file_path, data)
 
     async def export_metadata(self):
         """Saves server metadata to a JSON file."""
@@ -74,8 +84,7 @@ class DiscordExporter:
         
         metadata["ignore_channels"] = ignore_channels
 
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, indent=4, ensure_ascii=False)
+        await self._save_json(output_file, metadata)
         return metadata
 
     async def export_roles(self):
@@ -94,8 +103,7 @@ class DiscordExporter:
             })
         
         output_file = self.export_path / "server_roles.json"
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(role_data, f, indent=4, ensure_ascii=False)
+        await self._save_json(output_file, role_data)
         return role_data
 
     async def download_server_assets(self):
@@ -202,8 +210,7 @@ class DiscordExporter:
                     customization["members"] = old_data.get("members", [])
             except Exception: pass
 
-        with open(custom_file, "w", encoding="utf-8") as f:
-            json.dump(customization, f, indent=4, ensure_ascii=False)
+        await self._save_json(custom_file, customization)
             
         return len(emoji_data), len(sticker_data)
 
@@ -244,8 +251,7 @@ class DiscordExporter:
             # but let's see if the user wants it. For now, cat_count is real Discord categories.
             
         output_file = self.export_path / "server_structure.json"
-        with open(output_file, "w", encoding="utf-8") as f:
-            json.dump(structure, f, indent=4, ensure_ascii=False)
+        await self._save_json(output_file, structure)
         return structure, cat_count, chan_count
 
     async def _format_channel(self, c):
@@ -354,6 +360,7 @@ class DiscordExporter:
         # 1. Fetch new messages - Handle Forbidden gracefully
         try:
             async for msg in self.reader.fetch_message_history(channel_id, after_id=last_id):
+                if not self.is_running: break
                 await asyncio.sleep(0) # Yield control
                 msg_data = await self._format_message(msg, asset_dir, base_filename, avatar_dir, avatar_rel_base)
                 messages.append(msg_data)
@@ -440,12 +447,10 @@ class DiscordExporter:
         
         # Save channel messages
         await asyncio.sleep(0) # Yield before writing large JSON
-        with open(json_file, "w", encoding="utf-8") as f:
-            json.dump(output_data, f, indent=4, ensure_ascii=False)
-            
-        # Save/Update user_info.json
-        with open(user_info_file, "w", encoding="utf-8") as f:
-            json.dump(list(self.user_cache.values()), f, indent=4, ensure_ascii=False)
+        await self._save_json(json_file, output_data)
+        
+        # Save/Update user_info.json (usually small, but consistent to thread it)
+        await self._save_json(user_info_file, list(self.user_cache.values()))
 
         # If it's a forum, also export its threads into the sub-directory
         if is_forum:
@@ -456,28 +461,33 @@ class DiscordExporter:
     async def _format_message(self, msg, asset_dir, asset_prefix, avatar_dir, avatar_rel_base):
         """Formats a single message to match the reference format."""
         attachments = []
-        for a in msg.attachments:
+        async def process_attachment(a):
             # mimic reference asset naming (suffixing hash/id)
             safe_name = a.filename
             short_id = str(a.id)[-5:]
             stored_name = f"{Path(safe_name).stem}-{short_id}{Path(safe_name).suffix}"
+            target = asset_dir / stored_name
             
             try:
                 # Check if exists, else download (basic cache)
-                target = asset_dir / stored_name
                 if not target.exists():
-                    data = await a.read()
-                    with open(target, "wb") as f:
-                        f.write(data)
+                    # Attachment.save() uses a thread internally to save to disk
+                    await a.save(target)
                 
-                attachments.append({
+                return {
                     "id": str(a.id),
                     "url": f"{asset_prefix}/{stored_name}",
                     "fileName": a.filename,
                     "fileSizeBytes": a.size
-                })
+                }
             except Exception as e:
                 logger.error(f"Failed to download attachment {a.filename}: {e}")
+                return None
+
+        # Download all attachments for this message concurrently
+        if msg.attachments:
+            results = await asyncio.gather(*(process_attachment(a) for a in msg.attachments))
+            attachments = [r for r in results if r]
 
         # Author info extraction and deduplication
         author = msg.author
@@ -658,6 +668,9 @@ class DiscordExporter:
             logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
             
         for thread in all_threads:
+            if not self.is_running:
+                logger.info("Thread backup cancelled by user.")
+                break
             await asyncio.sleep(0) # important yield between threads
             
             # First backup the full thread — this creates {thread_id}.json with totalAttachmentSizeBytes
@@ -737,12 +750,10 @@ class DiscordExporter:
                             forum_data["numberOfAttachments"] = sum(
                                 m.get("numberOfFiles", 0) for m in forum_data["messages"]
                             )
-                            # Keep chronological order
                             forum_data["messages"].sort(key=lambda x: x["timestamp"])
                             
                             await asyncio.sleep(0) # Yield before writing
-                            with open(forum_json_file, "w", encoding="utf-8") as f:
-                                json.dump(forum_data, f, indent=4, ensure_ascii=False)
+                            await self._save_json(forum_json_file, forum_data)
                             logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")
                         else:
                             logger.warning(f"Forum JSON file does not exist: {forum_json_file}")
