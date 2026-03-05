@@ -612,9 +612,12 @@ class DiscordExporter:
                 })
 
         # Determine message type (Override if it's a thread starter or forward)
-        msg_type = str(msg.type).split(".")[-1].capitalize()
-        if msg.thread:
+        raw_repr = str(msg.type).lower()
+        
+        if "thread_starter" in raw_repr or msg.thread:
             msg_type = "ThreadStarter"
+        else:
+            msg_type = raw_repr.split(".")[-1].capitalize()
         
         # Check for forwarded flags (newer discord.py feature)
         try:
@@ -733,7 +736,7 @@ class DiscordExporter:
                             "../../users/avatars"  # Two levels up from {forum_id}/{thread_id}/
                         )
                         # Override type and add title for forum starter messages
-                        msg_data["type"] = "Thread_starter_message"
+                        msg_data["type"] = "ThreadStarter"
                         msg_data["title"] = thread.name
                         
                         # Store applied tag IDs (as strings) — names are resolvable via the forum's available_tags

@@ -501,7 +501,6 @@ class BackupMessage:
         "Default": MessageType.default,
         "Reply": MessageType.reply,
         "ThreadStarter": MessageType.thread_starter_message,
-        "Thread_starter_message": MessageType.thread_starter_message,
         "Forward": MessageType.default,
     }
 

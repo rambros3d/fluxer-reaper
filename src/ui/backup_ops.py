@@ -14,7 +14,7 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 
 from textual.app import ComposeResult
-from textual.containers import Container, Vertical, VerticalScroll
+from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.widgets import Button, Label, Rule
 from textual import work
 
@@ -30,8 +30,14 @@ class BackupPane(Container):
     DEFAULT_CSS = """
     BackupPane { height: auto; width: 100%; }
     BackupPane #bp_info {
-        height: auto; border: tall cyan; padding: 1; margin-bottom: 1;
+        height: auto; border: tall cyan; padding: 1; margin-bottom: 1; layout: vertical;
     }
+    #bp_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
+    .info_pane { width: 1fr; height: auto; }
+    .info_pane Label { width: 100%; }
+    .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
+    #bp_lbl_backup { text-style: bold; margin-top: 1; }
+    
     BackupPane #bp_actions { height: auto; }
     BackupPane #bp_actions Button { width: 100%; margin-bottom: 1; }
     """
@@ -47,9 +53,17 @@ class BackupPane(Container):
     def compose(self) -> ComposeResult:
         with VerticalScroll():
             with Vertical(id="bp_info"):
-                yield Label("Loading...", id="bp_lbl_server")
-                yield Label("", id="bp_lbl_bot")
-                yield Label("", id="bp_lbl_backup")
+                with Horizontal(id="bp_info_split"):
+                    with Vertical(classes="info_pane"):
+                        yield Label("Discord", classes="pane_header")
+                        yield Label("Server: -", id="bp_lbl_server")
+                        yield Label("Source: -", id="bp_lbl_bot")
+                    with Vertical(classes="info_pane", id="bp_target_pane"):
+                        # Hidden in backup mode
+                        pass
+                
+                yield Rule()
+                yield Label("Status: -", id="bp_lbl_backup")
             with Vertical(id="bp_actions"):
                 yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True)
                 yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary")
@@ -105,11 +119,18 @@ class BackupPane(Container):
         return None
 
     def _update_ui(self, server_text, bot_text, backup_text, enabled):
-        self.query_one("#bp_lbl_server", Label).update(f"Source Server: {server_text}")
-        self.query_one("#bp_lbl_bot", Label).update(f"Bot: {bot_text}")
-        self.query_one("#bp_lbl_backup", Label).update(backup_text)
-        for bid in ("#bp_backup_profile", "#bp_backup_msgs", "#bp_backup_sync"):
-            self.query_one(bid, Button).disabled = not enabled
+        try:
+            self.query_one("#bp_lbl_server", Label).update(f"Server: {server_text}")
+            self.query_one("#bp_lbl_bot", Label).update(f"Source: {bot_text}")
+            self.query_one("#bp_lbl_backup", Label).update(f"Status: {backup_text}")
+            
+            # Hide target pane in backup
+            self.query_one("#bp_target_pane").display = False
+            
+            for bid in ("#bp_backup_profile", "#bp_backup_msgs", "#bp_backup_sync"):
+                self.query_one(bid, Button).disabled = not enabled
+        except Exception:
+            pass
 
     # ── button routing ────────────────────────────────────────────────────
 
@@ -136,6 +157,35 @@ class BackupPane(Container):
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
+            # Gather and print summary
+            server = getattr(self.engine.discord_reader, 'current_server', None)
+            if server:
+                modal.write(f"[bold cyan]Server Profile to Backup:[/bold cyan]")
+                modal.write(f"  Name: [green]{server.name}[/green]")
+                modal.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                modal.write(f"  Roles: [green]{len(server.roles)}[/green]")
+                modal.write(f"  Emojis: [green]{len(server.emojis)}[/green]")
+                modal.write(f"  Channels: [green]{len(server.channels)}[/green]")
+                modal.write("")
+
+            modal.show_info("[bold cyan]Profile Backup Ready[/bold cyan]", f"Overview: {len(server.channels) if server else '?'} Channels, {len(server.roles) if server else '?'} Roles")
+            modal.set_status("Awaiting Confirmation to Backup Profile...")
+
+            choice = await modal.phase_wait_confirm(
+                btn_start_label="Start Backup",
+                show_id=False
+            )
+            if choice in ("btn_back", "btn_main_menu"):
+                modal.dismiss()
+                self.engine.is_running = False
+                await self.engine.close_connections()
+                if choice == "btn_main_menu":
+                    self.app.switch_screen("config_selection")
+                return
+
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
+            modal.set_status("Exporting Server Structure...")
             modal.write("[yellow]Backing up server profile & skeleton...[/yellow]")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()
@@ -227,18 +277,30 @@ class BackupPane(Container):
                 self.app.push_screen(modal_prog)
                 await asyncio.sleep(0.1)
                 
-                msg = "Backup Channels" if not force_overwrite else "Overwriting existing backups"
-                target_preview = ", ".join([c.name for c in selected_channels[:3]])
-                if len(selected_channels) > 3:
-                    target_preview += "..."
+                new_channels = [c for c in selected_channels if c.id not in backed_up_ids]
+                existing_channels = [c for c in selected_channels if c.id in backed_up_ids]
+
+                server = getattr(self.engine.discord_reader, 'current_server', None)
+                if server:
+                    modal_prog.write(f"[bold cyan]Server Profile:[/bold cyan]")
+                    modal_prog.write(f"  Name: [green]{server.name}[/green]")
+                    modal_prog.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                    modal_prog.write("")
 
                 modal_prog.set_status(f"Confirm to proceed with Backup of [bold]{len(selected_channels)}[/bold] channels")
-                modal_prog.show_info(f"[cyan]{msg}[/cyan]", f"Targets: {target_preview}")
+                modal_prog.show_info(f"[cyan]Backup Channels[/cyan]", f"{len(new_channels)} new, {len(existing_channels)} existing")
 
-                # Show full target list in the bottom log
-                modal_prog.write("[bold]Target Channels:[/bold]")
-                for idx, c in enumerate(selected_channels):
-                    modal_prog.write(f"  {idx+1}. #{c.name}")
+                # Show categorized channel lists in the bottom log
+                if new_channels:
+                    modal_prog.write("[bold green]New Backups to be created:[/bold green]")
+                    for idx, c in enumerate(new_channels):
+                        modal_prog.write(f"  {idx+1}. #{c.name}")
+
+                if existing_channels:
+                    action = "Overwritten" if force_overwrite else "Updated"
+                    modal_prog.write(f"[bold yellow]\nExisting backups to be {action}:[/bold yellow]")
+                    for idx, c in enumerate(existing_channels):
+                        modal_prog.write(f"  {idx+1}. #{c.name}")
 
                 choice = await modal_prog.phase_wait_confirm(btn_start_label="Start Channel Backup", show_id=False)
                 if choice == "btn_back":
@@ -328,6 +390,36 @@ class BackupPane(Container):
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
+            # Gather and print summary
+            server = getattr(self.engine.discord_reader, 'current_server', None)
+            if server:
+                modal_prog.write(f"[bold cyan]Server Profile to Sync:[/bold cyan]")
+                modal_prog.write(f"  Name: [green]{server.name}[/green]")
+                modal_prog.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                modal_prog.write(f"  Roles: [green]{len(server.roles)}[/green]")
+                modal_prog.write(f"  Emojis: [green]{len(server.emojis)}[/green]")
+                modal_prog.write(f"  Channels: [green]{len(server.channels)}[/green]")
+                modal_prog.write("\n[dim]This operation will update the profile and scan existing baked-up channels for new messages.[/dim]")
+                modal_prog.write("")
+
+            modal_prog.show_info("[bold green]Sync Ready[/bold green]", f"Overview: {len(server.channels) if server else '?'} Channels")
+            modal_prog.set_status("Awaiting Confirmation to Sync Profile and Messages...")
+
+            choice = await modal_prog.phase_wait_confirm(
+                btn_start_label="Start Sync",
+                show_id=False
+            )
+            if choice in ("btn_back", "btn_main_menu"):
+                modal_prog.dismiss()
+                self.engine.is_running = False
+                await self.engine.close_connections()
+                if choice == "btn_main_menu":
+                    self.app.switch_screen("config_selection")
+                return
+
+            modal_prog.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal_prog.phase_progress()
+            modal_prog.set_status("Updating structure...")
             modal_prog.write("Updating structure...")
             await self.exporter.export_metadata()
             await self.exporter.download_server_assets()

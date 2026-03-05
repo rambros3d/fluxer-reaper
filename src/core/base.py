@@ -78,15 +78,17 @@ class MigrationContext:
 
     @staticmethod
     def _find_backup_path(server_id: str) -> Path:
-        """Searches workspace for a DISCORD_BACKUP-{server_id} directory."""
+        """Searches workspace for a DISCORD_BACKUP-{server_id} directory. Creates it if missing."""
         for d in Path(".").rglob(f"DISCORD_BACKUP-{server_id}"):
             if d.is_dir():
                 logger.info(f"Found backup directory: {d}")
                 return d
-        raise FileNotFoundError(
-            f"No backup found for server {server_id}. "
-            f"Expected a directory named DISCORD_BACKUP-{server_id}"
-        )
+        
+        # If not found, create it in the current directory
+        new_path = Path(".") / f"DISCORD_BACKUP-{server_id}"
+        logger.info(f"No existing backup directory found for {server_id}. Creating new one: {new_path}")
+        new_path.mkdir(exist_ok=True)
+        return new_path
 
     async def validate_all(self) -> Dict[str, Any]:
         """Returns connection validation status as a dictionary."""

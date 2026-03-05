@@ -289,7 +289,7 @@ Reconstructing the hierarchy requires specific pointer logic:
 
 1.  **Forums**:
     -   Read `message_backup/{forum_id}/messages.json`.
-    -   Each message in this file is a `Thread_starter_message`.
+    -   Each message in this file is a `ThreadStarter`.
     -   The `messageID` of the starter message *is usually* the same as the `thread_id`.
     -   To load the full thread, open `message_backup/{forum_id}/{thread_id}/thread_messages.json`.
 2.  **Regular Threads**:

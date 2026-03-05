@@ -83,12 +83,13 @@ class ShuttlePane(Container):
     DEFAULT_CSS = """
     ShuttlePane { height: auto; width: 100%; }
     ShuttlePane #sp_info {
-        height: auto; border: tall cyan; padding: 1; margin-bottom: 1;
+        height: auto; border: tall cyan; padding: 1; margin-bottom: 1; layout: vertical;
     }
-    #sp_info_split { height: auto; layout: horizontal; }
+    #sp_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
     .info_pane { width: 1fr; height: auto; }
     .info_pane Label { width: 100%; }
     .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
+    #sp_lbl_status { text-style: bold; margin-top: 1; }
     
     ShuttlePane #sp_actions { height: auto; }
     ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
@@ -340,6 +341,7 @@ class ShuttlePane(Container):
                 self.run_batch_sync(choices)
         self.app.push_screen(OptionSelectModal("Sync Server Settings", options), on_result)
 
+
     # ── batch workers ──────────────────────────────────────────────────
 
     @work(exclusive=True)
@@ -357,11 +359,29 @@ class ShuttlePane(Container):
             except Exception as e:
                 logger.warning(f"Could not pre-connect for Clone preview: {e}")
 
+            # Show info container early
+            modal.show_info("[bold cyan]Clone Template Ready[/bold cyan]", f"{len(selections)} categories/roles selected.")
+
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Operations...")
             
             # Fetch and display live preview with presence highlighting
             preview = await self._fetch_clone_preview(selections) if connections_started else {}
-            
+
+            if connections_started:
+                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                tgt_server_info = await self.engine.writer.validate()
+                tgt_server_name = tgt_server_info.get("community_name", "target community")
+                
+                if src_server:
+                    modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
+                    modal.write(f"  Name: [green]{src_server.name}[/green]")
+                    modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_server.roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_server.emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_server.channels)}[/green]")
+                    modal.write("")
+                modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
+
             if "roles" in preview:
                 roles = preview["roles"]
                 modal.write(f"[bold cyan]Roles to be Cloned ({len(roles)}):[/bold cyan]")
@@ -459,6 +479,33 @@ class ShuttlePane(Container):
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         try:
+            # Connect early to get metadata
+            modal.set_status("Connecting to Source and Target Servers for Preview...")
+            connections_started = False
+            try:
+                await self.engine.start_connections()
+                connections_started = True
+            except Exception as e:
+                logger.warning(f"Could not pre-connect for Sync preview: {e}")
+
+            if connections_started:
+                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                tgt_server_info = await self.engine.writer.validate()
+                tgt_server_name = tgt_server_info.get("community_name", "target community")
+                
+                if src_server:
+                    modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
+                    modal.write(f"  Name: [green]{src_server.name}[/green]")
+                    modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_server.roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_server.emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_server.channels)}[/green]")
+                    modal.write("")
+                modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
+
+            # Show info container
+            modal.show_info("[bold yellow]Sync Ready[/bold yellow]", "Comparing server configurations...")
+
             modal.set_status("Awaiting Confirmation to Sync Server Settings...")
             choice = await modal.phase_wait_confirm(
                 btn_start_label="Start Syncing",
@@ -478,7 +525,8 @@ class ShuttlePane(Container):
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             modal.set_status("Syncing Server Settings")
-            await self.engine.start_connections()
+            if not connections_started:
+                await self.engine.start_connections()
             self.engine.is_running = True
 
             results = {}
@@ -690,6 +738,9 @@ class ShuttlePane(Container):
         await asyncio.sleep(0.1)
 
         try:
+            # Show info container
+            modal.show_info("[bold cyan]Message Migration Ready[/bold cyan]", "Checking channel permissions...")
+
             modal.set_status("Fetching channels...")
             await self.engine.start_connections()
 
@@ -752,6 +803,18 @@ class ShuttlePane(Container):
                 modal = ProgressScreen(log_level=self.config.migration.log_level)
                 self.app.push_screen(modal)
                 await asyncio.sleep(0.1)
+
+                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                tgt_server_info = await self.engine.writer.validate()
+                tgt_server_name = tgt_server_info.get("community_name", "target community")
+                
+                if src_server:
+                    modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
+                    modal.write(f"  Name: [green]{src_server.name}[/green]")
+                    modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
+                    modal.write("")
+                modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
+
                 modal.set_status("Analyzing channel...")
                 modal.show_stats()
 
@@ -942,9 +1005,19 @@ class ShuttlePane(Container):
             except Exception as e:
                 logger.warning(f"Could not pre-connect for DZ preview: {e}")
 
+            if target_started:
+                tgt_server_info = await self.engine.writer.validate()
+                tgt_server_name = tgt_server_info.get("community_name", "target community")
+                modal.write(f"[bold red]Target Community:[/bold red] [green]{tgt_server_name}[/green]")
+                modal.write(f"[bold red]WARNING: THE ACTIONS BELOW WILL DELETE DATA PERMANENTLY IN: {tgt_server_name}![/bold red]")
+                modal.write("")
+            else:
+                modal.write("[bold red]WARNING: THIS WILL DELETE DATA PERMANENTLY! MUST PROCEED TO CONTINUE.[/bold red]")
+                modal.write("")
+
+            # Show info container
+            modal.show_info("[bold red]Danger Zone Ready[/bold red]", "Fetching target entities...")
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Destructive Operations...")
-            modal.write("[bold red]WARNING: THIS WILL DELETE DATA PERMANENTLY! MUST PROCEED TO CONTINUE.[/bold red]")
-            modal.write("")
 
             # Fetch and display live item names from target server
             preview = await self._fetch_dz_preview(selections) if target_started else {}

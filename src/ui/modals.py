@@ -67,8 +67,8 @@ class ProgressScreen(Screen[None]):
     #prog_bar { margin-bottom: 1; width: 80%; }
     #prog_item_status { margin-bottom: 1; text-style: bold; color: cyan; width: 100%; text-align: center; }
     
-    #info_container { height: auto; layout: vertical; border: solid $secondary; padding: 1; margin-bottom: 1; display: none; }
-    .info_label { text-style: bold; content-align: center middle; width: 100%; color: $secondary-lighten-2; }
+    #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 1; display: none; }
+    .info_label { text-style: bold; content-align: center middle; width: 100%; color: cyan; }
     
     #prog_actions { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; layout: vertical; }
     .action_row { height: auto; layout: horizontal; }
@@ -91,8 +91,8 @@ class ProgressScreen(Screen[None]):
 
 
                 with Vertical(id="info_container"):
-                    yield Label("No previous migration data.", id="info_migration_status", classes="info_label")
-                    yield Label("New items detected.", id="info_new_items", classes="info_label")
+                    yield Label("", id="info_migration_status", classes="info_label")
+                    yield Label("", id="info_new_items", classes="info_label")
                     
                     # Progress bar moved inside info container
                     with Center(id="prog_bar_container"):
@@ -257,6 +257,9 @@ class ProgressScreen(Screen[None]):
         
         try: self.query_one("#prog_bar", ProgressBar).display = False
         except Exception: pass
+
+        try: self.query_one("#prog_timer", Label).display = False
+        except Exception: pass
         
         # Update button labels
         try: self.query_one("#btn_start_first", Button).label = btn_start_label
@@ -313,6 +316,11 @@ class ProgressScreen(Screen[None]):
         
         try: self.query_one("#prog_loader", LoadingIndicator).display = True
         except Exception: pass
+
+        # Show timer and reset it for the operation
+        try: self.query_one("#prog_timer", Label).display = True
+        except Exception: pass
+        self.start_time = time.time()
         
         try: self.query_one("#info_migration_status", Label).display = False
         except Exception: pass
