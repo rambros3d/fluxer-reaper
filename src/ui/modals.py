@@ -63,8 +63,6 @@ class ProgressScreen(Screen[None]):
     #prog_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
     #live_log { height: 10; margin-bottom: 1; border: solid yellow; }
     
-    #prog_bar_container { height: auto; width: 100%; align: center middle; }
-    #prog_bar { margin-bottom: 1; width: 80%; }
     #prog_item_status { margin-bottom: 1; text-style: bold; color: cyan; width: 100%; text-align: center; }
     
     #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 1; display: none; }
@@ -73,6 +71,7 @@ class ProgressScreen(Screen[None]):
     #prog_actions { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; layout: vertical; }
     .action_row { height: auto; layout: horizontal; }
     .action_row Button { width: 1fr; margin: 0 1; }
+    #prog_actions_row1, #prog_actions_row2 { display: none; }
     """
 
     def compose(self) -> ComposeResult:
@@ -93,13 +92,7 @@ class ProgressScreen(Screen[None]):
                 with Vertical(id="info_container"):
                     yield Label("", id="info_migration_status", classes="info_label")
                     yield Label("", id="info_new_items", classes="info_label")
-                    
-                    # Progress bar moved inside info container
-                    with Center(id="prog_bar_container"):
-                        yield Label("", id="prog_item_status")
-                        pb = ProgressBar(total=None, show_eta=False, show_percentage=False, id="prog_bar")
-                        pb.display = False
-                        yield pb
+                    yield Label("", id="prog_item_status")
 
                 yield RichLog(id="prog_log", highlight=True, markup=True)
                 yield RichLog(id="live_log", highlight=True, markup=True)
@@ -123,14 +116,6 @@ class ProgressScreen(Screen[None]):
         self.cancel_callback = None
         self.start_time = time.time()
         self.timer_event = self.set_interval(1.0, self.update_timer)
-        
-        # Hide all action rows by default (fetch phase = no buttons)
-        try: self.query_one("#prog_actions_row1", Horizontal).display = False
-        except Exception: pass
-        try: self.query_one("#prog_actions_row2", Horizontal).display = False
-        except Exception: pass
-        try: self.query_one("#prog_actions_cancel", Horizontal).display = False
-        except Exception: pass
         
         # Intercept Python logs and pipe to the #live_log
         self.log_handler = UILogHandler(self.write_live)
@@ -213,11 +198,7 @@ class ProgressScreen(Screen[None]):
             # Keep loader visible during progress next to timer
             self.query_one("#prog_loader", LoadingIndicator).display = True
             
-            bar = self.query_one("#prog_bar", ProgressBar)
-            bar.display = True
-            bar.update(total=total, progress=current)
-            
-            # Ensure the container is visible if we have a bar
+            # Ensure the container is visible
             self.query_one("#info_container", Vertical).display = True
         except Exception:
             pass
@@ -253,9 +234,6 @@ class ProgressScreen(Screen[None]):
     ):
         """Phase 2: Wait for user confirmation after analysis."""
         try: self.query_one("#prog_loader", LoadingIndicator).display = False
-        except Exception: pass
-        
-        try: self.query_one("#prog_bar", ProgressBar).display = False
         except Exception: pass
 
         try: self.query_one("#prog_timer", Label).display = False
@@ -353,8 +331,6 @@ class ProgressScreen(Screen[None]):
         except Exception: pass
         
         # Hide progress bar (no need to show 100% bar)
-        try: self.query_one("#prog_bar", ProgressBar).display = False
-        except Exception: pass
         
         # Hide Cancel, show Back + Main Menu
         try: self.query_one("#prog_actions_cancel", Horizontal).display = False
@@ -615,7 +591,9 @@ class ChannelSelectScreen(Screen[dict]):
         margin: 2 0;
         background: $surface;
     }
-    #chan_title { text-style: bold; margin-bottom: 1; }
+    #cs_header { height: auto; margin-bottom: 1; }
+    #chan_title { text-style: bold; }
+    #chan_warning { padding-left: 1; color: yellow; text-style: bold; }
     #channel_list_scroll {
         height: 1fr;
         border: solid $primary;
@@ -657,7 +635,10 @@ class ChannelSelectScreen(Screen[dict]):
         yield Header(show_clock=True)
         with Container(id="cs_outer"):
             with Container(id="channel_dialog"):
-                yield Label("Select Channels to Backup", id="chan_title")
+                with Horizontal(id="cs_header"):
+                    yield Label("Select Channels to Backup", id="chan_title")
+                    if self.any_found:
+                        yield Label(" (Existing backups found)", id="chan_warning")
 
                 with VerticalScroll(id="channel_list_scroll"):
                     cat_ids = sorted(
@@ -679,6 +660,10 @@ class ChannelSelectScreen(Screen[dict]):
                             label = f"{c.name}"
                             color = "green" if c.id in self.backed_up_ids else "white"
                             yield RadioButton(f"[{color}]{label}[/]", value=False, id=f"chan_{c.id}")
+                    
+                    if self.any_found:
+                        yield Label("", classes="label_warning")
+                        yield Label("Note: Channels shown in green have existing backups", classes="label_warning")
 
                 with Horizontal(id="select_all_buttons"):
                     yield Button("Select All", id="btn_all")
@@ -687,7 +672,6 @@ class ChannelSelectScreen(Screen[dict]):
                 yield Rule()
                 with Horizontal(id="confirm_buttons"):
                     if self.any_found:
-                        yield Label("Existing backups found:", classes="label_warning")
                         yield Button("Sync", variant="success", id="btn_sync")
                         yield Button("Force Overwrite", variant="warning", id="btn_force")
                     else:

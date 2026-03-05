@@ -158,14 +158,14 @@ class BackupPane(Container):
             await self.exporter.setup()
 
             # Gather and print summary
-            server = getattr(self.engine.discord_reader, 'current_server', None)
+            server = getattr(self.engine.discord_reader, 'guild', None)
             if server:
                 modal.write(f"[bold cyan]Server Profile to Backup:[/bold cyan]")
                 modal.write(f"  Name: [green]{server.name}[/green]")
                 modal.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
-                modal.write(f"  Roles: [green]{len(server.roles)}[/green]")
-                modal.write(f"  Emojis: [green]{len(server.emojis)}[/green]")
-                modal.write(f"  Channels: [green]{len(server.channels)}[/green]")
+                modal.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
+                modal.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
+                modal.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
                 modal.write("")
 
             modal.show_info("[bold cyan]Profile Backup Ready[/bold cyan]", f"Overview: {len(server.channels) if server else '?'} Channels, {len(server.roles) if server else '?'} Roles")
@@ -280,7 +280,7 @@ class BackupPane(Container):
                 new_channels = [c for c in selected_channels if c.id not in backed_up_ids]
                 existing_channels = [c for c in selected_channels if c.id in backed_up_ids]
 
-                server = getattr(self.engine.discord_reader, 'current_server', None)
+                server = getattr(self.engine.discord_reader, 'guild', None)
                 if server:
                     modal_prog.write(f"[bold cyan]Server Profile:[/bold cyan]")
                     modal_prog.write(f"  Name: [green]{server.name}[/green]")
@@ -391,14 +391,14 @@ class BackupPane(Container):
             await self.exporter.setup()
 
             # Gather and print summary
-            server = getattr(self.engine.discord_reader, 'current_server', None)
+            server = getattr(self.engine.discord_reader, 'guild', None)
             if server:
                 modal_prog.write(f"[bold cyan]Server Profile to Sync:[/bold cyan]")
                 modal_prog.write(f"  Name: [green]{server.name}[/green]")
                 modal_prog.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
-                modal_prog.write(f"  Roles: [green]{len(server.roles)}[/green]")
-                modal_prog.write(f"  Emojis: [green]{len(server.emojis)}[/green]")
-                modal_prog.write(f"  Channels: [green]{len(server.channels)}[/green]")
+                modal_prog.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
+                modal_prog.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
+                modal_prog.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
                 modal_prog.write("\n[dim]This operation will update the profile and scan existing baked-up channels for new messages.[/dim]")
                 modal_prog.write("")
 

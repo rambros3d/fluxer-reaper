@@ -83,7 +83,7 @@ class ShuttlePane(Container):
     DEFAULT_CSS = """
     ShuttlePane { height: auto; width: 100%; }
     ShuttlePane #sp_info {
-        height: auto; border: tall cyan; padding: 1; margin-bottom: 1; layout: vertical;
+        height: auto; border: tall yellow; padding: 1; margin-bottom: 1; layout: vertical;
     }
     #sp_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
     .info_pane { width: 1fr; height: auto; }
@@ -368,7 +368,7 @@ class ShuttlePane(Container):
             preview = await self._fetch_clone_preview(selections) if connections_started else {}
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                src_server = getattr(self.engine.discord_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -376,9 +376,9 @@ class ShuttlePane(Container):
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(src_server.roles)}[/green]")
-                    modal.write(f"  Emojis: [green]{len(src_server.emojis)}[/green]")
-                    modal.write(f"  Channels: [green]{len(src_server.channels)}[/green]")
+                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
+                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
+                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
@@ -489,7 +489,7 @@ class ShuttlePane(Container):
                 logger.warning(f"Could not pre-connect for Sync preview: {e}")
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                src_server = getattr(self.engine.discord_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -497,9 +497,9 @@ class ShuttlePane(Container):
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(src_server.roles)}[/green]")
-                    modal.write(f"  Emojis: [green]{len(src_server.emojis)}[/green]")
-                    modal.write(f"  Channels: [green]{len(src_server.channels)}[/green]")
+                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
+                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
+                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
@@ -804,7 +804,7 @@ class ShuttlePane(Container):
                 self.app.push_screen(modal)
                 await asyncio.sleep(0.1)
 
-                src_server = getattr(self.engine.discord_reader, 'current_server', None)
+                src_server = getattr(self.engine.discord_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 

@@ -617,6 +617,11 @@ class BackupGuild:
     def categories(self) -> List[BackupCategory]:
         return self._reader._categories if self._reader else []
 
+    def get_member(self, user_id: int) -> "BackupMember | None":
+        if self._reader:
+            return self._reader._member_map.get(int(user_id))
+        return None
+
     def __repr__(self) -> str:
         return f"BackupGuild(id={self.id}, name='{self.name}')"
 
