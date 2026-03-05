@@ -617,9 +617,27 @@ class BackupGuild:
     def categories(self) -> List[BackupCategory]:
         return self._reader._categories if self._reader else []
 
+    @property
+    def emojis(self) -> List[BackupEmoji]:
+        return self._reader._emojis if self._reader else []
+
+    @property
+    def stickers(self) -> List[BackupSticker]:
+        return self._reader._stickers if self._reader else []
+
     def get_member(self, user_id: int) -> "BackupMember | None":
         if self._reader:
             return self._reader._member_map.get(int(user_id))
+        return None
+
+    def get_role(self, role_id: int) -> "BackupRole | None":
+        if self._reader:
+            return next((r for r in self._reader._roles if r.id == int(role_id)), None)
+        return None
+
+    def get_channel(self, channel_id: int) -> "BackupChannel | None":
+        if self._reader:
+            return next((c for c in self._reader._channels if c.id == int(channel_id)), None)
         return None
 
     def __repr__(self) -> str:
