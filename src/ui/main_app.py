@@ -123,6 +123,15 @@ class ConfigSelectionScreen(Screen):
                 if name:
                     create_new_config(name)
                     self.refresh_configs()
+                    # Immediately open the ConfigScreen for the new config
+                    cfg_path = Path(f"Reaper-{name}") / "config.yaml"
+                    def on_config_saved(saved: bool = False):
+                        if saved:
+                            self.refresh_configs()
+                            # Navigate into the ModeScreen
+                            from src.ui.mode_screen import ModeScreen
+                            self.app.push_screen(ModeScreen(name, cfg_path))
+                    self.app.push_screen(ConfigScreen(name, cfg_path), on_config_saved)
             self.app.push_screen(NewConfigModal(), cb)
         elif event.button.id == "btn_exit":
             self.app.exit()

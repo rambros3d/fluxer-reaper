@@ -11,7 +11,7 @@ class MigrationSettings(BaseModel):
 class AppConfig(BaseModel):
     discord_bot_token: str
     discord_server_id: str
-    tool_mode: str = Field(default="backup_only")     # direct_transfer | backup_transfer | backup_only
+    tool_mode: str = Field(default="direct_transfer")  # direct_transfer | backup_transfer | backup_only
     target_platform: str = Field(default="none")       # fluxer | stoat | none
     target_bot_token: Optional[str] = Field(default=None)
     target_server_id: Optional[str] = Field(default=None)
