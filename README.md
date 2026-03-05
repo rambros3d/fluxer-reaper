@@ -1,10 +1,13 @@
 # DiscoReaper
 
-Server Shuttle is a simple tool to help you move an entire Discord server over to a Fluxer community. It handles channels, roles, emojis, and even your message history.
+**DiscoReaper** is a powerful tool designed to help you migrate your entire Discord server to Fluxer or Stoat. It clones channels, roles, emojis, permissions, and also your community's full message history.
 
 >Join our [**Reaper Community**](https://fluxer.gg/9KxDP8WH) if you need help or have any questions.
 
 ![Disco Reaper](images/fluxer-reaper.jpg)
+
+### Modern Terminal Interface
+The tool now features a unified, intuitive TUI (Terminal User Interface) - no more commands
 
 | Features | Fluxer | Stoat |
 | :--- | :---: | :---: |
@@ -33,37 +36,51 @@ Server Shuttle is a simple tool to help you move an entire Discord server over t
 | - Threads | 🟩 | 🟩 |
 | - Forums | ⚠️ | ⚠️ |
 
-- ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels as normal messages.
-- ⚠️**Stoat**: doesnt have features like Category Permissions, Slowmode setting for channels.
-- ⏳**Stoat**: permission sync for channels is not yet implemented since its permission management vastly different compared to Discord & Fluxer.
+- ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels as normal messages. 
+- ⚠️**Stoat**: doesn't have features like Category Permissions or Slowmode settings for channels.
+- ⏳**Stoat**: permission sync for channels is pending due to architectural differences.
 
 ---
 
+### Core Operations
+
+#### 📦 Local Backup (Backup & Migrate)
+Create full, local backups of your Discord servers. 
+- **Server Profile**: Export server identity, categories, channels, roles, and emojis.
+- **Message Backup**: Save total message history, including attachments and threads, to your disk.
+- **Migration Source**: Use your local backups as a source for migrations, allowing you to move to Fluxer even if you no longer have access to the original Discord server.
+
+#### Shuttle Transfer (Direct Migration)
+Migrate directly from Discord or your Local Backups to the target community.
+- **Server Clone**: Transfer the entire server structure, roles, and assets in one click.
+- **Server Sync**: Sync channel names, topics, and permissions between servers.
+- **Message Migration**: Transfer years of history with support for incremental sync (picking up where you left off).
+
 ### Notable Features
-*   **Flexible Start Points**: Start from the oldest message, a specific custom message ID/link, or continue from where you left off.
-*   **Thread Support**: Copies threads with dedicated markers in the target channel. This is a workaround as the threads feature is not yet natively implemented in Fluxer/Stoat.
-*   **Permission Checks**: Checks if bots have the required Permissions.
-*   **Self-Hosted Instance Support**: Supports custom API url endpoint to use with your own Fluxer/Stoat instance.
-*   **Audit Channel**: Logs migration progress and errors to a logs channel in the target community.
+*   **Sequential Batch Execution**: Select multiple channels, emojis, or roles and let the tool handle them one by one.
+*   **Confirmation Previews**: See what's about to happen (name changes, logo updates, counts) before you continue.
+*   **Incremental Migration**: Tracks already migrated messages to avoid duplicates and save time on large servers.
+*   **Flexible Start Points**: Migrating history can start from the first message, a specific message ID (to be implemented), or continue from the last saved state.
+*   **Audit Channel**: Live logging of migration progress directly in your target server.
 
-### Danger Zone
-*   **Wipe Options**: Irreversibly delete channels, roles, or assets to clear a community.
-*   **Permission Reset**: Batch-wipe all channel permission overwrites.
-
-The Discord bot has **read-only access** to the Discord server. Hence **no changes** will be made to the source Discord server.
+### ⚠️ Danger Zone
+*   **Full Wipe**: Clean out categories, channels, roles, or assets to reset a community for a fresh start.
+*   **Permission Reset**: Batch-wipe all channel permission overwrites in the target server.
+*   **Safety First**: All destructive actions require a dedicated confirmation step and data-fetching preview.
 
 ### Notes:
-- Currently Fluxer is unstable probably due to high traffic, migrating servers now will only add to that problem. Only use this for testing purposes for now. Check status on [reallyaweso.me](https://uptime.reallyaweso.me/status/fluxer) or [fluxerstatus(official)](https://fluxerstatus.com)
+- The Reaper has **read-only access** to the source Discord server, so your original data is never touched.
+- Currently, Fluxer experiences stability issues during high traffic. Use cautiously for large migrations. Check status at [fluxerstatus.com](https://fluxerstatus.com).
 
 # Getting Started
 
 #### Setup the bots as per this [guide](BOT-SETUP.md)
 
 ### Option 1: Using Pre-built Binaries (Easiest)
-1. **Download**: Download the latest executable from the [Releases](https://github.com/rambros3d/server-shuttle/releases) page & unzip it.
-2. **Run**: Simply run the downloaded file to start the tool. No Python installation is required.
-   - **Linux**: Run the **disco-reaper** file (or run `./disco-reaper` in terminal).
-   - **Windows**: Run the **disco-reaper.exe** file.
+1. **Download**: Grab the latest version from the [Releases](https://github.com/rambros3d/disco-reaper/releases) page.
+2. **Run**:
+   - **Linux**: Run the `disco-reaper` binary (e.g., `./launch.sh` or double-click).
+   - **Windows**: Run `disco-reaper.exe`.
 
 ### Option 2: Running from Source (To use latest unstable code)
 1. **Clone**: Clone the repository to your local machine:
