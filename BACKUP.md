@@ -20,6 +20,35 @@ graph TD
     B --> F[User Cache Object]
 ```
 
+### File Tree Structure
+
+```
+DISCORD_BACKUP-{ServerID}/
+├── server_profile/
+│   ├── profile.json           # Server metadata (name, ID, icon/banner paths)
+│   ├── roles.json             # All server roles (permissions, colors, positions)
+│   ├── structure.json         # Full category and channel hierarchy
+│   ├── assets.json            # Index of custom emojis and stickers
+│   └── assets/                # Binary media files
+│       ├── server_icon.png
+│       ├── server_banner.png
+│       ├── emoji_{name}_{id}.png
+│       └── sticker_{name}_{id}.png
+└── message_backup/
+    ├── users/
+    │   ├── user_info.json     # Deduplicated user profile cache
+    │   └── avatars/           # User avatar images
+    │       └── {user_id}.png
+    └── {channel_id}/
+        ├── messages.json      # Channel message history + metadata
+        ├── attachments/       # Channel-level attachments
+        │   └── {filename}-{id_last_5}.{ext}
+        └── {thread_id}/       # Thread nested inside parent channel
+            ├── thread_messages.json
+            └── thread_attachments/
+                └── {filename}-{id_last_5}.{ext}
+```
+
 ---
 
 ## 2. Data Lifecycle & Serialization
@@ -27,7 +56,7 @@ graph TD
 ### 2.1 Incremental Synchronization Algorithm
 To achieve idempotency and efficiency, the system implements an incremental sync strategy using Discord's snowflake IDs.
 
-1.  **State Loading**: The `Exporter` reads the existing `{channel_id}.json` (if present).
+1.  **State Loading**: The `Exporter` reads the existing `{channel_id}/messages.json` (if present).
 2.  **Snowflake Extraction**: It extracts the `lastMessageID` from the metadata.
 3.  **Filtered Fetch**: It calls `fetch_message_history(after_id=last_id)`.
 4.  **In-Memory Merge**: New messages are appended to the existing list.
@@ -37,7 +66,7 @@ To achieve idempotency and efficiency, the system implements an incremental sync
 The system avoids redundant storage of user metadata (usernames, roles, colors) by using a global `user_cache` map.
 -   **Key**: `userID` (Snowflake).
 -   **Policy**: Users are added to the cache only on their first appearance in any channel's history.
--   **Avatar Persistence**: User avatars are stored in a centralized `user_avatars/` directory and referenced by relative paths in the JSON schemas.
+-   **Avatar Persistence**: User avatars are stored in `message_backup/users/avatars/` and referenced by relative paths in the JSON schemas.
 
 ---
 
@@ -46,10 +75,10 @@ The system avoids redundant storage of user metadata (usernames, roles, colors) 
 ### 3.1 Forum Channels & Threads
 Forums present a hierarchical challenge where the "starter message" and the "conversation" exist in separate contexts.
 
--   **Forum Index (`{channel_id}.json`)**: Contains an enriched list of "starter messages" representing each thread. These entries include thread titles, applied tags, and total attachment stats (summed from the entire thread).
--   **Thread Persistence**:
-    -   **Regular Threads**: `message_backup/threads/{thread_id}.json`
-    -   **Forum Threads**: `message_backup/{forum_id}/{thread_id}.json`
+-   **Forum Index (`{forum_id}/messages.json`)**: Contains an enriched list of "starter messages" representing each thread. These entries include thread titles, applied tags, and total attachment stats (summed from the entire thread).
+-   **Thread Persistence**: All threads nest inside their parent channel directory:
+    -   **Forum Threads**: `message_backup/{forum_id}/{thread_id}/thread_messages.json`
+    -   **Regular Threads**: `message_backup/{parent_channel_id}/{thread_id}/thread_messages.json`
 -   **Starter Identification**: The system uses `thread.history(limit=1, after=snowflake(thread_id - 1))` to reliably capture the first post even if it has been edited or pinned.
 
 ---
@@ -84,7 +113,7 @@ The internal representation of a message focuses on portability:
 | `content` | `String` | Raw markdown content (or snapshot content for forwards) |
 | `userID` | `String` | Reference to `user_info.json` |
 | `attachments`| `Array` | List of local file references and metadata |
-| `embeds` | `Array` | Raw Dicord-formatted embed objects |
+| `embeds` | `Array` | Raw Discord-formatted embed objects |
 | `stickers` | `Array` | List of Message Sticker objects (see below) |
 | `reactions` | `Array` | List of Reaction objects |
 
@@ -94,7 +123,7 @@ The internal representation of a message focuses on portability:
 | `id` | `String` | Sticker Snowflake ID |
 | `name` | `String` | Sticker name |
 | `format` | `String` | File format (PNG, APNG, LOTTIE, GIF) |
-| `localPath` | `String` | Relative path to local file in `{channel_id}/` |
+| `localPath` | `String` | Relative path to local file in `{channel_id}/attachments/` |
 
 #### Reaction Object
 | Field | Type | Description |
@@ -108,17 +137,21 @@ To prevent filename collisions (e.g., multiple files named `image.png`), the sys
 
 Example: `sunset-54321.png`
 
-### 5.3 `server_profile.json` Specification
+### 5.3 `profile.json` Specification
+Path: `server_profile/profile.json`
+
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `name` | `String` | Original Discord guild name |
 | `id` | `String` | Guild Snowflake ID |
-| `icon` | `String` | Relative path to local guild icon in `server_media/` |
-| `banner` | `String` | Relative path to local guild banner in `server_media/` |
+| `icon` | `String` | Relative path to local guild icon in `server_profile/assets/` |
+| `banner` | `String` | Relative path to local guild banner in `server_profile/assets/` |
 | `last_backup` | `ISO8601` | Timestamp of the last successful backup run |
 | `ignore_channels` | `Array` | List of channel Snowflakes explicitly excluded from backup |
 
-### 5.4 `server_roles.json` Specification (Array of objects)
+### 5.4 `roles.json` Specification (Array of objects)
+Path: `server_profile/roles.json`
+
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `String` | Role Snowflake ID |
@@ -129,24 +162,28 @@ Example: `sunset-54321.png`
 | `hoist` | `Boolean` | Whether the role is displayed separately in the sidebar |
 | `mentionable`| `Boolean` | Whether the role can be mentioned |
 
-### 5.5 `server_assets.json` Specification
+### 5.5 `assets.json` Specification
+Path: `server_profile/assets.json`
 Contains two primary arrays: `emojis` and `stickers`.
+
 #### Emoji Object
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `String` | Emoji Snowflake ID |
 | `name` | `String` | Emoji name (without colons) |
 | `animated` | `Boolean` | True if the emoji is a GIF |
-| `filename` | `String` | Filename within `server_media/` |
+| `filename` | `String` | Filename within `server_profile/assets/` |
 
 #### Sticker Object
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `id` | `String` | Sticker Snowflake ID |
 | `name` | `String` | Sticker name |
-| `filename` | `String` | Filename within `server_media/` |
+| `filename` | `String` | Filename within `server_profile/assets/` |
 
-### 5.6 `server_structure.json` Specification (Array of Category objects)
+### 5.6 `structure.json` Specification (Array of Category objects)
+Path: `server_profile/structure.json`
+
 #### Category Object
 | Field | Type | Description |
 | :--- | :--- | :--- |
@@ -177,6 +214,8 @@ Contains two primary arrays: `emojis` and `stickers`.
 | `emoji_name` | `String` | Name of the tag's emoji |
 
 ### 5.7 `user_info.json` Specification (Array of User objects)
+Path: `message_backup/users/user_info.json`
+
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `userID` | `String` | User Snowflake ID |
@@ -185,10 +224,10 @@ Contains two primary arrays: `emojis` and `stickers`.
 | `userColor` | `String` | Role-derived color for the user |
 | `userIsBot` | `Boolean` | True if the account is a bot |
 | `userRoles` | `Array` | List of role snippets (name, id, color, position) |
-| `userAvatar` | `String` | Relative path to local avatar in `user_avatars/` |
+| `userAvatar` | `String` | Relative path to local avatar in `users/avatars/` |
 
 ### 5.8 Channel History JSON Specification
-File: `message_backup/{channel_id}.json`
+Path: `message_backup/{channel_id}/messages.json`
 
 This file contains the full history of a channel along with synchronization metadata.
 
@@ -206,6 +245,11 @@ This file contains the full history of a channel along with synchronization meta
 | `messages` | `Array` | The message objects (see Section 5.1) |
 | `parentID` | `String` | (If Thread) Snowflake of the parent channel |
 
+### 5.9 Thread History JSON Specification
+Path: `message_backup/{channel_id}/{thread_id}/thread_messages.json`
+
+Same schema as Section 5.8, with `channelType` set to `"Thread"` and `parentID` always present.
+
 ---
 
 ## 7. Backup Reader Implementation Guide
@@ -215,8 +259,8 @@ This section is a technical manual for developers building third-party tools (vi
 ### 7.1 Entry Point Discovery
 A reader should start by identifying the backup root directory (prefixed with `DISCORD_BACKUP-`).
 
-1.  **Parse `server_profile.json`**: Extract the server name, ID, and assets (icon/banner).
-2.  **Load `server_structure.json`**: This defines the navigation tree for your UI.
+1.  **Parse `server_profile/profile.json`**: Extract the server name, ID, and assets (icon/banner).
+2.  **Load `server_profile/structure.json`**: This defines the navigation tree for your UI.
     -   Iterate through categories.
     -   Map channels to their respective types (text, voice, forum).
     -   Store the `position` to preserve the original visual order.
@@ -224,11 +268,11 @@ A reader should start by identifying the backup root directory (prefixed with `D
 ### 7.2 Relational Data Mapping
 The backup data is normalized to minimize duplication. A reader must implement the following resolve logic:
 
--   **User Resolution**: When parsing a message in `{channel_id}.json`, the `userID` must be cross-referenced against the `userID` keys in `message_backup/user_info.json`.
--   **Role Resolution**: Use the `userRoles` array (IDs) from the user object and resolve them against the role metadata in `server_roles.json` to get colors and names.
+-   **User Resolution**: When parsing a message in `{channel_id}/messages.json`, the `userID` must be cross-referenced against the `userID` keys in `message_backup/users/user_info.json`.
+-   **Role Resolution**: Use the `userRoles` array (IDs) from the user object and resolve them against the role metadata in `server_profile/roles.json` to get colors and names.
 -   **Static Asset Resolution**:
-    -   **Server Assets**: Prepend `server_media/` to filenames found in `server_assets.json`.
-    -   **User Avatars**: Resolve `userAvatar` paths found in `user_info.json` (pointing to `user_avatars/`).
+    -   **Server Assets**: Prepend `server_profile/assets/` to filenames found in `server_profile/assets.json`.
+    -   **User Avatars**: Resolve `userAvatar` paths found in `user_info.json` (pointing to `users/avatars/`).
 
 ### 7.3 Message Rendering Logic
 When rendering the `messages` array from a channel JSON:
@@ -236,21 +280,21 @@ When rendering the `messages` array from a channel JSON:
 | Feature | Reader Implementation Logic |
 | :--- | :--- |
 | **Markdown** | Content is raw Discord markdown. Use a library like `markdown-it` with discord-specific plugins. |
-| **Attachments** | Resolve `url` field (`{channel_id}/{filename}`) relative to the `message_backup/` directory. |
-| **Emojis/Stickers** | If a message contains custom emojis/stickers, resolve their metadata via `server_assets.json`. |
+| **Attachments** | Resolve `url` field (`{channel_id}/attachments/{filename}`) relative to the `message_backup/` directory. |
+| **Emojis/Stickers** | If a message contains custom emojis/stickers, resolve their metadata via `server_profile/assets.json`. |
 | **Replies** | Use the `reference` object to find the target `messageId`. Note: The target might be in the same file or a different channel/thread. |
 
 ### 7.4 Thread & Forum Reconstruction
 Reconstructing the hierarchy requires specific pointer logic:
 
 1.  **Forums**:
-    -   Read `message_backup/{forum_id}.json`.
+    -   Read `message_backup/{forum_id}/messages.json`.
     -   Each message in this file is a `Thread_starter_message`.
     -   The `messageID` of the starter message *is usually* the same as the `thread_id`.
-    -   To load the full thread, open `message_backup/{forum_id}/{thread_id}.json`.
+    -   To load the full thread, open `message_backup/{forum_id}/{thread_id}/thread_messages.json`.
 2.  **Regular Threads**:
-    -   Discoverable via the `parentID` field in any message or by scanning `message_backup/threads/`.
-    -   Match the `thread.id` in a `ThreadStarter` message to the respective JSON in the `threads/` folder.
+    -   Discoverable via the `parentID` field in any message or by scanning for `thread_messages.json` inside channel directories.
+    -   Match the `thread.id` in a `ThreadStarter` message to the respective subdirectory.
 
 ---
 
@@ -259,16 +303,16 @@ Reconstructing the hierarchy requires specific pointer logic:
 If you are building a `discord.py` API-compatible wrapper to read these backups directly into familiar Discord objects, here is the explicit property mapping from the schema to the standard `discord.py` object attributes.
 
 ### 8.1 Base Server (Guild)
-File: `server_profile.json` & `server_roles.json` & `server_structure.json`
+File: `server_profile/profile.json` & `server_profile/roles.json` & `server_profile/structure.json`
 -   **`discord.Guild`**:
     -   `id`: Cast `id` (str) to `int`.
     -   `name`: Mapped directly from `name`.
     -   `icon` / `banner`: Represented as `discord.Asset` objects. Use the local file paths from `icon` / `banner` as the asset URL/filepath.
-    -   `roles`: Hydrated from `server_roles.json`.
-    -   `channels` / `categories`: Hydrated from `server_structure.json`.
+    -   `roles`: Hydrated from `server_profile/roles.json`.
+    -   `channels` / `categories`: Hydrated from `server_profile/structure.json`.
 
 ### 8.2 Roles (`discord.Role`)
-File: `server_roles.json`
+File: `server_profile/roles.json`
 -   `id`: Cast `id` to `int`.
 -   `name`: Mapped directly.
 -   `color`: Parse the hex string to `discord.Color(value)`.
@@ -278,7 +322,7 @@ File: `server_roles.json`
 -   `mentionable`: Mapped directly to boolean.
 
 ### 8.3 Users & Members (`discord.Member` / `discord.User`)
-File: `message_backup/user_info.json`
+File: `message_backup/users/user_info.json`
 -   `id`: Cast `userID` to `int`.
 -   `name`: Mapped from `username`.
 -   `display_name`: Mapped from `userNickname`.
@@ -288,7 +332,7 @@ File: `message_backup/user_info.json`
 -   `avatar`: Mocked `discord.Asset` using the `userAvatar` local path.
 
 ### 8.4 Channels (`discord.TextChannel`, `discord.CategoryChannel`, `discord.ForumChannel`)
-File: `server_structure.json`
+File: `server_profile/structure.json`
 -   Iterate over the top-level array (Categories):
     -   **`discord.CategoryChannel`**:
         -   `id`: Cast `id` to `int`.
@@ -305,7 +349,7 @@ File: `server_structure.json`
         -   `nsfw`: Mapped directly to boolean.
 
 ### 8.5 Messages (`discord.Message`)
-File: `message_backup/{channel_id}.json` (Iterating the `messages` array)
+File: `message_backup/{channel_id}/messages.json` (Iterating the `messages` array)
 -   `id`: Cast `messageID` to `int`.
 -   `type`: Map the string `type` (e.g., "Default", "Reply") to `discord.MessageType`.
 -   `created_at`: Parse `timestamp` (ISO-8601 string) into a timezone-aware `datetime` object.
@@ -323,7 +367,7 @@ Nested within Message objects.
 -   `id`: Cast `id` to `int`.
 -   `filename`: Mapped from `fileName`.
 -   `size`: Mapped from `fileSizeBytes`.
--   `url` / `proxy_url`: Point to the local relative path (`{channel_id}/{resolved_filename}`).
+-   `url` / `proxy_url`: Point to the local relative path (`{channel_id}/attachments/{resolved_filename}`).
 
 ### 8.7 Reactions (`discord.Reaction` & `discord.PartialEmoji`)
 Nested within Message objects.

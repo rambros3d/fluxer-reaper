@@ -91,7 +91,7 @@ class BackupPane(Container):
             self._update_ui(f"[red]Error: {e}[/red]", "", "", False)
 
     def _get_backup_info(self) -> str | None:
-        profile_file = Path(f"Reaper-{self.cfg_name}") / "server_profile.json"
+        profile_file = Path(f"Reaper-{self.cfg_name}") / "server_profile" / "profile.json"
         if profile_file.exists():
             try:
                 with open(profile_file, "r", encoding="utf-8") as f:
@@ -195,7 +195,7 @@ class BackupPane(Container):
             any_found = False
             backed_up_ids = set()
             for chan in eligible_channels:
-                if (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists():
+                if (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists():
                     any_found = True
                     backed_up_ids.add(chan.id)
 
@@ -271,7 +271,7 @@ class BackupPane(Container):
                     break
                 await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
                 
-                backup_exists = (self.exporter.export_path / "message_backup" / f"{chan.id}.json").exists()
+                backup_exists = (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists()
                 is_sync = backup_exists and not force_overwrite
 
                 label = "Syncing Backup" if is_sync else "Backing up"
@@ -346,7 +346,7 @@ class BackupPane(Container):
 
             selected_channels = [
                 c for c in eligible_channels
-                if (self.exporter.export_path / "message_backup" / f"{c.id}.json").exists()
+                if (self.exporter.export_path / "message_backup" / str(c.id) / "messages.json").exists()
             ]
 
             if not selected_channels:

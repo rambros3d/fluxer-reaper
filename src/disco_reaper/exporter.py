@@ -31,8 +31,12 @@ class DiscordExporter:
         self.export_path = self.base_dir / f"DISCORD_BACKUP-{self.server_id}"
         self.export_path.mkdir(parents=True, exist_ok=True)
         
-        # Consolidate media into one folder
-        self.media_path = self.export_path / "server_media"
+        # Server profile directory for metadata and assets
+        self.profile_path = self.export_path / "server_profile"
+        self.profile_path.mkdir(exist_ok=True)
+        
+        # Consolidate media into server_profile/assets/
+        self.media_path = self.profile_path / "assets"
         self.media_path.mkdir(exist_ok=True)
         
         logger.info(f"Export directory set to: {self.export_path}")
@@ -56,13 +60,13 @@ class DiscordExporter:
         if self.reader.guild:
             if self.reader.guild.icon:
                 ext = "gif" if self.reader.guild.icon.is_animated() else "png"
-                metadata["icon"] = f"server_media/server_icon.{ext}"
+                metadata["icon"] = f"server_profile/assets/server_icon.{ext}"
             else:
                 metadata["icon"] = None
                 
             if self.reader.guild.banner:
                 ext = "gif" if self.reader.guild.banner.is_animated() else "png"
-                metadata["banner"] = f"server_media/server_banner.{ext}"
+                metadata["banner"] = f"server_profile/assets/server_banner.{ext}"
             else:
                 metadata["banner"] = None
 
@@ -70,7 +74,7 @@ class DiscordExporter:
         from datetime import datetime
         metadata["last_backup"] = datetime.now().isoformat()
         
-        output_file = self.export_path / "server_profile.json"
+        output_file = self.profile_path / "profile.json"
         
         # Preserve ignore_channels if the file already exists
         ignore_channels = []
@@ -80,7 +84,7 @@ class DiscordExporter:
                     old_data = json.load(f)
                     ignore_channels = old_data.get("ignore_channels", [])
             except Exception as e:
-                logger.warning(f"Could not read existing server_profile.json to preserve ignore_channels: {e}")
+                logger.warning(f"Could not read existing profile.json to preserve ignore_channels: {e}")
         
         metadata["ignore_channels"] = ignore_channels
 
@@ -102,7 +106,7 @@ class DiscordExporter:
                 "mentionable": r.mentionable
             })
         
-        output_file = self.export_path / "server_roles.json"
+        output_file = self.profile_path / "roles.json"
         await self._save_json(output_file, role_data)
         return role_data
 
@@ -148,7 +152,7 @@ class DiscordExporter:
             logger.info("No server banner found to download.")
 
     async def export_assets(self):
-        """Exports emojis, stickers, and server media to server_assets.json and server_media/."""
+        """Exports emojis, stickers, and server media to assets.json and server_profile/assets/."""
         await self.download_server_assets()
         
         emojis = await self.reader.get_emojis()
@@ -201,7 +205,7 @@ class DiscordExporter:
                 logger.error(f"Failed to download sticker {s.name}: {ex}")
 
         # Try to load existing customization to merge (if it exists)
-        custom_file = self.export_path / "server_assets.json"
+        custom_file = self.profile_path / "assets.json"
         customization = {"emojis": emoji_data, "stickers": sticker_data, "members": []}
         if custom_file.exists():
             try:
@@ -262,7 +266,7 @@ class DiscordExporter:
             # No need to increment cat_count for 'Uncategorized' usually, 
             # but let's see if the user wants it. For now, cat_count is real Discord categories.
             
-        output_file = self.export_path / "server_structure.json"
+        output_file = self.profile_path / "structure.json"
         await self._save_json(output_file, structure)
         return structure, cat_count, chan_count
 
@@ -313,31 +317,29 @@ class DiscordExporter:
         
         if is_thread:
             parent = await self.reader.get_channel(channel.parent_id)
-            if isinstance(parent, discord.ForumChannel):
-                # Forum thread: nested inside forum folder
-                backup_dir = backup_root / str(channel.parent_id)
-                avatar_rel_base = "../../user_avatars"
-            else:
-                # Regular thread
-                backup_dir = backup_root / "threads"
-                avatar_rel_base = "../user_avatars"
+            # All threads nest inside their parent channel directory
+            backup_dir = backup_root / str(channel.parent_id) / str(channel_id)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            avatar_rel_base = "../../users/avatars"
         elif is_forum:
-            # Forum metadata root
-            backup_dir = backup_root
-            avatar_rel_base = "user_avatars"
+            # Forum metadata root: message_backup/{forum_id}/
+            backup_dir = backup_root / str(channel_id)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            avatar_rel_base = "../users/avatars"
         else:
-            # Regular channel
-            backup_dir = backup_root
-            avatar_rel_base = "user_avatars"
+            # Regular channel: message_backup/{channel_id}/
+            backup_dir = backup_root / str(channel_id)
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            avatar_rel_base = "../users/avatars"
 
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Shared avatars directory (always at root of message_backup)
-        avatar_dir = backup_root / "user_avatars"
+        # Shared avatars directory: message_backup/users/avatars/
+        users_dir = backup_root / "users"
+        users_dir.mkdir(exist_ok=True)
+        avatar_dir = users_dir / "avatars"
         avatar_dir.mkdir(exist_ok=True)
         
         # Load existing user_info.json
-        user_info_file = backup_root / "user_info.json"
+        user_info_file = users_dir / "user_info.json"
         if not self.user_cache and user_info_file.exists():
             try:
                 with open(user_info_file, "r", encoding="utf-8") as f:
@@ -346,9 +348,16 @@ class DiscordExporter:
             except Exception:
                 self.user_cache = {}
 
-        base_filename = str(channel_id)
-        json_file = backup_dir / f"{base_filename}.json"
-        asset_dir = backup_dir / base_filename
+        # Determine file names based on type
+        if is_thread:
+            json_file = backup_dir / "thread_messages.json"
+            asset_dir = backup_dir / "thread_attachments"
+            # asset_prefix is the relative path from message_backup/ for URL references
+            asset_prefix = f"{channel.parent_id}/{channel_id}/thread_attachments"
+        else:
+            json_file = backup_dir / "messages.json"
+            asset_dir = backup_dir / "attachments"
+            asset_prefix = f"{channel_id}/attachments"
         
         if force and asset_dir.exists():
             import shutil
@@ -386,7 +395,7 @@ class DiscordExporter:
             async for msg in self.reader.fetch_message_history(channel_id, after_id=last_id):
                 if not self.is_running: break
                 await asyncio.sleep(0) # Yield control
-                msg_data = await self._format_message(msg, asset_dir, base_filename, avatar_dir, avatar_rel_base)
+                msg_data = await self._format_message(msg, asset_dir, asset_prefix, avatar_dir, avatar_rel_base)
                 messages.append(msg_data)
                 new_count += 1
                 accumulated_count += 1
@@ -547,7 +556,7 @@ class DiscordExporter:
                 "userColor": str(author.color) if hasattr(author, "color") else None,
                 "userIsBot": author.bot,
                 "userRoles": roles,
-                "userAvatar": f"user_avatars/{user_id}.png" if author.avatar else None,
+                "userAvatar": f"users/avatars/{user_id}.png" if author.avatar else None,
                 "userAvatarUrl": str(author.display_avatar.url) if author.avatar else None
             }
 
@@ -684,9 +693,9 @@ class DiscordExporter:
 
         is_forum = isinstance(channel, discord.ForumChannel)
         backup_root = self.export_path / "message_backup"
-        forum_json_file = backup_root / f"{channel_id}.json"
+        forum_json_file = backup_root / str(channel_id) / "messages.json"
         forum_asset_dir = backup_root / str(channel_id)
-        avatar_dir = backup_root / "user_avatars"
+        avatar_dir = backup_root / "users" / "avatars"
 
         thread_count = 0
         if all_threads:
@@ -713,15 +722,15 @@ class DiscordExporter:
                         logger.debug(f"Found starter message {msg.id} for {thread.name}")
                         
                         # Save assets in the thread's own directory inside the forum directory
-                        thread_asset_dir = forum_asset_dir / str(thread.id)
+                        thread_asset_dir = forum_asset_dir / str(thread.id) / "thread_attachments"
                         thread_asset_dir.mkdir(parents=True, exist_ok=True)
                         
                         msg_data = await self._format_message(
                             msg, 
                             thread_asset_dir, 
-                            f"{channel_id}/{thread.id}",  # Full relative path from message_backup/
+                            f"{channel_id}/{thread.id}/thread_attachments",  # Full relative path from message_backup/
                             avatar_dir, 
-                            "../../user_avatars"  # Two levels up from {forum_id}/{thread_id}/
+                            "../../users/avatars"  # Two levels up from {forum_id}/{thread_id}/
                         )
                         # Override type and add title for forum starter messages
                         msg_data["type"] = "Thread_starter_message"
@@ -732,7 +741,7 @@ class DiscordExporter:
                         
                         # Enrich totalFileSizeBytes with the child thread's totalAttachmentSizeBytes
                         # (the thread JSON has already been written above)
-                        thread_json = backup_root / str(channel_id) / f"{thread.id}.json"
+                        thread_json = backup_root / str(channel_id) / str(thread.id) / "thread_messages.json"
                         if thread_json.exists():
                             try:
                                 with open(thread_json, "r", encoding="utf-8") as f:

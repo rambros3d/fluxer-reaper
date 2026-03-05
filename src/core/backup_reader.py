@@ -687,17 +687,17 @@ class BackupReader:
         bp = self.backup_path
 
         # 1. Server profile -> BackupGuild
-        profile_file = bp / "server_profile.json"
+        profile_file = bp / "server_profile" / "profile.json"
         if profile_file.exists():
             profile = json.loads(profile_file.read_text(encoding="utf-8"))
             self.guild = BackupGuild(profile, bp, reader=self)
             logger.info(f"[Backup] Loaded server profile: {self.guild.name} ({self.guild.id})")
         else:
-            logger.warning(f"[Backup] server_profile.json not found in {bp}")
+            logger.warning(f"[Backup] server_profile/profile.json not found in {bp}")
             self.guild = None
 
         # 2. Roles
-        roles_file = bp / "server_roles.json"
+        roles_file = bp / "server_profile" / "roles.json"
         if roles_file.exists():
             roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
             self._roles = [BackupRole(r) for r in roles_data]
@@ -705,7 +705,7 @@ class BackupReader:
             logger.info(f"[Backup] Loaded {len(self._roles)} roles")
 
         # 3. Structure -> categories + channels
-        struct_file = bp / "server_structure.json"
+        struct_file = bp / "server_profile" / "structure.json"
         if struct_file.exists():
             structure = json.loads(struct_file.read_text(encoding="utf-8"))
             for cat_data in structure:
@@ -722,8 +722,8 @@ class BackupReader:
                         f"{len(self._channels)} channels")
 
         # 4. Assets (emojis + stickers)
-        assets_file = bp / "server_assets.json"
-        media_dir = bp / "server_media"
+        assets_file = bp / "server_profile" / "assets.json"
+        media_dir = bp / "server_profile" / "assets"
         if assets_file.exists():
             assets = json.loads(assets_file.read_text(encoding="utf-8"))
             self._emojis = [BackupEmoji(e, media_dir) for e in assets.get("emojis", [])]
@@ -732,7 +732,7 @@ class BackupReader:
                         f"{len(self._stickers)} stickers")
 
         # 5. Users
-        user_info_file = bp / "message_backup" / "user_info.json"
+        user_info_file = bp / "message_backup" / "users" / "user_info.json"
         if user_info_file.exists():
             try:
                 users = json.loads(user_info_file.read_text(encoding="utf-8"))
@@ -764,7 +764,7 @@ class BackupReader:
         if not bp.exists() or not bp.is_dir():
             return results
 
-        profile = bp / "server_profile.json"
+        profile = bp / "server_profile" / "profile.json"
         if profile.exists():
             try:
                 data = json.loads(profile.read_text(encoding="utf-8"))
@@ -804,19 +804,23 @@ class BackupReader:
         return channels
 
     async def get_backed_up_channel_ids(self) -> List[int]:
-        """Returns a list of channel IDs that have corresponding backup JSON files."""
+        """Returns a list of channel IDs that have corresponding backup directories."""
         backup_dir = self.backup_path / "message_backup"
         if not backup_dir.exists():
             return []
         
         ids = []
-        for f in backup_dir.glob("*.json"):
-            if f.name == "user_info.json":
+        for d in backup_dir.iterdir():
+            if not d.is_dir():
                 continue
-            try:
-                ids.append(int(f.stem))
-            except ValueError:
-                pass
+            if d.name == "users":
+                continue
+            # A backed-up channel has a messages.json inside its directory
+            if (d / "messages.json").exists():
+                try:
+                    ids.append(int(d.name))
+                except ValueError:
+                    pass
         return ids
 
     async def get_channel(self, channel_id: int) -> BackupChannel | None:
@@ -857,12 +861,12 @@ class BackupReader:
     def _load_channel_messages(self, channel_id: int) -> list[dict]:
         """Loads the messages array from a channel JSON file."""
         bp = self.backup_path / "message_backup"
-        json_file = bp / f"{channel_id}.json"
+        
+        # Primary: message_backup/{channel_id}/messages.json
+        json_file = bp / str(channel_id) / "messages.json"
         if not json_file.exists():
-            for candidate in [
-                bp / "threads" / f"{channel_id}.json",
-                *bp.glob(f"*/{channel_id}.json"),
-            ]:
+            # Fallback: search for thread_messages.json inside any parent channel
+            for candidate in bp.glob(f"*/{channel_id}/thread_messages.json"):
                 if candidate.exists():
                     json_file = candidate
                     break
