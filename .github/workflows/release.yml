@@ -40,13 +40,6 @@ jobs:
           pip install -r requirements.txt
           pip install pyinstaller Pillow
 
-      - name: Convert Icon to ICO (Windows)
-        if: matrix.os == 'windows-latest'
-        shell: python
-        run: |
-          from PIL import Image
-          img = Image.open('disco-reaper-icon.png')
-          img.save('disco-reaper-icon.ico', format='ICO', sizes=[(256, 256)])
 
       - name: Build with PyInstaller
         run: |

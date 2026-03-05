@@ -12,11 +12,7 @@ hiddenimports = []
 hiddenimports += collect_submodules('rich._unicode_data')
 
 # Determine the best icon to use
-icon_file = None
-if os.path.exists('disco-reaper-icon.ico'):
-    icon_file = 'disco-reaper-icon.ico'
-elif os.path.exists('disco-reaper-icon.png'):
-    icon_file = 'disco-reaper-icon.png'
+icon_file = 'disco-reaper-icon.ico' if os.path.exists('disco-reaper-icon.ico') else None
 
 print(f"DEBUG: Selected icon_file = {icon_file}")
 
