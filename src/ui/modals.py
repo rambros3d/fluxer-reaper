@@ -4,7 +4,8 @@ Shared modals used by backup and shuttle operations.
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll, Container, Center
-from textual.widgets import Button, Label, Input, ProgressBar, RichLog, Rule, RadioButton, LoadingIndicator, Header, Footer, RadioSet
+from textual.widgets import Button, Label, Input, ProgressBar, RichLog, Rule, RadioButton, LoadingIndicator, Header, Footer, RadioSet, OptionList
+from textual.widgets.option_list import Option
 from textual.screen import ModalScreen, Screen
 
 
@@ -488,12 +489,28 @@ class ChannelPickerScreen(Screen[tuple]):
         margin: 0 1;
         padding: 0 1;
     }
+    .split_pane:blur {
+        border: solid $primary; /* Prevent border color change on blur */
+    }
     .pane_title { text-style: bold; margin-bottom: 1; color: cyan; margin-left: 1; }
+    OptionList {
+        background: $surface;
+        border: none;
+        height: 1fr;
+    }
+    OptionList:blur .option-list--option-highlighted {
+        background: $primary 100%; /* Brighter blurred highlight */
+    }
+    OptionList .option-list--option-highlighted {
+        background: $primary 100%;
+        text-style: bold;
+    }
     .category_header {
         margin-top: 1;
         background: $primary 10%;
         text-style: bold;
         padding-left: 1;
+        color: cyan;
     }
     #chanpick_buttons { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; }
     #chanpick_buttons Button { width: 1fr; margin: 0 1; }
@@ -509,7 +526,7 @@ class ChannelPickerScreen(Screen[tuple]):
 
     def _render_pane(self, channels, categories, pane_id, prefix):
         cat_grouped: dict[int | None, list] = {}
-        seen_ids = set()  # Prevent duplicate widget IDs
+        seen_ids = set()
         for c in channels:
             cat_id = getattr(c, "category_id", None) if not isinstance(c, dict) else c.get("parent_id")
             cid = c.get("id") if isinstance(c, dict) else c.id
@@ -518,19 +535,22 @@ class ChannelPickerScreen(Screen[tuple]):
             seen_ids.add(cid)
             cat_grouped.setdefault(cat_id, []).append(c)
 
-        with VerticalScroll(classes="split_pane", id=pane_id):
-            with RadioSet(id=f"{prefix}_radioset"):
-                for cat_id in sorted(cat_grouped, key=lambda k: categories.get(k, "") if k else ""):
-                    if cat_id is not None and cat_id in categories:
-                        yield Label(f"[cyan]{categories[cat_id]}[/cyan]", classes="category_header")
-                    for c in cat_grouped[cat_id]:
-                        if isinstance(c, dict):
-                            name = c.get("name", "Unnamed")
-                            cid = c.get("id")
-                        else:
-                            name = c.name
-                            cid = c.id
-                        yield RadioButton(name, value=False, id=f"{prefix}_{cid}")
+        options = []
+        for cat_id in sorted(cat_grouped, key=lambda k: categories.get(k, "") if k else ""):
+            if cat_id is not None and cat_id in categories:
+                # Category header as a bold, non-selectable option
+                options.append(Option(f"[bold cyan]{categories[cat_id]}[/bold cyan]", id=f"header_{cat_id}", disabled=True))
+            
+            for c in cat_grouped[cat_id]:
+                if isinstance(c, dict):
+                    name = c.get("name", "Unnamed")
+                    cid = c.get("id")
+                else:
+                    name = c.name
+                    cid = c.id
+                options.append(Option(name, id=f"{prefix}_{cid}"))
+        
+        yield OptionList(*options, id=f"{prefix}_list", classes="split_pane")
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -552,20 +572,52 @@ class ChannelPickerScreen(Screen[tuple]):
                     yield Button("Back", id="btn_pick_back")
         yield Footer()
 
+    def on_mount(self) -> None:
+        """Set initial highlights after mounting."""
+        for lid in ["#src_list", "#tgt_list"]:
+            lst = self.query_one(lid, OptionList)
+            if lst.option_count > 0:
+                # Find first selectable (non-disabled) option
+                for i in range(lst.option_count):
+                    opt = lst.get_option_at_index(i)
+                    if not opt.disabled:
+                        lst.highlighted = i
+                        break
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """Handle selection in either list."""
+        if event.option_list.id == "src_list":
+            # QoL: Auto-select target if name matches
+            src_name = str(event.option.prompt).strip().lower()
+            tgt_list = self.query_one("#tgt_list", OptionList)
+            
+            for i in range(tgt_list.option_count):
+                opt = tgt_list.get_option_at_index(i)
+                if opt.id and opt.id.startswith("tgt_"):
+                    if str(opt.prompt).strip().lower() == src_name:
+                        tgt_list.highlighted = i
+                        tgt_list.scroll_to_highlight()
+                        break
+
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "btn_pick_back":
             self.dismiss(None)
         elif event.button.id == "btn_pick_ok":
+            src_list = self.query_one("#src_list", OptionList)
+            tgt_list = self.query_one("#tgt_list", OptionList)
+            
             src_val = None
             tgt_val = None
             
-            src_rset = self.query_one("#src_radioset", RadioSet)
-            if src_rset.pressed_button:
-                 src_val = src_rset.pressed_button.id.split("_", 1)[1]
+            if src_list.highlighted is not None:
+                opt = src_list.get_option_at_index(src_list.highlighted)
+                if opt.id and opt.id.startswith("src_"):
+                    src_val = opt.id.split("_", 1)[1]
             
-            tgt_rset = self.query_one("#tgt_radioset", RadioSet)
-            if tgt_rset.pressed_button:
-                 tgt_val = tgt_rset.pressed_button.id.split("_", 1)[1]
+            if tgt_list.highlighted is not None:
+                opt = tgt_list.get_option_at_index(tgt_list.highlighted)
+                if opt.id and opt.id.startswith("tgt_"):
+                    tgt_val = opt.id.split("_", 1)[1]
                  
             if src_val and tgt_val:
                  self.dismiss((int(src_val), tgt_val)) # Source is guaranteed Discord ID (int), Target could be UUID/string
