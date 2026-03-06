@@ -109,6 +109,8 @@ async def migrate_messages(
         "messages": 0, 
         "threads": 0, 
         "attachments": 0,
+        "first_message_url": "",
+        "last_message_url": "",
         "last_message_content": "",
         "last_message_author": ""
     }
@@ -128,7 +130,8 @@ async def migrate_messages(
             # Skip system messages like "pinned a message", etc.
             # We treat thread_starter_message (type 21) as our thread marker.
             if msg.type == context.discord_reader.MESSAGE_TYPE_THREAD_STARTER:
-                content = f"> <<< THREAD: **{msg.channel.name}** >>>"
+                channel_name = msg.channel.name if msg.channel else "Unknown Thread"
+                content = f"> <<< THREAD: **{channel_name}** >>>"
             elif msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:

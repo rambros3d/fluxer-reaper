@@ -701,6 +701,7 @@ class BackupReader:
         self._stickers: List[BackupSticker] = []
         self._members: List[BackupMember] = []
         self._member_map: Dict[int, BackupMember] = {}
+        self._thread_info: Dict[int, Dict[str, Any]] = {}  # channel_id -> metadata (like name, parentID)
 
     # ── startup ──────────────────────────────────────────────────────────
 
@@ -898,6 +899,14 @@ class BackupReader:
 
         try:
             data = json.loads(json_file.read_text(encoding="utf-8"))
+            
+            # Cache thread info if this is a thread
+            if "parentID" in data:
+                self._thread_info[channel_id] = {
+                    "name": data.get("channelName", "Unknown Thread"),
+                    "parent_id": int(data["parentID"])
+                }
+            
             return data.get("messages", [])
         except Exception as e:
             logger.error(f"[Backup] Failed to load messages for channel {channel_id}: {e}")
@@ -909,6 +918,16 @@ class BackupReader:
         
         # Resolve channel object
         channel = next((c for c in self._channels if c.id == channel_id), None)
+        
+        # If not found in channels, check if it's a known thread
+        if not channel and channel_id in self._thread_info:
+            info = self._thread_info[channel_id]
+            # Create a stub BackupChannel for the thread
+            channel = BackupChannel({
+                "id": str(channel_id),
+                "name": info["name"],
+                "type": "thread"
+            }, category_id=info["parent_id"], guild=self.guild)
         
         return BackupMessage(
             msg_data,

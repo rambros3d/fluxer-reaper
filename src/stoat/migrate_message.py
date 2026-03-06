@@ -136,7 +136,8 @@ async def migrate_messages(
             # We treat thread_starter_message (type 21) as our thread marker.
             content = "" # Initialize content
             if msg.type == context.discord_reader.MESSAGE_TYPE_THREAD_STARTER:
-                content = f"> <<< THREAD: **{msg.channel.name}** >>>"
+                channel_name = msg.channel.name if msg.channel else "Unknown Thread"
+                content = f"> <<< THREAD: **{channel_name}** >>>"
                 # If it's a thread starter and we already processed the thread at the top,
                 # we might be double-posting. But we want it as a marker.
             elif msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY]:
