@@ -217,7 +217,8 @@ class StoatWriter:
 
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, 
                            author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, 
-                           reply_to_message_id: Optional[str] = None, is_forwarded: bool = False) -> Optional[str]:
+                           reply_to_message_id: Optional[str] = None, is_forwarded: bool = False,
+                           embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
         Sends a message to the target channel using Stoat's masquerade feature.
         Raises on permission errors — caller must handle.
@@ -259,7 +260,8 @@ class StoatWriter:
                     content=final_content,
                     masquerade=masquerade,
                     replies=replies,
-                    attachments=attachments
+                    attachments=attachments,
+                    embeds=embeds
                 )
                 return str(msg.id) if msg else None
             except Exception as e:

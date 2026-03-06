@@ -231,7 +231,8 @@ async def migrate_messages(
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     files=files if files else None,
                     reply_to_message_id=reply_to_fluxer_id,
-                    is_forwarded=is_forwarded
+                    is_forwarded=is_forwarded,
+                    embeds=msg.embeds
                 )
                 
                 if fluxer_msg_id:

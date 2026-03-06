@@ -234,7 +234,8 @@ async def migrate_messages(
                     timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
                     files=files if files else None,
                     reply_to_message_id=reply_to_stoat_id,
-                    is_forwarded=is_forwarded
+                    is_forwarded=is_forwarded,
+                    embeds=msg.embeds
                 )
                 
                 if stoat_msg_id:

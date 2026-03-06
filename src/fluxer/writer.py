@@ -224,7 +224,7 @@ class FluxerWriter:
         assert self.client is not None
         return await self.client.get_guild_channels(self.community_id)
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False) -> Optional[str]:
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
         Sends a message to the target channel.
         Uses a webhook to mimic the original author if possible.
@@ -268,6 +268,7 @@ class FluxerWriter:
                     username=f"{author_name} (discord)",
                     avatar_url=author_avatar_url,
                     files=fluxer_files,
+                    embeds=embeds,
                     wait=True
                 )
                 return str(msg.id) if msg else None
@@ -289,6 +290,7 @@ class FluxerWriter:
                     channel_id=channel_id,
                     content=final_bot_content,
                     files=fluxer_files,
+                    embeds=embeds,
                     message_reference=message_reference
                 )
                 return str(msg_data["id"]) if msg_data else None
