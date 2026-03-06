@@ -5,7 +5,7 @@ from src.core.configuration import load_config
 
 def setup_logging():
     try:
-        config = load_config()
+        config = load_config(create_if_missing=False)
         log_level_str = config.migration.log_level.upper()
         level = getattr(logging, log_level_str, logging.INFO)
     except Exception:

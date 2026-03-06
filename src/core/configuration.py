@@ -54,9 +54,12 @@ class AppConfig(BaseModel):
     def stoat_api_url(self) -> Optional[str]:
         return self.target_api_url if self.target_platform == "stoat" else None
 
-def load_config(config_path: Union[str, Path] = "config.yaml") -> AppConfig:
+def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing: bool = True) -> AppConfig:
     path = Path(config_path)
     if not path.exists():
+        if not create_if_missing:
+            raise FileNotFoundError(f"Configuration file not found: {config_path}")
+            
         config = AppConfig(
             discord_bot_token="DISCORD_BOT_TOKEN",
             discord_server_id="DISCORD_SERVER_ID",

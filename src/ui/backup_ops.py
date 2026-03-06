@@ -168,21 +168,6 @@ class BackupPane(Container):
                 modal.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
                 modal.write("")
 
-            modal.show_info("[bold cyan]Profile Backup Ready[/bold cyan]", f"Overview: {len(server.channels) if server else '?'} Channels, {len(server.roles) if server else '?'} Roles")
-            modal.set_status("Awaiting Confirmation to Backup Profile...")
-
-            choice = await modal.phase_wait_confirm(
-                btn_start_label="Start Backup",
-                show_id=False
-            )
-            if choice in ("btn_back", "btn_main_menu"):
-                modal.dismiss()
-                self.engine.is_running = False
-                await self.engine.close_connections()
-                if choice == "btn_main_menu":
-                    self.app.switch_screen("config_selection")
-                return
-
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal.phase_progress()
             modal.set_status("Exporting Server Structure...")
@@ -417,7 +402,7 @@ class BackupPane(Container):
                 modal_prog.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
                 modal_prog.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
                 modal_prog.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
-                modal_prog.write("\n[dim]This operation will update the profile and scan existing baked-up channels for new messages.[/dim]")
+                modal_prog.write("\n[dim]This operation will update the profile and scan existing backed-up channels for new messages.[/dim]")
                 modal_prog.write("")
 
             modal_prog.show_info("[bold green]Sync Ready[/bold green]", f"Overview: {len(server.channels) if server else '?'} Channels")
