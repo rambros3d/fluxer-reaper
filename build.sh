@@ -4,7 +4,6 @@
 set -e
 
 echo "--- Disco-Reaper Cross-Distro Build Script ---"
-echo "NOTE: For maximum compatibility (glibc), run this on your oldest target Linux distribution."
 
 # Check for venv
 if [ ! -d "venv" ]; then

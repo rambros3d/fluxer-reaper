@@ -21,7 +21,7 @@ from textual import work
 
 from src.core.configuration import load_config
 from src.core.base import MigrationContext
-from src.disco_reaper.exporter import DiscordExporter
+from src.core.exporter import DiscordExporter
 from src.ui.modals import ProgressScreen, ChannelSelectScreen, MessageIDInputModal
 
 
