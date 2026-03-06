@@ -11,6 +11,7 @@ from textual.screen import ModalScreen, Screen
 import time
 import logging
 import asyncio
+from typing import Any, Optional, Union, List, Dict, Callable
 
 class UILogHandler(logging.Handler):
     """Custom logging handler to send logs to the Textual UI RichLog."""

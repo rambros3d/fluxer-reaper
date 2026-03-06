@@ -10,6 +10,7 @@ import time
 import aiohttp
 import traceback
 from pathlib import Path
+from typing import Any, Optional, Union, List, Dict, Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll
@@ -89,7 +90,9 @@ class ShuttlePane(Container):
     .info_pane { width: 1fr; height: auto; }
     .info_pane Label { width: 100%; }
     .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
-    #sp_lbl_status { text-style: bold; margin-top: 1; }
+    .pane_status { text-style: bold; margin-top: 1; }
+    #sp_info_split Rule { height: 100%; margin: 0 2; color: $accent; }
+    #sp_lbl_status { display: none; }
     
     ShuttlePane #sp_actions { height: auto; }
     ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
@@ -114,14 +117,17 @@ class ShuttlePane(Container):
                         yield Label("Discord", classes="pane_header")
                         yield Label("Server: [yellow]Loading...[/yellow]", id="sp_lbl_d_server")
                         yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_d_bot")
+                        yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_d_status", classes="pane_status")
                     
+                    yield Rule(orientation="vertical")
+
                     with Vertical(classes="info_pane"):
                         yield Label("Target", id="sp_lbl_t_header", classes="pane_header")
                         yield Label("Community: [yellow]Loading...[/yellow]", id="sp_lbl_t_comm")
                         yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_t_bot")
+                        yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_t_status", classes="pane_status")
                 
-                yield Rule()
-                yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_status")
+                yield Label("", id="sp_lbl_status")
             with Vertical(id="sp_actions"):
                 yield Button("Clone Server Template", id="sp_clone", disabled=True)
                 yield Button("Sync Server Settings", id="sp_sync", disabled=True)
@@ -174,6 +180,15 @@ class ShuttlePane(Container):
         else:
             self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
 
+        # Discord Side Status
+        if v.get("discord_token") and v.get("discord_server"):
+            d_status = "[green][VALID][/green]"
+        elif v.get("discord_timeout"):
+            d_status = "[red][TIMEOUT][/red]"
+        else:
+            d_status = "[red][INVALID][/red]"
+        self.query_one("#sp_lbl_d_status", Label).update(f"Status: {d_status}")
+
         # Target
         plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
         t_name = v.get("target_community_name")
@@ -193,6 +208,15 @@ class ShuttlePane(Container):
             
         self.query_one("#sp_lbl_t_comm", Label).update(f"Community: {c_disp}")
         self.query_one("#sp_lbl_t_bot", Label).update(f"Bot: {tb_disp}")
+
+        # Target Side Status
+        if v.get("target_token") and v.get("target_community"):
+            t_status = "[green][VALID][/green]"
+        elif v.get("target_timeout"):
+            t_status = "[red][TIMEOUT][/red]"
+        else:
+            t_status = "[red][INVALID][/red]"
+        self.query_one("#sp_lbl_t_status", Label).update(f"Status: {t_status}")
 
         # Status
         if not self.tokens_valid:

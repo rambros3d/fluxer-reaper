@@ -10,6 +10,7 @@ import logging
 import traceback
 from pathlib import Path
 from datetime import datetime
+from typing import Any, Optional, Union, List, Dict, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,9 @@ class BackupPane(Container):
     .info_pane { width: 1fr; height: auto; }
     .info_pane Label { width: 100%; }
     .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
-    #bp_lbl_backup { text-style: bold; margin-top: 1; }
+    .pane_status { text-style: bold; margin-top: 1; }
+    #bp_info_split Rule { height: 100%; margin: 0 2; color: $accent; }
+    #bp_lbl_backup { display: none; }
     
     BackupPane #bp_actions { height: auto; }
     BackupPane #bp_actions Button { width: 100%; margin-bottom: 1; }
@@ -58,12 +61,17 @@ class BackupPane(Container):
                         yield Label("Discord", classes="pane_header")
                         yield Label("Server: -", id="bp_lbl_server")
                         yield Label("Source: -", id="bp_lbl_bot")
+                        yield Label("Status: -", id="bp_lbl_d_status", classes="pane_status")
+                    
+                    yield Rule(orientation="vertical", id="bp_vrule")
+
                     with Vertical(classes="info_pane", id="bp_target_pane"):
-                        # Hidden in backup mode
-                        pass
+                        yield Label("Target", classes="pane_header")
+                        yield Label("Community: -", id="bp_lbl_t_comm")
+                        yield Label("Bot: -", id="bp_lbl_t_bot")
+                        yield Label("Status: -", id="bp_lbl_t_status", classes="pane_status")
                 
-                yield Rule()
-                yield Label("Status: -", id="bp_lbl_backup")
+                yield Label("", id="bp_lbl_backup")
             with Vertical(id="bp_actions"):
                 yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True)
                 yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary")
@@ -122,9 +130,16 @@ class BackupPane(Container):
         try:
             self.query_one("#bp_lbl_server", Label).update(f"Server: {server_text}")
             self.query_one("#bp_lbl_bot", Label).update(f"Source: {bot_text}")
+            
+            # Status for Discord side
+            d_status = "[green][VALID][/green]" if enabled else "[red][INVALID][/red]"
+            self.query_one("#bp_lbl_d_status", Label).update(f"Status: {d_status}")
+
+            # Legacy label for safety if called elsewhere
             self.query_one("#bp_lbl_backup", Label).update(f"Status: {backup_text}")
             
-            # Hide target pane in backup
+            # Hide target side in backup mode completely
+            self.query_one("#bp_vrule").display = False
             self.query_one("#bp_target_pane").display = False
             
             for bid in ("#bp_backup_profile", "#bp_backup_msgs", "#bp_backup_sync"):
