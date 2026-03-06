@@ -279,7 +279,7 @@ class StoatWriter:
             logger.error(f"Failed to send Stoat message to {channel_id}: {e}")
             raise  # Let caller handle (migration loop will stop for permission errors)
 
-    async def send_marker(self, channel_id: str, content: str, files: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+    async def send_marker(self, channel_id: str, content: str, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None) -> Optional[str]:
         try:
             channel = await self.client.fetch_channel(channel_id)
             attachments = None
@@ -287,7 +287,16 @@ class StoatWriter:
                 attachments = []
                 for f in files:
                     attachments.append((f["filename"], f["data"]))
-            msg = await channel.send(content=content, attachments=attachments)
+            
+            replies = None
+            if reply_to_message_id:
+                replies = [stoat.Reply(id=reply_to_message_id, mention=False)]
+
+            msg = await channel.send(
+                content=content, 
+                attachments=attachments,
+                replies=replies
+            )
             return str(msg.id)
         except Exception as e:
             logger.error(f"Failed to send Stoat marker to {channel_id}: {e}")

@@ -102,7 +102,9 @@ async def migrate_messages(
     target_channel_id: str, 
     after_message_id: int | None = None, 
     progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
-    thread_id: str | None = None
+    thread_id: str | None = None,
+    parent_target_id: str | None = None,
+    thread_name: str | None = None
 ) -> Dict[str, Any]:
     """Migrate messages for a specific channel and returns detailed statistics."""
     stats = {
@@ -128,11 +130,7 @@ async def migrate_messages(
 
 
             # Skip system messages like "pinned a message", etc.
-            # We treat thread_starter_message (type 21) as our thread marker.
-            if msg.type == context.discord_reader.MESSAGE_TYPE_THREAD_STARTER:
-                channel_name = msg.channel.name if msg.channel else "Unknown Thread"
-                content = f"> <<< THREAD: **{channel_name}** >>>"
-            elif msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY]:
+            if msg.type not in [context.discord_reader.MESSAGE_TYPE_DEFAULT, context.discord_reader.MESSAGE_TYPE_REPLY, context.discord_reader.MESSAGE_TYPE_THREAD_STARTER]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread
@@ -146,7 +144,9 @@ async def migrate_messages(
                         context=context,
                         source_channel_id=thread.id,
                         target_channel_id=target_channel_id,
-                        thread_id=str(thread.id)
+                        thread_id=str(thread.id),
+                        parent_target_id=None,
+                        thread_name=thread.name
                     )
                     stats["messages"] += thread_stats["messages"]
                     stats["attachments"] += thread_stats["attachments"]
@@ -211,6 +211,14 @@ async def migrate_messages(
                     else:
                         logger.debug(f"Reply target Discord ID {msg.reference.message_id} not found in current session map.")
                 
+                # If this is the FIRST thread message and we have a parent_target_id, force it as reply to the starter
+                if not reply_to_fluxer_id and parent_target_id and stats["messages"] == 0:
+                    reply_to_fluxer_id = parent_target_id
+                
+                # Prepend thread marker to the first message of the thread
+                if thread_name and stats["messages"] == 0:
+                    content = f"> <<< THREAD: **{thread_name}** >>>\n{content}"
+                
                 avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar.url else None
                 if avatar_url and not avatar_url.startswith("http"):
                     avatar_url = None
@@ -262,7 +270,9 @@ async def migrate_messages(
                         context=context,
                         source_channel_id=thread.id,
                         target_channel_id=target_channel_id,
-                        thread_id=str(thread.id)
+                        thread_id=str(thread.id),
+                        parent_target_id=fluxer_msg_id,
+                        thread_name=thread.name
                     )
                     stats["messages"] += thread_stats["messages"]
                     stats["attachments"] += thread_stats["attachments"]
