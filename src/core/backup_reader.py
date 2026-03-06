@@ -787,12 +787,13 @@ class BackupReader:
             return results
 
         profile = bp / "server_profile" / "profile.json"
-        if profile.exists():
+        structure = bp / "server_profile" / "structure.json"
+        if profile.exists() and structure.exists():
             try:
                 data = json.loads(profile.read_text(encoding="utf-8"))
                 results["token"] = True
                 results["server"] = True
-                results["bot_name"] = "BackupReader"
+                results["bot_name"] = "LOCAL BACKUP"
                 results["server_name"] = data.get("name", "Unknown")
             except Exception:
                 pass

@@ -21,7 +21,7 @@ from textual import work
 from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.disco_reaper.exporter import DiscordExporter
-from src.ui.modals import ProgressScreen, ChannelSelectScreen
+from src.ui.modals import ProgressScreen, ChannelSelectScreen, MessageIDInputModal
 
 
 class BackupPane(Container):
@@ -306,12 +306,30 @@ class BackupPane(Container):
                 if choice == "btn_back":
                     modal_prog.dismiss()
                     continue
+                elif choice == "btn_start_id":
+                    loop = asyncio.get_running_loop()
+                    future = loop.create_future()
+                    def id_callback(res: int | None) -> None:
+                        if not future.done():
+                            future.set_result(res)
+                            
+                    id_modal = MessageIDInputModal(self.engine.discord_reader, selected_channels[0].id)
+                    self.app.push_screen(id_modal, id_callback)
+                    verified_id = await future
+                    
+                    if verified_id is None:
+                        # User cancelled the ID input
+                        continue
+                        
+                    after_id = verified_id
                 elif choice == "btn_main_menu":
                     modal_prog.dismiss()
                     self.app.switch_screen("config_selection")
                     return
                 
-                # Proceed to progress
+                # If we are here, proceeding either via Start First or Start from ID (after_id)
+                if choice == "btn_start_first":
+                    after_id = None
                 break
 
             modal_prog.phase_progress()
@@ -349,7 +367,7 @@ class BackupPane(Container):
 
                 accumulated_msgs = await self.exporter.export_channel_messages(
                     chan.id, progress_callback=update_msg_count, force=force_overwrite,
-                    accumulated_count=accumulated_msgs
+                    accumulated_count=accumulated_msgs, after_id=after_id
                 )
                 accumulated_msgs = await self.exporter.export_threads(
                     chan.id, progress_callback=update_msg_count, force=force_overwrite,

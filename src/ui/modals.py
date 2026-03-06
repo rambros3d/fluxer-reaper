@@ -699,3 +699,108 @@ class ChannelSelectScreen(Screen[dict]):
             self.dismiss({"channels": selected, "force": force})
         elif event.button.id == "btn_cancel_chan":
             self.dismiss(None)
+
+# ---------------------------------------------------------------------------
+# MessageIDInputModal – Input a Discord Message ID and verify it
+# ---------------------------------------------------------------------------
+
+class MessageIDInputModal(ModalScreen[int | None]):
+    """Modal to input a message ID, verify it exists, and then confirm start."""
+
+    DEFAULT_CSS = """
+    MessageIDInputModal { align: center middle; }
+    #msg_id_dialog {
+        width: 80%;
+        height: auto;
+        border: solid yellow;
+        padding: 1 2;
+        background: $surface;
+    }
+    #msg_preview_container {
+        border: solid $primary;
+        padding: 1 2;
+        margin: 1 0;
+        height: auto;
+        min-height: 5;
+    }
+    #msg_id_buttons {
+        height: auto;
+        dock: bottom;
+        margin-top: 1;
+    }
+    #msg_id_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, reader, channel_id: int):
+        super().__init__()
+        self.reader = reader
+        self.channel_id = channel_id
+        self.verified_id: int | None = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="msg_id_dialog"):
+            yield Label("[bold yellow]Start from specific Message ID[/bold yellow]")
+            yield Input(placeholder="Enter Discord Message ID (e.g., 123456789012345678)", id="input_msg_id", type="number")
+            with Container(id="msg_preview_container"):
+                yield Label("Enter an ID and click Verify to preview.", id="lbl_msg_preview")
+            
+            with Horizontal(id="msg_id_buttons"):
+                yield Button("Verify", variant="primary", id="btn_verify_start", disabled=True)
+                yield Button("Back", variant="warning", id="btn_cancel_msg_id")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "input_msg_id":
+            btn = self.query_one("#btn_verify_start", Button)
+            self.verified_id = None
+            btn.label = "Verify"
+            btn.variant = "primary"
+            
+            val = event.input.value.strip()
+            if val and val.isdigit():
+                btn.disabled = False
+            else:
+                btn.disabled = True
+            
+            preview = self.query_one("#lbl_msg_preview", Label)
+            preview.update("Click Verify to fetch message.")
+
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_cancel_msg_id":
+            self.dismiss(None)
+        
+        elif event.button.id == "btn_verify_start":
+            # If already verified, we are starting
+            if self.verified_id is not None:
+                self.dismiss(self.verified_id)
+                return
+            
+            # Otherwise we verify
+            btn = event.button
+            inp = self.query_one("#input_msg_id", Input)
+            preview = self.query_one("#lbl_msg_preview", Label)
+            
+            msg_id_str = inp.value.strip()
+            try:
+                msg_id = int(msg_id_str)
+            except ValueError:
+                preview.update("[bold red]Invalid ID format. Must be numeric.[/bold red]")
+                return
+
+            btn.disabled = True
+            preview.update("[cyan]Fetching message...[/cyan]")
+            
+            try:
+                msg = await self.reader.get_message(self.channel_id, msg_id)
+                if not msg:
+                    preview.update("[bold red]Message not found in this channel.[/bold red]")
+                else:
+                    self.verified_id = msg_id
+                    content = msg.content or (f"[dim]({len(msg.attachments)} attachments)[/dim]" if msg.attachments else "[dim](no content)[/dim]")
+                    preview.update(f"[bold green]Message Found![/bold green]\n\n[bold]{msg.author.display_name}:[/bold] {content[:300]}")
+                    
+                    btn.label = "Start Migration"
+                    btn.variant = "success"
+            except Exception as e:
+                preview.update(f"[bold red]Error fetching message:[/bold red] {e}")
+            finally:
+                btn.disabled = False

@@ -20,7 +20,7 @@ from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.core.audit import log_audit_event
 from src.ui.modals import (
-    ProgressScreen, SubMenuModal, ChannelPickerScreen, OptionSelectModal,
+    ProgressScreen, SubMenuModal, ChannelPickerScreen, OptionSelectModal, MessageIDInputModal,
 )
 
 import src.fluxer.roles_permissions as fluxer_roles
@@ -161,13 +161,15 @@ class ShuttlePane(Container):
             s_disp = f'[green]"{d_name}"[/green]'
             b_disp = f'[green]{d_bot}[/green]'
         elif v.get("discord_token") is False:
-            s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
+            if self.config.tool_mode == "backup_transfer":
+                s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
+            else:
+                s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
             s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
             
         self.query_one("#sp_lbl_d_server", Label).update(f"Server: {s_disp}")
         if self.config.tool_mode == "backup_transfer":
-            b_disp = "[green]LOCAL BACKUP[/green]" if v.get("discord_server") else "[red]NOT FOUND[/red]"
             self.query_one("#sp_lbl_d_bot", Label).update(f"Source: {b_disp}")
         else:
             self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
@@ -227,7 +229,10 @@ class ShuttlePane(Container):
             "000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID",
             "STOAT_SERVER_ID", "TARGET_SERVER_ID", "", None,
         ]
-        d_dummy = self.config.discord_bot_token in fillers or self.config.discord_server_id in fillers
+        if self.config.tool_mode == "backup_transfer":
+            d_dummy = self.config.discord_server_id in fillers
+        else:
+            d_dummy = self.config.discord_bot_token in fillers or self.config.discord_server_id in fillers
         t_dummy = (self.config.target_bot_token or "") in fillers or (self.config.target_server_id or "") in fillers
 
         tasks = {}
@@ -894,10 +899,23 @@ class ShuttlePane(Container):
                     logger.info("Proceeding with 'Continue Migration' (incremental sink).")
                     after_id = int(last_migrated)
                 elif choice == "btn_start_id":
-                    # Fallback to full for now since we don't have an ID input dialog yet
-                    modal.write("[yellow]Custom Message ID start not fully implemented, starting from beginning.[/yellow]")
-                    logger.info("Proceeding with 'Start from ID' (fallback to begin).")
-                    after_id = None
+                    loop = asyncio.get_running_loop()
+                    future = loop.create_future()
+                    def id_callback(res: int | None) -> None:
+                        if not future.done():
+                            future.set_result(res)
+                            
+                    id_modal = MessageIDInputModal(self.engine.discord_reader, source_channel.id)
+                    self.app.push_screen(id_modal, id_callback)
+                    verified_id = await future
+                    
+                    if verified_id is None:
+                        # User cancelled the ID input, stay on the progress modal
+                        logger.info("User cancelled 'Start from ID' input.")
+                        continue
+                        
+                    logger.info(f"Proceeding with 'Start from ID': {verified_id}")
+                    after_id = verified_id
                 else:
                     logger.info("Proceeding with 'Start from First' (clean sink).")
                 
