@@ -59,8 +59,9 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         progress_callback: Optional callback receiving (item_name, status, current, total)
         force: If True, re-create channels even if they exist in state.
     """
-    categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    # Sort by position to respect Discord arrangement
+    categories = sorted(await context.discord_reader.get_categories(), key=lambda c: getattr(c, 'position', 0))
+    channels = sorted(await context.discord_reader.get_channels(), key=lambda c: getattr(c, 'position', 0))
     
     cloned_info = {
         "categories_created": [],
@@ -105,7 +106,8 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         if not context.is_running: break
         
         state_key = str(cat.id)
-        fluxer_id = await context.fluxer_writer.create_channel(cat.name, type=4)
+        pos = getattr(cat, 'position', None)
+        fluxer_id = await context.fluxer_writer.create_channel(cat.name, type=4, position=pos)
         context.state.set_category_mapping(state_key, fluxer_id)
         cloned_info["categories_created"].append(cat.name)
         if cat.name not in cloned_info["structure"]:
@@ -127,6 +129,7 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         logger.debug(f"Creating channel {channel.name}: topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
         parent_id = context.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
+        pos = getattr(channel, 'position', None)
         
         fluxer_id = await context.fluxer_writer.create_channel(
             name=channel.name, 
@@ -134,7 +137,8 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
             type=0, 
             parent_id=parent_id,
             nsfw=nsfw,
-            slowmode_delay=slowmode
+            slowmode_delay=slowmode,
+            position=pos
         )
         context.state.set_channel_mapping(state_key, fluxer_id)
         cloned_info["channels_created"].append(channel.name)
@@ -151,7 +155,8 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
             name=channel.name,
             topic=topic,
             nsfw=nsfw,
-            slowmode_delay=slowmode
+            slowmode_delay=slowmode,
+            position=pos
         )
         
         current_idx += 1
@@ -169,13 +174,16 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         logger.debug(f"Syncing existing channel {channel.name} ({fluxer_id}): topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
+        pos = getattr(channel, 'position', None)
+        
         await context.fluxer_writer.modify_channel(
             channel_id=fluxer_id, 
             parent_id=parent_id,
             name=channel.name,
             topic=topic,
             nsfw=nsfw,
-            slowmode_delay=slowmode
+            slowmode_delay=slowmode,
+            position=pos
         )
         
         cloned_info["channels_synced"].append(channel.name)

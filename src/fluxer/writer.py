@@ -167,14 +167,14 @@ class FluxerWriter:
             "permissions": permissions
         }
 
-    async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0) -> str:
+    async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0, position: Optional[int] = None) -> str:
         """
         Creates a new channel in the target Fluxer community.
         Returns the new Fluxer channel ID.
         """
         assert self.client is not None
         
-        logger.debug(f"Fluxer: Creating channel {name} (type {type}) with topic='{topic}', nsfw={nsfw}, slowmode={slowmode_delay}")
+        logger.debug(f"Fluxer: Creating channel {name} (type {type}) with topic='{topic}', nsfw={nsfw}, slowmode={slowmode_delay}, position={position}")
         
         guild_channel = await self.client.create_guild_channel(
             guild_id=self.community_id,
@@ -183,17 +183,18 @@ class FluxerWriter:
             topic=topic or None,
             parent_id=parent_id,
             nsfw=nsfw,
-            rate_limit_per_user=slowmode_delay
+            rate_limit_per_user=slowmode_delay,
+            position=position
         )
         return str(guild_channel["id"])
 
-    async def modify_channel(self, channel_id: str, parent_id: Optional[str] = None, name: Optional[str] = None, topic: Optional[str] = None, nsfw: Optional[bool] = None, slowmode_delay: Optional[int] = None) -> bool:
+    async def modify_channel(self, channel_id: str, parent_id: Optional[str] = None, name: Optional[str] = None, topic: Optional[str] = None, nsfw: Optional[bool] = None, slowmode_delay: Optional[int] = None, position: Optional[int] = None) -> bool:
         """
         Updates channel properties.
         """
         assert self.client is not None
         
-        logger.debug(f"Fluxer: Modifying channel {channel_id}: name={name}, topic='{topic}', parent_id={parent_id}, nsfw={nsfw}, slowmode={slowmode_delay}")
+        logger.debug(f"Fluxer: Modifying channel {channel_id}: name={name}, topic='{topic}', parent_id={parent_id}, nsfw={nsfw}, slowmode={slowmode_delay}, position={position}")
         
         try:
             await self.client.modify_channel(
@@ -202,7 +203,8 @@ class FluxerWriter:
                 topic=topic,
                 parent_id=parent_id,
                 nsfw=nsfw,
-                rate_limit_per_user=slowmode_delay
+                rate_limit_per_user=slowmode_delay,
+                position=position
             )
         except Forbidden as e:
             if getattr(e, 'code', None) == "NSFW_CONTENT_AGE_RESTRICTED":
@@ -318,7 +320,7 @@ class FluxerWriter:
             print(f"Failed to send marker: {e}")
             return None
 
-    async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool) -> str:
+    async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool, position: Optional[int] = None) -> str:
         """
         Creates a new role in the Fluxer community.
         Returns the new Fluxer role ID.
@@ -331,7 +333,8 @@ class FluxerWriter:
                 name=name,
                 color=color,
                 hoist=hoist,
-                mentionable=mentionable
+                mentionable=mentionable,
+                position=position
             )
             return str(role["id"])
         except Exception as e:
