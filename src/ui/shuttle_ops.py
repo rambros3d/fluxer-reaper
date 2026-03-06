@@ -146,7 +146,7 @@ class ShuttlePane(Container):
         self.run_validate()
 
     def _base_dir(self) -> str:
-        return f"Reaper-{self.cfg_name}"
+        return f"ReaperFiles-{self.cfg_name}"
 
     def _rebuild_engine(self):
         source = "backup" if self.config.tool_mode == "backup_transfer" else "live"
@@ -793,7 +793,7 @@ class ShuttlePane(Container):
             modal.set_status(f"Fetching {platform_name} channels...")
             
             full_f = await self.engine.writer.get_channels()
-            f_channels = [c for c in full_f if c.get("name") not in ["reaper_logs", "reaper-logs"] and c.get("type") not in [2, 4]]
+            f_channels = [c for c in full_f if c.get("name") not in ["reaper_logs", "ReaperFiles-logs"] and c.get("type") not in [2, 4]]
 
             if not f_channels:
                 modal.write(f"[yellow]No channels found in {platform_name} community.[/yellow]")
@@ -1132,7 +1132,7 @@ class ShuttlePane(Container):
         try:
             if "dz_del_channels" in selections or "dz_reset_perms" in selections:
                 channels_raw = await writer.get_channels()
-                protected = ["reaper-logs", "reaper_logs"]
+                protected = ["ReaperFiles-logs", "reaper_logs"]
                 channel_names = [
                     c.get("name", "Unknown") for c in channels_raw 
                     if c.get("type") != 4 and str(c.get("name", "")).lower() not in protected

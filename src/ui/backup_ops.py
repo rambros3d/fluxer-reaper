@@ -50,8 +50,8 @@ class BackupPane(Container):
         self.cfg_name = cfg_name
         self.config_path = cfg_path
         self.config = load_config(cfg_path)
-        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"Reaper-{self.cfg_name}")
-        self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
+        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"ReaperFiles-{self.cfg_name}")
+        self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"ReaperFiles-{self.cfg_name}")
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
@@ -82,8 +82,8 @@ class BackupPane(Container):
 
     def reload_config(self) -> None:
         self.config = load_config(self.config_path)
-        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"Reaper-{self.cfg_name}")
-        self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
+        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"ReaperFiles-{self.cfg_name}")
+        self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"ReaperFiles-{self.cfg_name}")
         self._validate()
 
     # ── validation ────────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ class BackupPane(Container):
             self._update_ui(f"[red]Error: {e}[/red]", "", "", False)
 
     def _get_backup_info(self) -> str | None:
-        profile_file = Path(f"Reaper-{self.cfg_name}") / "server_profile" / "profile.json"
+        profile_file = Path(f"ReaperFiles-{self.cfg_name}") / "server_profile" / "profile.json"
         if profile_file.exists():
             try:
                 with open(profile_file, "r", encoding="utf-8") as f:

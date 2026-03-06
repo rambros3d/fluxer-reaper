@@ -16,7 +16,7 @@ from src.core.configuration import (
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Modal: create a new Reaper-* config folder
+# Modal: create a new ReaperFiles-* config folder
 # ──────────────────────────────────────────────────────────────────────────────
 
 class NewConfigModal(ModalScreen[str]):
@@ -63,7 +63,7 @@ class NewConfigModal(ModalScreen[str]):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Screen 1: pick (or create) a Reaper-* config
+# Screen 1: pick (or create) a ReaperFiles-* config
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ConfigSelectionScreen(Screen):
@@ -109,11 +109,11 @@ class ConfigSelectionScreen(Screen):
         lv = self.query_one("#config_list", ListView)
         lv.clear()
         for c in configs:
-            lv.append(ListItem(Label(f"Reaper-{c}"), name=c))
+            lv.append(ListItem(Label(f"ReaperFiles-{c}"), name=c))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         cfg_name = event.item.name
-        cfg_path = Path(f"Reaper-{cfg_name}") / "config.yaml"
+        cfg_path = Path(f"ReaperFiles-{cfg_name}") / "config.yaml"
         from src.ui.mode_screen import ModeScreen
         self.app.push_screen(ModeScreen(cfg_name, cfg_path))
 
@@ -124,7 +124,7 @@ class ConfigSelectionScreen(Screen):
                     create_new_config(name)
                     self.refresh_configs()
                     # Immediately open the ConfigScreen for the new config
-                    cfg_path = Path(f"Reaper-{name}") / "config.yaml"
+                    cfg_path = Path(f"ReaperFiles-{name}") / "config.yaml"
                     def on_config_saved(saved: bool = False):
                         if saved:
                             self.refresh_configs()

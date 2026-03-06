@@ -41,6 +41,7 @@ tmp/
 test_*.py
 test_release.zip
 test_release/
+DiscoReaper-*
 
 REAPER-*/
 Reaper-*/

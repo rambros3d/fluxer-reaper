@@ -101,18 +101,18 @@ def save_config(config: AppConfig, config_path: Union[str, Path] = "config.yaml"
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=False)
 
 def get_available_configs() -> list[str]:
-    """Returns a list of available configuration names from `Reaper-*` folders."""
+    """Returns a list of available configuration names from `ReaperFiles-*` folders."""
     configs = []
     for item in Path(".").iterdir():
-        if item.is_dir() and item.name.startswith("Reaper-"):
-            config_name = item.name[len("Reaper-"):]
+        if item.is_dir() and item.name.startswith("ReaperFiles-"):
+            config_name = item.name[len("ReaperFiles-"):]
             if (item / "config.yaml").exists():
                 configs.append(config_name)
     return sorted(configs)
 
 def create_new_config(name: str) -> Path:
     """Creates a new configuration folder and default config file."""
-    folder_path = Path(f"Reaper-{name}")
+    folder_path = Path(f"ReaperFiles-{name}")
     folder_path.mkdir(exist_ok=True)
     config_path = folder_path / "config.yaml"
     load_config(config_path) # creates default
