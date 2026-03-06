@@ -13,44 +13,17 @@ logger = logging.getLogger(__name__)
 class MigrationContext:
     """Holds state and connections for reading from Discord and writing to the target platform."""
     
-    def __init__(self, config: AppConfig, target_platform: str | None = None, source_mode: str = "live"):
+    def __init__(self, config: AppConfig, target_platform: str | None = None, source_mode: str = "live", base_dir: str = ""):
         self.config = config
         self.source_mode = source_mode
         # If caller didn't specify, fall back to config value
         self.target_platform = target_platform or config.target_platform or "fluxer"
-        
-        server_id = config.target_server_id or "unconfigured"
-        fillers = {"000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID",
-                   "STOAT_SERVER_ID", "TARGET_SERVER_ID", ""}
-        if server_id in fillers:
-            server_id = "unconfigured"
-        
-        # Try to find an existing state folder for this server_id
-        import os
-        
-        state_file: str | Path = ""
-        messages_file: str | Path = ""
-        
-        if server_id != "unconfigured":
-            logger.info(f"Probing for existing migration folder for Server ID: {server_id}")
-            for d in Path(".").iterdir():
-                if d.is_dir() and d.name.endswith(f"-{server_id}"):
-                    logger.info(f"Targeting existing folder: {d.name}")
-                    state_file = d / "state-migration.json"
-                    messages_file = d / "message-tracker.json"
-                    break
-            else:
-                logger.info(f"No existing folder found for {server_id}. A new one will be created upon first state change.")
-
-        self.state = MigrationState(
-            state_file=state_file,
-            messages_file=messages_file
-        )
+        self.state = MigrationState()
         
         # Select the appropriate source reader
         if source_mode == "backup":
             from src.core.backup_reader import BackupReader
-            backup_path = self._find_backup_path(config.discord_server_id)
+            backup_path = self._find_backup_path(config.discord_server_id, base_dir)
             self.discord_reader = BackupReader(backup_path)
             logger.info(f"Source mode: BACKUP — reading from {backup_path}")
         else:
@@ -76,16 +49,26 @@ class MigrationContext:
         
         self.is_running = False
 
-    @staticmethod
-    def _find_backup_path(server_id: str) -> Path:
+    def _find_backup_path(self, server_id: str, base_dir_str: str) -> Path:
         """Searches workspace for a DISCORD_BACKUP-{server_id} directory. Creates it if missing."""
+        base_dir = Path(base_dir_str) if base_dir_str else Path(".")
+        
+        # 1. Search inside the specific workspace directory first
+        if base_dir.exists() and base_dir.is_dir():
+            for d in base_dir.iterdir():
+                if d.is_dir() and d.name.endswith(f"-{server_id}") and "DISCORD_BACKUP" in d.name:
+                    logger.info(f"Found backup directory: {d}")
+                    return d
+                    
+        # 2. Fallback to global search if it wasn't found in the workspace
         for d in Path(".").rglob(f"DISCORD_BACKUP-{server_id}"):
             if d.is_dir():
-                logger.info(f"Found backup directory: {d}")
+                logger.info(f"Found backup directory globally: {d}")
                 return d
         
-        # If not found, create it in the current directory
-        new_path = Path(".") / f"DISCORD_BACKUP-{server_id}"
+        # If not found anywhere, create it inside the workspace
+        base_dir.mkdir(exist_ok=True)
+        new_path = base_dir / f"DISCORD_BACKUP-{server_id}"
         logger.info(f"No existing backup directory found for {server_id}. Creating new one: {new_path}")
         new_path.mkdir(exist_ok=True)
         return new_path

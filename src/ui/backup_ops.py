@@ -47,7 +47,7 @@ class BackupPane(Container):
         self.cfg_name = cfg_name
         self.config_path = cfg_path
         self.config = load_config(cfg_path)
-        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer")
+        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"Reaper-{self.cfg_name}")
         self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
 
     def compose(self) -> ComposeResult:
@@ -74,7 +74,7 @@ class BackupPane(Container):
 
     def reload_config(self) -> None:
         self.config = load_config(self.config_path)
-        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer")
+        self.engine = MigrationContext(self.config, target_platform=self.config.target_platform or "fluxer", base_dir=f"Reaper-{self.cfg_name}")
         self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=f"Reaper-{self.cfg_name}")
         self._validate()
 

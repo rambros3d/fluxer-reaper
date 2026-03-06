@@ -323,15 +323,21 @@ class MigrationState:
         new_folder = base / f"{clean_name}-{server_id}"
         logger.info(f"Setting active migration folder: {new_folder}")
         
-        # If we have an existing folder that is different, rename it
-        if self.state_file and self.state_file.parent.exists() and self.state_file.parent != new_folder:
-            # Check if it's actually in a server-specific folder (not roots)
-            if self.state_file.parent.name.endswith(f"-{server_id}"):
-                logger.info(f"Renaming active folder from {self.state_file.parent.name} to {new_folder.name}")
-                try:
-                    self.state_file.parent.rename(new_folder)
-                except Exception as e:
-                    logger.debug(f"Could not rename {self.state_file.parent} to {new_folder}: {e}")
+        # 1. Search base_dir to see if an older folder for this server_id exists
+        existing_folder: Path | None = None
+        if base.exists() and base.is_dir():
+            for d in base.iterdir():
+                if d.is_dir() and d.name.endswith(f"-{server_id}"):
+                    existing_folder = d
+                    break
+                    
+        # 2. Rename it if it doesn't match the new desired name
+        if existing_folder and existing_folder != new_folder:
+            logger.info(f"Renaming existing folder {existing_folder.name} to {new_folder.name}")
+            try:
+                existing_folder.rename(new_folder)
+            except Exception as e:
+                logger.debug(f"Could not rename {existing_folder} to {new_folder}: {e}")
 
         new_folder.mkdir(parents=True, exist_ok=True)
         

@@ -144,7 +144,7 @@ class ShuttlePane(Container):
 
     def _rebuild_engine(self):
         source = "backup" if self.config.tool_mode == "backup_transfer" else "live"
-        self.engine = MigrationContext(self.config, self.target_platform, source_mode=source)
+        self.engine = MigrationContext(self.config, self.target_platform, source_mode=source, base_dir=self._base_dir())
 
     # ── labels ────────────────────────────────────────────────────────────
 

@@ -300,7 +300,7 @@ class DiscordExporter:
             
         return data
 
-    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0):
+    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, after_id: int | None = None):
         """Fetches and saves message history for a channel, handling incremental sync. Returns the total messages processed."""
         channel = await self.reader.get_channel(channel_id)
         if not channel:
@@ -372,7 +372,9 @@ class DiscordExporter:
         last_id = None
         
         # Load existing messages for incremental sync (skip if force)
-        if not force and json_file.exists():
+        if after_id is not None:
+            last_id = after_id
+        elif not force and json_file.exists():
             try:
                 with open(json_file, "r", encoding="utf-8") as f:
                     old_data = json.load(f)
@@ -669,7 +671,7 @@ class DiscordExporter:
 
         return data
 
-    async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0):
+    async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, after_id: int | None = None):
         """Exports active and archived threads for a channel. Returns accumulated message count."""
         channel = await self.reader.get_channel(channel_id)
         if not hasattr(channel, "threads") and not hasattr(channel, "public_archived_threads"):
@@ -711,7 +713,7 @@ class DiscordExporter:
             await asyncio.sleep(0) # important yield between threads
             
             # First backup the full thread — this creates {thread_id}.json with totalAttachmentSizeBytes
-            accumulated_count = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count)
+            accumulated_count = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count, after_id=after_id)
             thread_count += 1
 
             # Then populate the forum root JSON with the starter message
