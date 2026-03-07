@@ -329,7 +329,7 @@ class ProgressScreen(Screen[None]):
         try: self.query_one("#info_new_items", Label).display = False
         except Exception: pass
 
-    def phase_report(self, operation_name: str, status: str = "complete"):
+    def phase_report(self, operation_name: str, status: str = "complete", show_back: bool = True):
         """Phase 4: Operation is done. Show Back + Main Menu.
         
         status can be: 'complete', 'stopped', 'error'
@@ -365,7 +365,8 @@ class ProgressScreen(Screen[None]):
         
         try:
             back_btn = self.query_one("#btn_back", Button)
-            back_btn.disabled = False
+            back_btn.disabled = not show_back
+            back_btn.display = show_back
         except Exception:
             pass
 

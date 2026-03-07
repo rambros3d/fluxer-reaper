@@ -201,7 +201,7 @@ class BackupPane(Container):
 
             modal.write(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
             modal.write(f"- {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
-            modal.phase_report("Profile Backup")
+            modal.phase_report("Profile Backup", show_back=False)
 
         except self.engine.discord_reader.Forbidden as e:
             modal.write(f"[bold red]Backup failed: {e}[/bold red]")
@@ -378,7 +378,7 @@ class BackupPane(Container):
 
             if not self.exporter.is_running:
                 modal_prog.set_item_status("[bold red]Backup Cancelled.[/bold red]")
-                modal_prog.phase_report("Message Backup", "stopped")
+                modal_prog.phase_report("Message Backup", "stopped", show_back=False)
                 return
 
             modal_prog.set_progress(total_chans, total_chans)
@@ -387,12 +387,12 @@ class BackupPane(Container):
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Message backup complete![/bold green]")
             logger.info("Message backup operation completed successfully.")
-            modal_prog.phase_report("Message Backup")
+            modal_prog.phase_report("Message Backup", show_back=False)
 
         except Exception as e:
             logger.error(f"Message backup failed: {e}\n{traceback.format_exc()}")
             modal_prog.write(f"[bold red]Message backup failed: {e}[/bold red]")
-            modal_prog.phase_report("Message Backup", "error")
+            modal_prog.phase_report("Message Backup", "error", show_back=False)
         finally:
             await self.engine.close_connections()
 
@@ -501,7 +501,7 @@ class BackupPane(Container):
                 
                 if not self.exporter.is_running:
                     modal_prog.set_item_status("[bold red]Sync Cancelled.[/bold red]")
-                    modal_prog.phase_report("Backup Sync", "stopped")
+                    modal_prog.phase_report("Backup Sync", "stopped", show_back=False)
                     return
 
                 modal_prog.set_progress(total_chans, total_chans)
@@ -510,11 +510,11 @@ class BackupPane(Container):
             await self.exporter.export_metadata()
             modal_prog.write("[bold green]Sync operation complete![/bold green]")
             logger.info("Sync operation completed successfully.")
-            modal_prog.phase_report("Backup Sync")
+            modal_prog.phase_report("Backup Sync", show_back=False)
 
         except Exception as e:
             logger.error(f"Sync failed: {e}\n{traceback.format_exc()}")
             modal_prog.write(f"[bold red]Sync failed: {e}[/bold red]")
-            modal_prog.phase_report("Backup Sync", "error")
+            modal_prog.phase_report("Backup Sync", "error", show_back=False)
         finally:
             await self.engine.close_connections()

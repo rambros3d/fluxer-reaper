@@ -494,13 +494,13 @@ class ShuttlePane(Container):
                 elif sel == "sub_sync_perms":
                     results["perms"] = await self._logic_sync_permissions(modal)
             
-            modal.phase_report("Clone Template Complete")
+            modal.phase_report("Clone Template Complete", show_back=False)
             report = self._format_clone_report(results)
             modal.write(report)
         except Exception as e:
             logger.error(f"Batch Cloning Error: {e}\n{traceback.format_exc()}")
             modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Batch Operation", "error")
+            modal.phase_report("Batch Operation", "error", show_back=False)
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
@@ -578,13 +578,13 @@ class ShuttlePane(Container):
             if meta_comps:
                 results["metadata"] = await self._logic_sync_metadata(modal, meta_comps)
             
-            modal.phase_report("Sync Settings Complete")
+            modal.phase_report("Sync Settings Complete", show_back=False)
             report = self._format_sync_report(results)
             modal.write(report)
         except Exception as e:
             logger.error(f"Batch Sync Error: {e}\n{traceback.format_exc()}")
             modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Batch Operation", "error")
+            modal.phase_report("Batch Operation", "error", show_back=False)
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
@@ -1005,11 +1005,11 @@ class ShuttlePane(Container):
             if self.engine.is_running:
                 modal.write(f"[bold green]Success! {result['messages']} messages migrated.[/bold green]")
                 event_title = "Message Migration"
-                modal.phase_report(event_title)
+                modal.phase_report(event_title, show_back=False)
             else:
                 modal.write(f"[bold yellow]Interrupted! {result['messages']} messages migrated.[/bold yellow]")
                 event_title = "Message Migration"
-                modal.phase_report(event_title, "stopped")
+                modal.phase_report(event_title, "stopped", show_back=False)
 
             lines = [f"Migrated Discord #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
             lines.append(f"{result['messages']} messages, {result['attachments']} attachments, {result['threads']} threads")
@@ -1021,7 +1021,7 @@ class ShuttlePane(Container):
                 modal.write("[bold red]Bot is missing the 'Masquerade' permission.[/bold red]")
             else:
                 modal.write(f"[bold red]Error: {err}[/bold red]")
-            modal.phase_report("Message Migration", "error")
+            modal.phase_report("Message Migration", "error", show_back=False)
         finally:
             self.engine.is_running = False
             await self.engine.close_connections()
@@ -1126,11 +1126,11 @@ class ShuttlePane(Container):
                 elif sel == "dz_del_assets":
                     await self._logic_dz_delete_assets(modal)
             
-            modal.phase_report("Danger Zone Operations Complete")
+            modal.phase_report("Danger Zone Operations Complete", show_back=False)
             modal.write("[bold green]All selected destructive operations finished.[/bold green]")
         except Exception as e:
             modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Danger Zone Batch", "error")
+            modal.phase_report("Danger Zone Batch", "error", show_back=False)
         finally:
             self.engine.is_running = False
             await self.engine.close_target_only()
