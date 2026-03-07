@@ -25,6 +25,9 @@ wheels/
 # Virtual Environment
 venv/
 ENV/
+
+# llm files
+.idx/
 reference/
 
 # Configuration and Secrets

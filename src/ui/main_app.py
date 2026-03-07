@@ -43,7 +43,7 @@ class NewConfigModal(ModalScreen[str]):
 
     def _get_sanitized_name(self) -> str:
         raw = self.query_one("#new_config_input", Input).value.strip()
-        return re.sub(r"[^a-zA-Z0-9_-]+", "-", raw).strip("-")
+        return re.sub(r"[^a-zA-Z0-9_-]+", "_", raw).strip("-")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_create":
