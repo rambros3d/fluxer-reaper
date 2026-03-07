@@ -271,7 +271,7 @@ class StoatWriter:
     async def move_channel(self, channel_id: str, parent_id: Optional[str]) -> bool:
         return True
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, 
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: int, 
                            author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, 
                            reply_to_message_id: Optional[str] = None, is_forwarded: bool = False,
                            embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
@@ -289,7 +289,7 @@ class StoatWriter:
             )
             
             # Build content with timestamp prefix
-            prefix = f"##### {timestamp}\n"
+            prefix = f"###### <t:{timestamp}:D>\n"
             if is_forwarded:
                 prefix += "##### -->*forwarded*\n"
             

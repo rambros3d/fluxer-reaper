@@ -246,7 +246,7 @@ class FluxerWriter:
         assert self.client is not None
         return await self.client.get_guild_channels(self.community_id)
 
-    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: str, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
+    async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: int, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
         Sends a message to the target channel.
         Uses a webhook to mimic the original author if possible.
@@ -266,7 +266,7 @@ class FluxerWriter:
         
         # Prepare content with subtext timestamp
         # -# is Fluxer/Discord's subtext markdown: small, muted grey text
-        prefix = f"-# {timestamp}\n"
+        prefix = f"-# <t:{timestamp}:D>\n"
         if is_forwarded:
             prefix += "-# -->*forwarded*\n"
             
@@ -307,7 +307,7 @@ class FluxerWriter:
             else:
                 # Use bot direct message (supports files and message_reference)
                 # We add the author name to the prefix since bot name won't match
-                bot_prefix = f"-# {timestamp}\n"
+                bot_prefix = f"-# <t:{timestamp}:D>\n"
                 if is_forwarded:
                     bot_prefix += "-# -->*forwarded*\n"
                 bot_prefix += f"-# · {author_name}\n"

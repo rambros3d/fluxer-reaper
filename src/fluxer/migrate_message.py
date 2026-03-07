@@ -228,7 +228,7 @@ async def migrate_messages(
                     author_name=msg.author.display_name,
                     author_avatar_url=avatar_url,
                     content=content,
-                    timestamp=msg.created_at.strftime("%Y-%m-%d %H:%M:%S"),
+                    timestamp=int(msg.created_at.timestamp()),
                     files=files if files else None,
                     reply_to_message_id=reply_to_fluxer_id,
                     is_forwarded=is_forwarded,
