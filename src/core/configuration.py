@@ -12,7 +12,7 @@ class AppConfig(BaseModel):
     discord_bot_token: Optional[str] = Field(default=None)
     discord_server_id: Optional[str] = Field(default=None)
     tool_mode: str = Field(default="direct_transfer")  # direct_transfer | backup_transfer | backup_only
-    target_platform: str = Field(default="none")       # fluxer | stoat | none
+    target_platform: str = Field(default="fluxer")       # fluxer | stoat | none
     target_bot_token: Optional[str] = Field(default=None)
     target_server_id: Optional[str] = Field(default=None)
     target_api_url: Optional[str] = Field(default="default")

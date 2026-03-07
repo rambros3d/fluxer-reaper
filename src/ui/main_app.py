@@ -221,13 +221,13 @@ class ConfigScreen(Screen):
                             password=True,
                             placeholder="Paste Bot Token here"
                         )
-                        yield Button("Fetch", id="btn_fetch_guilds", variant="primary")
+                        yield Button("Validate", id="btn_fetch_guilds", variant="primary")
                     
                     yield Label("Server ID:", classes="field_label")
                     yield Select(
                         options=[],
                         id="inp_discord_server",
-                        prompt="Select a Server"
+                        prompt="Validate Bot Token"
                     )
 
                     # ── Reaper Mode ──────────────────────────────────────────
@@ -253,7 +253,7 @@ class ConfigScreen(Screen):
                     # ── Target Platform (hidden for backup_only) ─────────────
                     with Vertical(id="target_section"):
                         yield Label("Target Platform", classes="section_title")
-                        cur_plat = self.config.target_platform or "none"
+                        cur_plat = self.config.target_platform or "fluxer"
                         with RadioSet(id="plat_radio"):
                             yield RadioButton(
                                 "Fluxer",
@@ -273,13 +273,13 @@ class ConfigScreen(Screen):
                                 password=True,
                                 placeholder="Paste Target Bot Token"
                             )
-                            yield Button("Fetch", id="btn_fetch_target_servers", variant="primary")
+                            yield Button("Validate", id="btn_fetch_target_servers", variant="primary")
                         
                         yield Label("Community / Server ID:", classes="field_label")
                         yield Select(
                             options=[],
                             id="inp_target_server",
-                            prompt="Select a Community/Server"
+                            prompt="Validate Bot Token"
                         )
                         
                         yield Label("Target API URL:", classes="field_label")
@@ -319,12 +319,16 @@ class ConfigScreen(Screen):
             guilds = await DiscordReader.fetch_guilds(token)
             
             if not guilds:
+                self.query_one("#btn_fetch_guilds", Button).variant = "warning"
+                self.query_one("#inp_discord_server", Select).prompt = "No servers found"
                 if not initial:
                     self.notify("No Discord servers found or invalid token.", severity="warning")
                 return
 
+            self.query_one("#btn_fetch_guilds", Button).variant = "success"
             options = [(name, gid) for name, gid in guilds]
             select_widget = self.query_one("#inp_discord_server", Select)
+            select_widget.prompt = "Select a server"
             select_widget.set_options(options)
             
             # Restore saved value if it exists in the fetched list
@@ -332,6 +336,8 @@ class ConfigScreen(Screen):
             if saved_id and any(gid == saved_id for _, gid in guilds):
                 select_widget.value = saved_id
         except Exception as e:
+            self.query_one("#btn_fetch_guilds", Button).variant = "warning"
+            self.query_one("#inp_discord_server", Select).prompt = "Invalid token"
             if not initial:
                 self.notify(f"Failed to fetch Discord servers: {e}", severity="error")
 
@@ -359,17 +365,23 @@ class ConfigScreen(Screen):
                 return
         except Exception as e:
             logger.error(f"Failed to fetch {platform} servers: {e}")
+            self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
+            self.query_one("#inp_target_server", Select).prompt = "Invalid token"
             if not initial:
                 self.notify(f"Failed to fetch {platform} servers: {e}", severity="error")
             return
 
         if not servers:
+            self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
+            self.query_one("#inp_target_server", Select).prompt = "No servers found"
             if not initial:
                 self.notify(f"No {platform} servers found or invalid token.", severity="warning")
             return
 
+        self.query_one("#btn_fetch_target_servers", Button).variant = "success"
         options = [(label, sid) for label, sid in servers]
         select_widget = self.query_one("#inp_target_server", Select)
+        select_widget.prompt = "Select a server"
         select_widget.set_options(options)
 
         # Restore saved value
