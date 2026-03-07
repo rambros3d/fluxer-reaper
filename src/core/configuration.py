@@ -9,8 +9,8 @@ class MigrationSettings(BaseModel):
     log_level: str = Field(default="DEBUG")
 
 class AppConfig(BaseModel):
-    discord_bot_token: str
-    discord_server_id: str
+    discord_bot_token: Optional[str] = Field(default=None)
+    discord_server_id: Optional[str] = Field(default=None)
     tool_mode: str = Field(default="direct_transfer")  # direct_transfer | backup_transfer | backup_only
     target_platform: str = Field(default="none")       # fluxer | stoat | none
     target_bot_token: Optional[str] = Field(default=None)
@@ -60,10 +60,7 @@ def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing
         if not create_if_missing:
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
             
-        config = AppConfig(
-            discord_bot_token="DISCORD_BOT_TOKEN",
-            discord_server_id="DISCORD_SERVER_ID",
-        )
+        config = AppConfig()
         save_config(config, path)
         print(f"Created default configuration: {config_path}")
         return config

@@ -297,12 +297,12 @@ class ConfigScreen(Screen):
     def on_mount(self) -> None:
         self._toggle_target_section()
         # If we have a token, try to populate the select widget on mount
-        if self.config.discord_bot_token and self.config.discord_bot_token != "DISCORD_BOT_TOKEN":
+        if self.config.discord_bot_token:
             self.run_worker(self._do_fetch_guilds(self.config.discord_bot_token, initial=True))
         
         # Also auto-fetch target servers if mode is not backup_only
         if self._get_selected_mode() != "backup_only":
-            if self.config.target_bot_token and self.config.target_bot_token not in ("TARGET_BOT_TOKEN", ""):
+            if self.config.target_bot_token:
                 platform = self.config.target_platform
                 if platform != "none":
                     self.run_worker(self._do_fetch_target_servers(
@@ -344,7 +344,7 @@ class ConfigScreen(Screen):
         if not api_url:
             api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
 
-        if not token or token == "TARGET_BOT_TOKEN":
+        if not token:
             return
 
         servers = []
@@ -380,7 +380,7 @@ class ConfigScreen(Screen):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_fetch_guilds":
             token = self.query_one("#inp_discord_token", Input).value.strip()
-            if not token or token == "DISCORD_BOT_TOKEN":
+            if not token:
                 self.notify("Please enter a valid Bot Token first.", severity="error")
                 return
             self.run_worker(self._do_fetch_guilds(token))
@@ -420,23 +420,30 @@ class ConfigScreen(Screen):
     # ── save / start ─────────────────────────────────────────────────────
 
     def _collect_and_save(self) -> None:
-        self.config.discord_bot_token = self.query_one("#inp_discord_token", Input).value.strip() or self.config.discord_bot_token
+        token = self.query_one("#inp_discord_token", Input).value.strip()
+        self.config.discord_bot_token = token or None
         
         server_select = self.query_one("#inp_discord_server", Select)
         if server_select.value != Select.BLANK:
             self.config.discord_server_id = str(server_select.value)
+        else:
+            self.config.discord_server_id = None
         
         self.config.tool_mode = self._get_selected_mode()
 
         if self.config.tool_mode != "backup_only":
             self.config.target_platform = self._get_selected_platform()
-            self.config.target_bot_token = self.query_one("#inp_target_token", Input).value.strip() or self.config.target_bot_token
+            target_token = self.query_one("#inp_target_token", Input).value.strip()
+            self.config.target_bot_token = target_token or None
             
             target_select = self.query_one("#inp_target_server", Select)
             if target_select.value != Select.BLANK:
                 self.config.target_server_id = str(target_select.value)
+            else:
+                self.config.target_server_id = None
             
-            self.config.target_api_url = self.query_one("#inp_target_api", Input).value.strip() or self.config.target_api_url
+            target_api = self.query_one("#inp_target_api", Input).value.strip()
+            self.config.target_api_url = target_api or "default"
         else:
             self.config.target_platform = "none"
 
