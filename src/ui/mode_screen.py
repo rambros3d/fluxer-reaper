@@ -50,6 +50,7 @@ class ModeScreen(Screen):
         width: 1fr;
         margin: 0 1;
     }
+    #footer_rule { margin: 0; }
 
     ModalScreen {
         align: center middle;
@@ -83,7 +84,7 @@ class ModeScreen(Screen):
         text-style: bold; margin-bottom: 1;
     }
     #config_buttons, #confirm_buttons, #chanpick_buttons {
-        height: auto; margin-top: 1;
+        height: auto; margin-top: 0;
     }
     #config_buttons Button, #confirm_buttons Button, #chanpick_buttons Button {
         width: 1fr; margin: 0 1;
@@ -130,7 +131,7 @@ class ModeScreen(Screen):
                         yield ShuttlePane(self.cfg_name, self.config_path, id="pane_migrate")
                 
                 with Vertical(id="mode_footer"):
-                    yield Rule()
+                    yield Rule(id="footer_rule")
                     with Horizontal(id="bottom_actions"):
                         if mode == "backup_transfer":
                             yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")

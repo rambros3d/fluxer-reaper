@@ -86,7 +86,7 @@ class ConfigSelectionScreen(Screen):
         height: 10; max-height: 20;
         border: solid $primary; margin-bottom: 1;
     }
-    #config_sel_actions { height: auto; margin-top: 1; }
+    #config_sel_actions { height: auto; margin-top: 0; }
     #config_sel_actions Button { width: 1fr; margin: 0 1; }
     """
 
@@ -189,8 +189,9 @@ class ConfigScreen(Screen):
         height: auto; margin: 0 0 0 2;
     }
     #target_section { height: auto; }
-    #cfg_actions { height: auto; margin-top: 1; margin-bottom: 0; dock: bottom; }
+    #cfg_actions { height: auto; margin-top: 0; margin-bottom: 0; dock: bottom; }
     #cfg_actions Button { width: 1fr; margin: 0 1; }
+    #footer_rule { margin: 0; }
     .fetch_row { height: auto; align: left middle; margin-bottom: 1; }
     .fetch_row Input { width: 1fr; }
     .fetch_row Button { width: auto; margin-left: 1; }
@@ -292,7 +293,7 @@ class ConfigScreen(Screen):
                             tooltip="Enter the custom API url\nfor self hosted instances"
                         )
 
-                yield Rule()
+                yield Rule(id="footer_rule")
                 with Horizontal(id="cfg_actions"):
                     yield Button("Save Configuration", variant="success", id="btn_save", tooltip="Save all changes to config.yaml")
                     yield Button("Back", id="btn_back")

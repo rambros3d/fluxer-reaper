@@ -96,6 +96,7 @@ class ShuttlePane(Container):
     
     ShuttlePane #sp_actions { height: auto; }
     ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
+    #footer_rule { margin: 0; }
     """
 
     def __init__(self, cfg_name: str, cfg_path: Path, *args, **kwargs):
@@ -132,7 +133,7 @@ class ShuttlePane(Container):
                 yield Button("Clone Server Template", id="sp_clone", disabled=True, tooltip="Clone server roles, categories, and channels to the target community")
                 yield Button("Sync Server Settings", id="sp_sync", disabled=True, tooltip="Sync emojis, stickers, server name, and icon to the target community")
                 yield Button("Migrate Message History", id="sp_messages", disabled=True, variant="primary", tooltip="Migrate message history from Discord to the target platform")
-                yield Rule()
+                yield Rule(id="footer_rule")
                 yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True, flat=True, tooltip="Dangerous operations:\ndelete channels, roles, emojis on target\n(use with caution)")
 
     def on_mount(self) -> None:

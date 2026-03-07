@@ -70,10 +70,11 @@ class ProgressScreen(Screen[None]):
     #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 1; display: none; }
     .info_label { text-style: bold; content-align: center middle; width: 100%; color: cyan; }
     
-    #prog_actions { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; layout: vertical; }
+    #prog_actions { height: auto; margin-top: 0; dock: bottom; margin-bottom: 0; layout: vertical; }
     .action_row { height: auto; layout: horizontal; }
     .action_row Button { width: 1fr; margin: 0 1; }
     #prog_actions_row1, #prog_actions_row2 { display: none; }
+    #footer_rule { margin: 0; }
     """
 
     def compose(self) -> ComposeResult:
@@ -99,6 +100,7 @@ class ProgressScreen(Screen[None]):
                 yield RichLog(id="prog_log", highlight=True, markup=True)
                 yield RichLog(id="live_log", highlight=True, markup=True)
                 
+                yield Rule(id="footer_rule")
                 with Vertical(id="prog_actions"):
                     with Horizontal(classes="action_row", id="prog_actions_row1"):
                         yield Button("Start from First", id="btn_start_first", disabled=True, variant="primary", tooltip="Start the operation from the beginning")
@@ -386,7 +388,10 @@ class ProgressScreen(Screen[None]):
 
 class SubMenuModal(ModalScreen[str]):
     """A generic sub-menu modal that presents a list of labelled buttons."""
-    DEFAULT_CSS = "SubMenuModal { align: center middle; }"
+    DEFAULT_CSS = """
+    SubMenuModal { align: center middle; }
+    #footer_rule { margin: 0; }
+    """
 
     def __init__(self, title: str, options: list[tuple[str, str, str]]):
         """options: list of (button_id, label, variant)"""
@@ -399,7 +404,7 @@ class SubMenuModal(ModalScreen[str]):
             yield Label(self._title, id="submenu_title")
             for btn_id, label, variant in self._options:
                 yield Button(label, id=btn_id, variant=variant)
-            yield Rule()
+            yield Rule(id="footer_rule")
             yield Button("Cancel", id="btn_cancel_sub")
 
     def on_button_pressed(self, event: Button.Pressed):
@@ -432,6 +437,7 @@ class OptionSelectModal(ModalScreen[list[str]]):
     #opt_batch_buttons Button { width: 1fr; margin: 0 1; }
     RadioButton { background: transparent; }
     RadioButton:focus { background: $accent 20%; }
+    #footer_rule { margin: 0; }
 
     """
 
@@ -452,7 +458,7 @@ class OptionSelectModal(ModalScreen[list[str]]):
                 for opt_id, label in self._options:
                     yield RadioButton(label, id=f"opt_{opt_id}")
             
-            yield Rule()
+            yield Rule(id="footer_rule")
             with Horizontal(id="opt_buttons"):
                 yield Button("Proceed", variant="success", id="btn_opt_ok", tooltip="Proceed with the selected options")
                 yield Button("Back", id="btn_opt_back", tooltip="Return to the previous menu")
@@ -493,17 +499,18 @@ class ChannelPickerScreen(Screen[tuple]):
         layout: vertical;
         border: solid green;
         padding: 1 2;
-        margin: 2 0;
+        margin: 1 0;
         background: $surface;
     }
     #chanpick_title { text-style: bold; margin-bottom: 1; content-align: center middle; width: 100%; }
     #chanpick_split {
         height: 1fr;
         layout: horizontal;
+        margin-bottom: 1;
     }
     .split_pane {
         width: 1fr;
-        height: 100%;
+        height: 1fr;
         border: solid $primary;
         margin: 0 1;
         padding: 0 1;
@@ -531,7 +538,8 @@ class ChannelPickerScreen(Screen[tuple]):
         padding-left: 1;
         color: cyan;
     }
-    #chanpick_buttons { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; }
+    #footer_rule { margin: 0; }
+    #chanpick_buttons { height: auto; margin-top: 0; margin-bottom: 0; }
     #chanpick_buttons Button { width: 1fr; margin: 0 1; }
     """
 
@@ -585,7 +593,7 @@ class ChannelPickerScreen(Screen[tuple]):
                         yield Label(f"Target: {self.tgt_name}", classes="pane_title")
                         yield from self._render_pane(self.tgt_channels, self.tgt_cat_map, "pane_tgt", "tgt")
 
-                yield Rule()
+                yield Rule(id="footer_rule")
                 with Horizontal(id="chanpick_buttons"):
                     yield Button("Select", variant="success", id="btn_pick_ok", tooltip="Confirm selection and start migration")
                     yield Button("Back", id="btn_pick_back", tooltip="Cancel selection")
@@ -685,8 +693,9 @@ class ChannelSelectScreen(Screen[dict]):
     }
     #select_all_buttons { height: auto; margin-bottom: 1; }
     #select_all_buttons Button { width: auto; margin-right: 1; }
-    #confirm_buttons { height: auto; margin-top: 1; dock: bottom; margin-bottom: 0; }
+    #confirm_buttons { height: auto; margin-top: 0; dock: bottom; margin-bottom: 0; }
     #confirm_buttons Button { width: 1fr; margin: 0 1; }
+    #footer_rule { margin: 0; }
     """
 
     def __init__(self, channels: list, categories: dict, backed_up_ids: set, any_found: bool):
@@ -741,7 +750,7 @@ class ChannelSelectScreen(Screen[dict]):
                     yield Button("Select All", id="btn_all", tooltip="Select all channels for backup")
                     yield Button("Deselect All", id="btn_none", tooltip="Deselect all channels")
 
-                yield Rule()
+                yield Rule(id="footer_rule")
                 with Horizontal(id="confirm_buttons"):
                     if self.any_found:
                         yield Button("Sync", variant="success", id="btn_sync", tooltip="Backup new channels\n& update existing backups")
@@ -798,7 +807,7 @@ class MessageIDInputModal(ModalScreen[int | None]):
     #msg_id_buttons {
         height: auto;
         dock: bottom;
-        margin-top: 1;
+        margin-top: 0;
     }
     #msg_id_buttons Button { width: 1fr; margin: 0 1; }
     """
