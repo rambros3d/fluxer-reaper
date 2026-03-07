@@ -112,7 +112,7 @@ class ConfigSelectionScreen(Screen):
         lv = self.query_one("#config_list", ListView)
         lv.clear()
         for c in configs:
-            lv.append(ListItem(Label(f"ReaperFiles-{c}"), name=c))
+            lv.append(ListItem(Label(c), name=c))
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         cfg_name = event.item.name

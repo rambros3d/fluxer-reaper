@@ -9,7 +9,7 @@ Shows the appropriate pane(s) based on the mode:
 from pathlib import Path
 
 from textual.app import ComposeResult
-from textual.containers import Container, Horizontal, VerticalScroll
+from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.widgets import Header, Footer, Button, ContentSwitcher, Rule
 from textual.screen import Screen
 
@@ -35,12 +35,15 @@ class ModeScreen(Screen):
         padding: 1 2;
         margin: 2 0;
     }
-    #switcher {
+    #switcher, #pane_backup, #pane_migrate {
         height: 1fr;
+    }
+    #mode_footer {
+        height: auto;
+        dock: bottom;
     }
     #bottom_actions {
         height: auto;
-        dock: bottom;
         margin: 1 1 0 1;
     }
     #bottom_actions Button, #btn_switch {
@@ -126,12 +129,13 @@ class ModeScreen(Screen):
                         yield BackupPane(self.cfg_name, self.config_path, id="pane_backup")
                         yield ShuttlePane(self.cfg_name, self.config_path, id="pane_migrate")
                 
-                yield Rule()
-                with Horizontal(id="bottom_actions"):
-                    if mode == "backup_transfer":
-                        yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")
-                    yield Button("Configuration", id="btn_config", variant="success", tooltip="Change Bot tokens\nand Reaper Mode")
-                    yield Button("Exit", id="btn_exit", variant="error")
+                with Vertical(id="mode_footer"):
+                    yield Rule()
+                    with Horizontal(id="bottom_actions"):
+                        if mode == "backup_transfer":
+                            yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")
+                        yield Button("Configuration", id="btn_config", variant="success", tooltip="Change Bot tokens\nand Reaper Mode")
+                        yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()
 

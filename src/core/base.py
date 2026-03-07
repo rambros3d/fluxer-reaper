@@ -50,7 +50,7 @@ class MigrationContext:
         self.is_running = False
 
     def _find_backup_path(self, server_id: str, base_dir_str: str) -> Path:
-        """Searches workspace for a DISCORD_BACKUP-{server_id} directory. Creates it if missing."""
+        """Searches workspace for a DISCORD_BACKUP-{server_id} directory. Returns the path (does not create)."""
         base_dir = Path(base_dir_str) if base_dir_str else Path(".")
         
         # 1. Search inside the specific workspace directory first
@@ -66,11 +66,9 @@ class MigrationContext:
                 logger.info(f"Found backup directory globally: {d}")
                 return d
         
-        # If not found anywhere, create it inside the workspace
-        base_dir.mkdir(exist_ok=True)
+        # If not found anywhere, return the expected location inside the workspace
         new_path = base_dir / f"DISCORD_BACKUP-{server_id}"
-        logger.info(f"No existing backup directory found for {server_id}. Creating new one: {new_path}")
-        new_path.mkdir(exist_ok=True)
+        logger.info(f"Using lazy backup path: {new_path}")
         return new_path
 
     async def validate_all(self) -> Dict[str, Any]:
