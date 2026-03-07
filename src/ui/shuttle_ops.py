@@ -129,11 +129,11 @@ class ShuttlePane(Container):
                 
                 yield Label("", id="sp_lbl_status")
             with Vertical(id="sp_actions"):
-                yield Button("Clone Server Template", id="sp_clone", disabled=True)
-                yield Button("Sync Server Settings", id="sp_sync", disabled=True)
-                yield Button("Migrate Message History", id="sp_messages", disabled=True, variant="primary")
+                yield Button("Clone Server Template", id="sp_clone", disabled=True, tooltip="Clone server roles, categories, and channels to the target community")
+                yield Button("Sync Server Settings", id="sp_sync", disabled=True, tooltip="Sync emojis, stickers, server name, and icon to the target community")
+                yield Button("Migrate Message History", id="sp_messages", disabled=True, variant="primary", tooltip="Migrate message history from Discord to the target platform")
                 yield Rule()
-                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True, flat=True)
+                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True, flat=True, tooltip="Dangerous operations:\ndelete channels, roles, emojis on target\n(use with caution)")
 
     def on_mount(self) -> None:
         self._rebuild_engine()
@@ -459,8 +459,10 @@ class ShuttlePane(Container):
 
             choice = await modal.phase_wait_confirm(
                 btn_start_label="Start Cloning",
-                btn_id_label="Force Clone (may create duplicates)",
-                show_id=True
+                btn_id_label="Force Clone",
+                show_id=True,
+                btn_start_tooltip="Clone without creating duplicates",
+                btn_id_tooltip="Force clone everything\n(may create duplicates)"
             )
             if choice == "btn_back":
                 modal.dismiss()
@@ -539,7 +541,9 @@ class ShuttlePane(Container):
             choice = await modal.phase_wait_confirm(
                 btn_start_label="Start Syncing",
                 btn_id_label="Force Sync",
-                show_id=True
+                show_id=True,
+                btn_start_tooltip="Sync new assets only",
+                btn_id_tooltip="Force sync assets\n(may create duplicates)"
             )
             if choice == "btn_back":
                 modal.dismiss()
@@ -905,7 +909,10 @@ class ShuttlePane(Container):
                     show_id=True,
                     btn_start_label="Start from\nFirst Message",
                     btn_continue_label="Continue\nMigration",
-                    btn_id_label="Start from\nmessage ID"
+                    btn_id_label="Start from\nmessage ID",
+                    btn_start_tooltip="Start migrating from the earliest available message",
+                    btn_continue_tooltip="Resume from the last successfully migrated message",
+                    btn_id_tooltip="Start migrating from a specific Discord message ID"
                 )
                 logger.info(f"User confirmation choice: {choice}")
                 if choice == "btn_back":
@@ -1084,7 +1091,12 @@ class ShuttlePane(Container):
                     modal.write(f"  [dim](could not fetch list)[/dim]")
                 modal.write("")
 
-            choice = await modal.phase_wait_confirm(btn_start_label="WIPE ALL DATA", show_id=False)
+            choice = await modal.phase_wait_confirm(
+                btn_start_label="WIPE ALL DATA", 
+                show_id=False, 
+                btn_start_variant="error",
+                btn_start_tooltip="WARNING\nIrreversible Operation!\nProceed with Caution"
+            )
             if choice == "btn_back":
                 modal.dismiss()
                 self._open_danger_menu()

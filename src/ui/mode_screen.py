@@ -129,8 +129,8 @@ class ModeScreen(Screen):
                 yield Rule()
                 with Horizontal(id="bottom_actions"):
                     if mode == "backup_transfer":
-                        yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary")
-                    yield Button("Configuration", id="btn_config", variant="success")
+                        yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")
+                    yield Button("Configuration", id="btn_config", variant="success", tooltip="Change Bot tokens\nand Reaper Mode")
                     yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()

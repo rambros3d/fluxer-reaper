@@ -39,9 +39,9 @@ class NewConfigModal(ModalScreen[str]):
     def compose(self) -> ComposeResult:
         with Vertical(id="new_config_dialog"):
             yield Label("Enter new configuration name:", id="new_config_title")
-            yield Input(placeholder="e.g. MyServer", id="new_config_input")
+            yield Input(placeholder="e.g. MyServer", id="new_config_input", tooltip="Enter a unique name for this config")
             with Horizontal(id="new_config_buttons"):
-                yield Button("Create", variant="success", id="btn_create")
+                yield Button("Create", variant="success", id="btn_create", tooltip="Create config and launch setup")
                 yield Button("Cancel", variant="primary", id="btn_cancel")
 
     def _get_sanitized_name(self) -> str:
@@ -97,7 +97,7 @@ class ConfigSelectionScreen(Screen):
             with VerticalScroll(id="config_list_container"):
                 yield ListView(id="config_list")
             with Horizontal(id="config_sel_actions"):
-                yield Button("New Config", id="btn_new_config", variant="success")
+                yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
                 yield Button("Exit", id="btn_exit", variant="error")
         yield Footer()
 
@@ -219,9 +219,10 @@ class ConfigScreen(Screen):
                             value=self.config.discord_bot_token or "",
                             id="inp_discord_token",
                             password=True,
-                            placeholder="Paste Bot Token here"
+                            placeholder="Paste Bot Token here",
+                            tooltip="Enter your Discord BOT token from the Developer Portal"
                         )
-                        yield Button("Validate", id="btn_fetch_guilds", variant="primary")
+                        yield Button("Validate", id="btn_fetch_guilds", variant="primary", tooltip="Verify token and fetch available Discord servers")
                     
                     yield Label("Server ID:", classes="field_label")
                     yield Select(
@@ -237,17 +238,17 @@ class ConfigScreen(Screen):
                         yield RadioButton(
                             "Shuttle Transfer  (direct migration)",
                             id="radio_direct",
-                            value=(cur_mode == "direct_transfer"),
+                            value=(cur_mode == "direct_transfer")
                         )
                         yield RadioButton(
                             "Backup & Migrate  (backup first, then migrate)",
                             id="radio_backup",
-                            value=(cur_mode == "backup_transfer"),
+                            value=(cur_mode == "backup_transfer")
                         )
                         yield RadioButton(
                             "Backup Only       (local backup, no migration)",
                             id="radio_bkonly",
-                            value=(cur_mode == "backup_only"),
+                            value=(cur_mode == "backup_only")
                         )
 
                     # ── Target Platform (hidden for backup_only) ─────────────
@@ -258,12 +259,12 @@ class ConfigScreen(Screen):
                             yield RadioButton(
                                 "Fluxer",
                                 id="radio_fluxer",
-                                value=(cur_plat == "fluxer"),
+                                value=(cur_plat == "fluxer")
                             )
                             yield RadioButton(
                                 "Stoat",
                                 id="radio_stoat",
-                                value=(cur_plat == "stoat"),
+                                value=(cur_plat == "stoat")
                             )
                         yield Label("Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
@@ -271,9 +272,10 @@ class ConfigScreen(Screen):
                                 value=self.config.target_bot_token or "",
                                 id="inp_target_token",
                                 password=True,
-                                placeholder="Paste Target Bot Token"
+                                placeholder="Paste Target Bot Token",
+                                tooltip="Enter the Bot token for the target platform"
                             )
-                            yield Button("Validate", id="btn_fetch_target_servers", variant="primary")
+                            yield Button("Validate", id="btn_fetch_target_servers", variant="primary", tooltip="Verify token and fetch available communities")
                         
                         yield Label("Community / Server ID:", classes="field_label")
                         yield Select(
@@ -284,13 +286,15 @@ class ConfigScreen(Screen):
                         
                         yield Label("Target API URL:", classes="field_label")
                         yield Input(
-                            value=self.config.target_api_url or "default",
+                            value=self.config.target_api_url if (self.config.target_api_url and self.config.target_api_url != "default") else "",
                             id="inp_target_api",
+                            placeholder="Leave this Empty for official instance",
+                            tooltip="Enter the custom API url\nfor self hosted instances"
                         )
 
                 yield Rule()
                 with Horizontal(id="cfg_actions"):
-                    yield Button("Save Configuration", variant="success", id="btn_save")
+                    yield Button("Save Configuration", variant="success", id="btn_save", tooltip="Save all changes to config.yaml")
                     yield Button("Back", id="btn_back")
         yield Footer()
 
@@ -455,7 +459,7 @@ class ConfigScreen(Screen):
                 self.config.target_server_id = None
             
             target_api = self.query_one("#inp_target_api", Input).value.strip()
-            self.config.target_api_url = target_api or "default"
+            self.config.target_api_url = target_api or None
         else:
             self.config.target_platform = "none"
 

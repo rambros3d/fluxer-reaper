@@ -101,14 +101,14 @@ class ProgressScreen(Screen[None]):
                 
                 with Vertical(id="prog_actions"):
                     with Horizontal(classes="action_row", id="prog_actions_row1"):
-                        yield Button("Start from First", id="btn_start_first", disabled=True, variant="primary")
-                        yield Button("Continue Migration", id="btn_continue", disabled=True, variant="success")
-                        yield Button("Start from ID", id="btn_start_id", disabled=True, variant="warning")
+                        yield Button("Start from First", id="btn_start_first", disabled=True, variant="primary", tooltip="Start the operation from the beginning")
+                        yield Button("Continue Migration", id="btn_continue", disabled=True, variant="success", tooltip="Resume the operation from the last saved state")
+                        yield Button("Start from ID", id="btn_start_id", disabled=True, variant="warning", tooltip="Start or resume from a specific Discord Message ID")
                     with Horizontal(classes="action_row", id="prog_actions_row2"):
                         yield Button("Back", id="btn_back", disabled=False)
                         yield Button("Main Menu", id="btn_main_menu", disabled=False)
                     with Horizontal(classes="action_row", id="prog_actions_cancel"):
-                        yield Button("Cancel", id="btn_cancel", variant="error")
+                        yield Button("Cancel", id="btn_cancel", variant="error", tooltip="Stop current operation")
         yield Footer()
 
     def __init__(self, log_level: str = "INFO", *args, **kwargs):
@@ -232,7 +232,11 @@ class ProgressScreen(Screen[None]):
         show_id: bool = True,
         btn_start_label: str = "Start from First",
         btn_continue_label: str = "Continue Migration",
-        btn_id_label: str = "Start from ID"
+        btn_id_label: str = "Start from ID",
+        btn_start_variant: str = "primary",
+        btn_start_tooltip: str | None = None,
+        btn_continue_tooltip: str | None = None,
+        btn_id_tooltip: str | None = None
     ):
         """Phase 2: Wait for user confirmation after analysis."""
         try: self.query_one("#prog_loader", LoadingIndicator).display = False
@@ -241,12 +245,27 @@ class ProgressScreen(Screen[None]):
         try: self.query_one("#prog_timer", Label).display = False
         except Exception: pass
         
-        # Update button labels
-        try: self.query_one("#btn_start_first", Button).label = btn_start_label
+        # Update button labels, variants and tooltips
+        try:
+            btn_start = self.query_one("#btn_start_first", Button)
+            btn_start.label = btn_start_label
+            btn_start.variant = btn_start_variant
+            if btn_start_tooltip:
+                btn_start.tooltip = btn_start_tooltip
         except Exception: pass
-        try: self.query_one("#btn_continue", Button).label = btn_continue_label
+
+        try:
+            btn_cont = self.query_one("#btn_continue", Button)
+            btn_cont.label = btn_continue_label
+            if btn_continue_tooltip:
+                btn_cont.tooltip = btn_continue_tooltip
         except Exception: pass
-        try: self.query_one("#btn_start_id", Button).label = btn_id_label
+
+        try:
+            btn_id = self.query_one("#btn_start_id", Button)
+            btn_id.label = btn_id_label
+            if btn_id_tooltip:
+                btn_id.tooltip = btn_id_tooltip
         except Exception: pass
 
         # Show confirmation buttons
@@ -426,8 +445,8 @@ class OptionSelectModal(ModalScreen[list[str]]):
         with Vertical(id="opt_dialog"):
             yield Label(self._title, id="opt_title")
             with Horizontal(id="opt_batch_buttons"):
-                yield Button("Select All", id="btn_opt_all", flat=True)
-                yield Button("Deselect All", id="btn_opt_none", flat=True)
+                yield Button("Select All", id="btn_opt_all", flat=True, tooltip="Select all available options")
+                yield Button("Deselect All", id="btn_opt_none", flat=True, tooltip="Deselect all options")
             
             with Vertical(id="opt_scroll"):
                 for opt_id, label in self._options:
@@ -435,8 +454,8 @@ class OptionSelectModal(ModalScreen[list[str]]):
             
             yield Rule()
             with Horizontal(id="opt_buttons"):
-                yield Button("Proceed", variant="success", id="btn_opt_ok")
-                yield Button("Back", id="btn_opt_back")
+                yield Button("Proceed", variant="success", id="btn_opt_ok", tooltip="Proceed with the selected options")
+                yield Button("Back", id="btn_opt_back", tooltip="Return to the previous menu")
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "btn_opt_back":
@@ -568,8 +587,8 @@ class ChannelPickerScreen(Screen[tuple]):
 
                 yield Rule()
                 with Horizontal(id="chanpick_buttons"):
-                    yield Button("Select", variant="success", id="btn_pick_ok")
-                    yield Button("Back", id="btn_pick_back")
+                    yield Button("Select", variant="success", id="btn_pick_ok", tooltip="Confirm selection and start migration")
+                    yield Button("Back", id="btn_pick_back", tooltip="Cancel selection")
         yield Footer()
 
     def on_mount(self) -> None:
@@ -719,17 +738,17 @@ class ChannelSelectScreen(Screen[dict]):
                         yield Label("Note: Channels shown in green have existing backups", classes="label_warning")
 
                 with Horizontal(id="select_all_buttons"):
-                    yield Button("Select All", id="btn_all")
-                    yield Button("Deselect All", id="btn_none")
+                    yield Button("Select All", id="btn_all", tooltip="Select all channels for backup")
+                    yield Button("Deselect All", id="btn_none", tooltip="Deselect all channels")
 
                 yield Rule()
                 with Horizontal(id="confirm_buttons"):
                     if self.any_found:
-                        yield Button("Sync", variant="success", id="btn_sync")
-                        yield Button("Force Overwrite", variant="warning", id="btn_force")
+                        yield Button("Sync", variant="success", id="btn_sync", tooltip="Backup new channels\n& update existing backups")
+                        yield Button("Force Overwrite", variant="warning", id="btn_force", tooltip="Overwrite existing backups\nwith fresh data")
                     else:
-                        yield Button("Backup", variant="success", id="btn_backup")
-                    yield Button("Back", id="btn_cancel_chan")
+                        yield Button("Backup", variant="success", id="btn_backup", tooltip="Start backing up selected channels")
+                    yield Button("Back", id="btn_cancel_chan", tooltip="Cancel and go back")
         yield Footer()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -798,8 +817,8 @@ class MessageIDInputModal(ModalScreen[int | None]):
                 yield Label("Enter an ID and click Verify to preview.", id="lbl_msg_preview")
             
             with Horizontal(id="msg_id_buttons"):
-                yield Button("Verify", variant="primary", id="btn_verify_start", disabled=True)
-                yield Button("Back", variant="warning", id="btn_cancel_msg_id")
+                yield Button("Verify", variant="primary", id="btn_verify_start", disabled=True, tooltip="Check if this message ID exists in the channel")
+                yield Button("Back", variant="warning", id="btn_cancel_msg_id", tooltip="Cancel and go back")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "input_msg_id":

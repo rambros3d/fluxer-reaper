@@ -15,7 +15,7 @@ class AppConfig(BaseModel):
     target_platform: str = Field(default="fluxer")       # fluxer | stoat | none
     target_bot_token: Optional[str] = Field(default=None)
     target_server_id: Optional[str] = Field(default=None)
-    target_api_url: Optional[str] = Field(default="default")
+    target_api_url: Optional[str] = Field(default=None)
     migration: MigrationSettings = Field(default_factory=MigrationSettings)
 
     # ── backward‑compat shims (read‑only) ────────────────────────────────
@@ -77,12 +77,12 @@ def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing
             data.setdefault("target_platform", "fluxer")
             data.setdefault("target_bot_token", data["fluxer_bot_token"])
             data.setdefault("target_server_id", data.get("fluxer_community_id"))
-            data.setdefault("target_api_url", data.get("fluxer_api_url", "default"))
+            data.setdefault("target_api_url", data.get("fluxer_api_url") or "default")
         elif data.get("stoat_bot_token") and data["stoat_bot_token"] not in ("STOAT_BOT_TOKEN", None):
             data.setdefault("target_platform", "stoat")
             data.setdefault("target_bot_token", data["stoat_bot_token"])
             data.setdefault("target_server_id", data.get("stoat_server_id"))
-            data.setdefault("target_api_url", data.get("stoat_api_url", "default"))
+            data.setdefault("target_api_url", data.get("stoat_api_url") or "default")
         # Remove legacy keys so they don't conflict with the model
         for key in ("fluxer_bot_token", "fluxer_community_id", "fluxer_api_url",
                      "stoat_bot_token", "stoat_server_id", "stoat_api_url",

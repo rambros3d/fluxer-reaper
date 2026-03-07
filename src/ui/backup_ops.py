@@ -73,9 +73,9 @@ class BackupPane(Container):
                 
                 yield Label("", id="bp_lbl_backup")
             with Vertical(id="bp_actions"):
-                yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True)
-                yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary")
-                yield Button("Update Existing Backup", id="bp_backup_sync", disabled=True, variant="success")
+                yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True, tooltip="Backup Discord server roles, emojis, and channel structure")
+                yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary", tooltip="Select and backup message history from text channels")
+                yield Button("Update Existing Backup", id="bp_backup_sync", disabled=True, variant="success", tooltip="Scan for new messages\n& Update existing backup")
 
     def on_mount(self) -> None:
         self._validate()
