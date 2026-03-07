@@ -375,7 +375,7 @@ class ShuttlePane(Container):
 
     @work(exclusive=True)
     async def run_batch_clone(self, selections: list[str]) -> None:
-        modal = ProgressScreen(log_level=self.config.migration.log_level)
+        modal = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         connections_started = False
@@ -506,7 +506,7 @@ class ShuttlePane(Container):
 
     @work(exclusive=True)
     async def run_batch_sync(self, selections: list[str]) -> None:
-        modal = ProgressScreen(log_level=self.config.migration.log_level)
+        modal = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         try:
@@ -766,7 +766,7 @@ class ShuttlePane(Container):
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
 
-        modal = ProgressScreen(log_level=self.config.migration.log_level)
+        modal = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
 
@@ -833,7 +833,7 @@ class ShuttlePane(Container):
                 has_previous = bool(last_migrated)
                 
                 # Analyze
-                modal = ProgressScreen(log_level=self.config.migration.log_level)
+                modal = ProgressScreen(log_level=self.config.log_level)
                 self.app.push_screen(modal)
                 await asyncio.sleep(0.1)
 
@@ -1041,7 +1041,7 @@ class ShuttlePane(Container):
 
     @work(exclusive=True)
     async def run_batch_danger(self, selections: list[str]) -> None:
-        modal = ProgressScreen(log_level=self.config.migration.log_level)
+        modal = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         target_started = False

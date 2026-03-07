@@ -3,10 +3,6 @@ import yaml
 from pathlib import Path
 from pydantic import BaseModel, Field
 
-class MigrationSettings(BaseModel):
-    batch_size: int = Field(default=100)
-    log_level: str = Field(default="DEBUG")
-
 class AppConfig(BaseModel):
     discord_bot_token: Optional[str] = Field(default=None)
     discord_server_id: Optional[str] = Field(default=None)
@@ -15,7 +11,7 @@ class AppConfig(BaseModel):
     target_bot_token: Optional[str] = Field(default=None)
     target_server_id: Optional[str] = Field(default=None)
     target_api_url: Optional[str] = Field(default=None)
-    migration: MigrationSettings = Field(default_factory=MigrationSettings)
+    log_level: str = Field(default="DEBUG")
 
     # ── backward‑compat shims (read‑only) ────────────────────────────────
     # The rest of the codebase (fluxer/stoat modules) still reads these.

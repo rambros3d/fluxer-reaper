@@ -162,7 +162,7 @@ class BackupPane(Container):
 
     @work(exclusive=True)
     async def run_backup_profile(self) -> None:
-        modal = ProgressScreen(log_level=self.config.migration.log_level)
+        modal = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal)
         await asyncio.sleep(0.1)
         modal.phase_progress()
@@ -214,7 +214,7 @@ class BackupPane(Container):
 
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
-        modal_prog = ProgressScreen(log_level=self.config.migration.log_level)
+        modal_prog = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
 
@@ -273,7 +273,7 @@ class BackupPane(Container):
                 selected_channels = [c for c in eligible_channels if c.id in selected_ids]
 
                 # Phase 2: Confirmation
-                modal_prog = ProgressScreen(log_level=self.config.migration.log_level) # Re-instantiate to avoid Textual re-push UI freeze
+                modal_prog = ProgressScreen(log_level=self.config.log_level) # Re-instantiate to avoid Textual re-push UI freeze
                 self.app.push_screen(modal_prog)
                 await asyncio.sleep(0.1)
                 
@@ -398,7 +398,7 @@ class BackupPane(Container):
 
     @work(exclusive=True)
     async def run_backup_sync(self) -> None:
-        modal_prog = ProgressScreen(log_level=self.config.migration.log_level)
+        modal_prog = ProgressScreen(log_level=self.config.log_level)
         self.app.push_screen(modal_prog)
         await asyncio.sleep(0.1)
         modal_prog.phase_progress()
