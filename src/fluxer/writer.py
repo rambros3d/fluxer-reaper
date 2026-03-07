@@ -16,6 +16,28 @@ class FluxerWriter:
         self._ready_event = asyncio.Event()
         self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
 
+    @staticmethod
+    async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
+        """Fetches the list of Fluxer communities the bot is in. Returns list of (label, id)."""
+        from fluxer import HTTPClient, Guild
+        
+        http_kwargs = {}
+        if api_url and api_url != "default":
+            http_kwargs["api_url"] = api_url
+            
+        async with HTTPClient(token, **http_kwargs) as http:
+            try:
+                guilds_data = await http.get_current_user_guilds()
+                guilds_list = []
+                for g_data in guilds_data:
+                    g = Guild.from_data(g_data)
+                    label = f"{g.id}-{g.name}"
+                    guilds_list.append((label, str(g.id)))
+                return guilds_list
+            except Exception as e:
+                logger.error(f"Failed to fetch Fluxer communities via HTTP: {e}")
+                raise
+
     async def _get_or_create_webhook(self, channel_id: str) -> Optional[Webhook]:
         """Gets an existing webhook for the channel or creates one."""
         if channel_id in self._webhooks:

@@ -31,6 +31,26 @@ class DiscordReader:
         """Factory for discord.PermissionOverwrite, keeps the import centralized."""
         return discord.PermissionOverwrite()
 
+    @staticmethod
+    async def fetch_guilds(token: str) -> list[tuple[str, str]]:
+        """Fetches the list of guilds the bot is a member of. Returns list of (name, id)."""
+        intents = discord.Intents.default()
+        intents.guilds = True
+        client = discord.Client(intents=intents)
+        guilds_list = []
+        try:
+            # We use a short-lived client just to fetch the guilds
+            await client.login(token)
+            async for guild in client.fetch_guilds(limit=None):
+                label = f"{guild.id}-{guild.name}"
+                guilds_list.append((label, str(guild.id)))
+        except Exception as e:
+            logger.error(f"Failed to fetch Discord guilds: {e}")
+            raise
+        finally:
+            await client.close()
+        return guilds_list
+
     def __init__(self, token: str, server_id: str):
         self.token = token
         try:

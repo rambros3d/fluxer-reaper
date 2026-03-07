@@ -33,6 +33,7 @@ The tool now features a unified, intuitive TUI (Terminal User Interface) - no mo
 | - Text Messages | 🟩 | 🟩 |
 | - File Attachments | 🟩 | 🟩 *some file extensions not supported*|
 | - Preserve Reply Links | 🟩 | 🟩 |
+| - Webhook Embeds | 🟩 | 🟩 |
 | - Threads | 🟩 | 🟩 |
 | - Forums | ⚠️ | ⚠️ |
 
@@ -137,11 +138,16 @@ But now their own website states that **Persona** will be used in some countries
 ---
 
 ### Documentation
-Detailed info about the code can be found at https://deepwiki.com/rambros3d/disco-reaper
+- [![Website](https://img.shields.io/badge/Website-rambros3d.com-blue?style=flat&logo=googlechrome&logoColor=white)](https://reaper.rambros3d.com/) - view bot setup guides, tool usage guides, and backup viewer
+- [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/rambros3d/disco-reaper) - incredibily good AI docs
 
 ### Vibe Code Notice
 
 - Code is provided as is; This tool was developed with AI.
 - Take it, use it, modify it, feel free to do whatever you wish.
+
+### Star History
+
+[![Star History Chart](https://api.star-history.com/image?repos=rambros3d/disco-reaper&type=date&legend=top-left)](https://www.star-history.com/?repos=rambros3d%2Fdisco-reaper&type=date&legend=top-left)
 
 ---

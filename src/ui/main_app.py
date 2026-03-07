@@ -1,12 +1,15 @@
 import re
 import os
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Header, Footer, Button, Label, Input, ListItem,
-    ListView, Rule, RadioButton, RadioSet,
+    ListView, Rule, RadioButton, RadioSet, Select,
 )
 from textual.screen import Screen, ModalScreen
 
@@ -188,6 +191,10 @@ class ConfigScreen(Screen):
     #target_section { height: auto; }
     #cfg_actions { height: auto; margin-top: 1; margin-bottom: 0; dock: bottom; }
     #cfg_actions Button { width: 1fr; margin: 0 1; }
+    .fetch_row { height: auto; align: left middle; margin-bottom: 1; }
+    .fetch_row Input { width: 1fr; }
+    .fetch_row Button { width: auto; margin-left: 1; }
+    #inp_discord_server { margin-bottom: 1; }
     """
 
     BINDINGS = [("escape", "go_back", "Back")]
@@ -206,17 +213,21 @@ class ConfigScreen(Screen):
 
                 with VerticalScroll(id="cfg_scroll"):
                     # ── Discord ──────────────────────────────────────────────
-                    yield Label("Discord", classes="section_title")
-                    yield Label("Bot Token:", classes="field_label")
-                    yield Input(
-                        value=self.config.discord_bot_token or "",
-                        id="inp_discord_token",
-                        password=True,
-                    )
+                    yield Label("Discord Bot Token:", classes="field_label")
+                    with Horizontal(classes="fetch_row"):
+                        yield Input(
+                            value=self.config.discord_bot_token or "",
+                            id="inp_discord_token",
+                            password=True,
+                            placeholder="Paste Bot Token here"
+                        )
+                        yield Button("Fetch", id="btn_fetch_guilds", variant="primary")
+                    
                     yield Label("Server ID:", classes="field_label")
-                    yield Input(
-                        value=self.config.discord_server_id or "",
+                    yield Select(
+                        options=[],
                         id="inp_discord_server",
+                        prompt="Select a Server"
                     )
 
                     # ── Reaper Mode ──────────────────────────────────────────
@@ -255,16 +266,22 @@ class ConfigScreen(Screen):
                                 value=(cur_plat == "stoat"),
                             )
                         yield Label("Bot Token:", classes="field_label")
-                        yield Input(
-                            value=self.config.target_bot_token or "",
-                            id="inp_target_token",
-                            password=True,
-                        )
+                        with Horizontal(classes="fetch_row"):
+                            yield Input(
+                                value=self.config.target_bot_token or "",
+                                id="inp_target_token",
+                                password=True,
+                                placeholder="Paste Target Bot Token"
+                            )
+                            yield Button("Fetch", id="btn_fetch_target_servers", variant="primary")
+                        
                         yield Label("Community / Server ID:", classes="field_label")
-                        yield Input(
-                            value=self.config.target_server_id or "",
+                        yield Select(
+                            options=[],
                             id="inp_target_server",
+                            prompt="Select a Community/Server"
                         )
+                        
                         yield Label("Target API URL:", classes="field_label")
                         yield Input(
                             value=self.config.target_api_url or "default",
@@ -279,8 +296,106 @@ class ConfigScreen(Screen):
 
     def on_mount(self) -> None:
         self._toggle_target_section()
+        # If we have a token, try to populate the select widget on mount
+        if self.config.discord_bot_token and self.config.discord_bot_token != "DISCORD_BOT_TOKEN":
+            self.run_worker(self._do_fetch_guilds(self.config.discord_bot_token, initial=True))
+        
+        # Also auto-fetch target servers if mode is not backup_only
+        if self._get_selected_mode() != "backup_only":
+            if self.config.target_bot_token and self.config.target_bot_token not in ("TARGET_BOT_TOKEN", ""):
+                platform = self.config.target_platform
+                if platform != "none":
+                    self.run_worker(self._do_fetch_target_servers(
+                        token=self.config.target_bot_token,
+                        api_url=self.config.target_api_url,
+                        platform=platform,
+                        initial=True
+                    ))
 
-    # ── show / hide the target platform section ──────────────────────────
+    async def _do_fetch_guilds(self, token: str, initial: bool = False) -> None:
+        """Background worker to fetch guilds and update the Select widget."""
+        from src.core.discord_reader import DiscordReader
+        try:
+            guilds = await DiscordReader.fetch_guilds(token)
+            
+            if not guilds:
+                if not initial:
+                    self.notify("No Discord servers found or invalid token.", severity="warning")
+                return
+
+            options = [(name, gid) for name, gid in guilds]
+            select_widget = self.query_one("#inp_discord_server", Select)
+            select_widget.set_options(options)
+            
+            # Restore saved value if it exists in the fetched list
+            saved_id = self.config.discord_server_id
+            if saved_id and any(gid == saved_id for _, gid in guilds):
+                select_widget.value = saved_id
+        except Exception as e:
+            if not initial:
+                self.notify(f"Failed to fetch Discord servers: {e}", severity="error")
+
+    async def _do_fetch_target_servers(self, token: str = None, api_url: str = None, platform: str = None, initial: bool = False) -> None:
+        """Background worker to fetch target platform servers."""
+        if not platform:
+            platform = self._get_selected_platform()
+        if not token:
+            token = self.query_one("#inp_target_token", Input).value.strip()
+        if not api_url:
+            api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
+
+        if not token or token == "TARGET_BOT_TOKEN":
+            return
+
+        servers = []
+        try:
+            if platform == "fluxer":
+                from src.fluxer.writer import FluxerWriter
+                servers = await FluxerWriter.fetch_guilds(token, api_url)
+            elif platform == "stoat":
+                from src.stoat.writer import StoatWriter
+                servers = await StoatWriter.fetch_guilds(token, api_url)
+            else:
+                return
+        except Exception as e:
+            logger.error(f"Failed to fetch {platform} servers: {e}")
+            if not initial:
+                self.notify(f"Failed to fetch {platform} servers: {e}", severity="error")
+            return
+
+        if not servers:
+            if not initial:
+                self.notify(f"No {platform} servers found or invalid token.", severity="warning")
+            return
+
+        options = [(label, sid) for label, sid in servers]
+        select_widget = self.query_one("#inp_target_server", Select)
+        select_widget.set_options(options)
+
+        # Restore saved value
+        saved_id = self.config.target_server_id
+        if saved_id and any(sid == saved_id for _, sid in servers):
+            select_widget.value = saved_id
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_fetch_guilds":
+            token = self.query_one("#inp_discord_token", Input).value.strip()
+            if not token or token == "DISCORD_BOT_TOKEN":
+                self.notify("Please enter a valid Bot Token first.", severity="error")
+                return
+            self.run_worker(self._do_fetch_guilds(token))
+        elif event.button.id == "btn_fetch_target_servers":
+            token = self.query_one("#inp_target_token", Input).value.strip()
+            if not token:
+                self.notify("Please enter a valid Target Platform Token first.", severity="error")
+                return
+            self.run_worker(self._do_fetch_target_servers())
+        elif event.button.id == "btn_back":
+            self.app.pop_screen()
+        elif event.button.id == "btn_save":
+            self._collect_and_save()
+            self.notify("Configuration saved.", severity="information")
+            self.dismiss(True)
 
     def _get_selected_mode(self) -> str:
         for rb in self.query("#mode_radio RadioButton"):
@@ -306,13 +421,21 @@ class ConfigScreen(Screen):
 
     def _collect_and_save(self) -> None:
         self.config.discord_bot_token = self.query_one("#inp_discord_token", Input).value.strip() or self.config.discord_bot_token
-        self.config.discord_server_id = self.query_one("#inp_discord_server", Input).value.strip() or self.config.discord_server_id
+        
+        server_select = self.query_one("#inp_discord_server", Select)
+        if server_select.value != Select.BLANK:
+            self.config.discord_server_id = str(server_select.value)
+        
         self.config.tool_mode = self._get_selected_mode()
 
         if self.config.tool_mode != "backup_only":
             self.config.target_platform = self._get_selected_platform()
             self.config.target_bot_token = self.query_one("#inp_target_token", Input).value.strip() or self.config.target_bot_token
-            self.config.target_server_id = self.query_one("#inp_target_server", Input).value.strip() or self.config.target_server_id
+            
+            target_select = self.query_one("#inp_target_server", Select)
+            if target_select.value != Select.BLANK:
+                self.config.target_server_id = str(target_select.value)
+            
             self.config.target_api_url = self.query_one("#inp_target_api", Input).value.strip() or self.config.target_api_url
         else:
             self.config.target_platform = "none"
@@ -322,16 +445,6 @@ class ConfigScreen(Screen):
     def _launch_mode(self) -> None:
         pass # No longer needed
 
-    def action_go_back(self) -> None:
-        self.app.pop_screen()
-
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn_back":
-            self.app.pop_screen()
-        elif event.button.id == "btn_save":
-            self._collect_and_save()
-            self.notify("Configuration saved.", severity="information")
-            self.dismiss(True)
 
 
 # ──────────────────────────────────────────────────────────────────────────────

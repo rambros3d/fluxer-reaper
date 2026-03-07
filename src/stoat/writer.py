@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import stoat
 from typing import Optional, List, Dict, Any
@@ -9,6 +10,61 @@ class StoatWriter:
         self.token = token
         self.community_id = str(community_id)
         self.api_url = api_url
+
+    @staticmethod
+    async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
+        """Fetches the list of Stoat servers the bot is in. Returns list of (label, id)."""
+        client_kwargs = {"token": token, "bot": True}
+        if api_url and api_url != "default":
+            client_kwargs["http_base"] = api_url
+            
+        client = stoat.Client(**client_kwargs)
+        ready_event = asyncio.Event()
+        servers_list = []
+
+        @client.on(stoat.ReadyEvent)
+        async def on_ready(event: stoat.ReadyEvent):
+            nonlocal servers_list
+            servers_list = event.servers
+            ready_event.set()
+
+        client_task = asyncio.create_task(client.start())
+        guilds_list = []
+        try:
+            # Wait for bot to be ready OR for the task to fail
+            done, pending = await asyncio.wait(
+                [asyncio.create_task(ready_event.wait()), client_task],
+                return_when=asyncio.FIRST_COMPLETED,
+                timeout=10.0
+            )
+
+            if ready_event.is_set():
+                for s in servers_list:
+                    label = f"{s.id}-{s.name}"
+                    guilds_list.append((label, str(s.id)))
+            else:
+                # If we got here, either it timed out or client_task finished early
+                if client_task in done:
+                    # Check for exception in the client task
+                    exc = client_task.exception()
+                    if exc:
+                        raise exc
+                    else:
+                        raise Exception("Client task finished early without ready event")
+                else:
+                    raise asyncio.TimeoutError("Timed out waiting for Stoat to be ready")
+        except Exception as e:
+            logger.error(f"Failed to fetch Stoat servers: {e}")
+            raise
+        finally:
+            await client.close()
+            client_task.cancel()
+            try:
+                await client_task
+            except asyncio.CancelledError:
+                pass
+            
+        return guilds_list
 
     async def start(self):
         client_kwargs = {"token": self.token, "bot": True}
