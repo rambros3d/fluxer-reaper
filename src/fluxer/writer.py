@@ -259,6 +259,16 @@ class FluxerWriter:
         if files:
             fluxer_files = [File(io.BytesIO(f["data"]), filename=f["filename"]) for f in files]
 
+        # Normalize embeds (ensure they are dicts, handling fluxer.Embed objects or dicts)
+        normalized_embeds = None
+        if embeds:
+            normalized_embeds = []
+            for e in embeds:
+                if hasattr(e, "to_dict"):
+                    normalized_embeds.append(e.to_dict())
+                else:
+                    normalized_embeds.append(e)
+
         try:
             # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
             # So if we have a reply, we MUST use the bot's direct send method.
@@ -268,7 +278,7 @@ class FluxerWriter:
                     username=f"{author_name} (discord)",
                     avatar_url=author_avatar_url,
                     files=fluxer_files,
-                    embeds=embeds,
+                    embeds=normalized_embeds,
                     wait=True
                 )
                 return str(msg.id) if msg else None
@@ -290,7 +300,7 @@ class FluxerWriter:
                     channel_id=channel_id,
                     content=final_bot_content,
                     files=fluxer_files,
-                    embeds=embeds,
+                    embeds=normalized_embeds,
                     message_reference=message_reference
                 )
                 return str(msg_data["id"]) if msg_data else None

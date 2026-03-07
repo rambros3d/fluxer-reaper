@@ -256,12 +256,56 @@ class StoatWriter:
                     attachments.append((f["filename"], f["data"]))
             
             try:
+                # Stoat requires SendableEmbed objects, not raw dicts
+                stoat_embeds = []
+                if embeds:
+                    for e in embeds:
+                        # Convert integer color to hex string if present
+                        color = None
+                        if e.get("color"):
+                            color = f"#{e['color']:06x}"
+                        
+                        # Map Discord fields to Stoat SendableEmbed fields
+                        # icon_url: author or footer icon
+                        icon_url = None
+                        if e.get("author"):
+                            icon_url = e["author"].get("icon_url")
+                        if not icon_url and e.get("footer"):
+                            icon_url = e["footer"].get("icon_url")
+                            
+                        # media: image or thumbnail. 
+                        # Stoat's SendableEmbed.media expects a file ID or ResolvableResource (Upload).
+                        # It does NOT properly handle external URLs in the 'media' field (causes 404).
+                        media = None
+                        image_url = e.get("image", {}).get("url")
+                        thumbnail_url = e.get("thumbnail", {}).get("url")
+
+                        # If we have an image/thumbnail URL and no icon_url, use it as icon_url
+                        # (Stoat icons can be URLs and show up as small images)
+                        if not icon_url:
+                            icon_url = thumbnail_url or image_url
+
+                        # Only use media if it's NOT a URL (likely a file ID from a previous Stoat message)
+                        if image_url and not image_url.startswith("http"):
+                            media = image_url
+                        elif thumbnail_url and not thumbnail_url.startswith("http"):
+                            media = thumbnail_url
+                            
+                        stoat_embeds.append(stoat.SendableEmbed(
+                            title=e.get("title"),
+                            description=e.get("description"),
+                            icon_url=icon_url,
+                            url=e.get("url"),
+                            media=media,
+                            color=color
+                        ))
+
                 msg = await channel.send(
                     content=final_content,
                     masquerade=masquerade,
                     replies=replies,
                     attachments=attachments,
-                    embeds=embeds
+                    embeds=stoat_embeds
                 )
                 return str(msg.id) if msg else None
             except Exception as e:
