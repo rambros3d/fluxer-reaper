@@ -113,6 +113,5 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
             logger.error(f"Error downloading/uploading {obj_type.lower()} {obj.name}: {e}")
         
         if progress_callback: await progress_callback(obj.name, obj_type, idx + 1, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
         
     return cloned_assets

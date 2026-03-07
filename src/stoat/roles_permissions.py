@@ -161,7 +161,6 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, current_idx, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
 
 
     logger.info(f"Stoat permissions sync complete: {len(synced_info['categories_synced'])} categories, {len(synced_info['channels_synced'])} channels.")
@@ -208,7 +207,5 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
             cloned_role_names.append(role.name)
         
         if progress_callback: await progress_callback(role.name, idx + 1, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
         
     return cloned_role_names
-

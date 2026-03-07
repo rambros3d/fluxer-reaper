@@ -436,27 +436,24 @@ class ConfigScreen(Screen):
     # ── save / start ─────────────────────────────────────────────────────
 
     def _collect_and_save(self) -> None:
-        token = self.query_one("#inp_discord_token", Input).value.strip()
-        self.config.discord_bot_token = token or None
+        # 1. Discord Section
+        self.config.discord_bot_token = self.query_one("#inp_discord_token", Input).value.strip() or None
         
-        server_select = self.query_one("#inp_discord_server", Select)
-        if server_select.value != Select.BLANK:
-            self.config.discord_server_id = str(server_select.value)
-        else:
-            self.config.discord_server_id = None
-        
+        d_select = self.query_one("#inp_discord_server", Select)
+        if d_select.value not in (Select.BLANK, Select.NULL):
+            self.config.discord_server_id = str(d_select.value)
+
+        # 2. Mode
         self.config.tool_mode = self._get_selected_mode()
 
+        # 3. Target Section
         if self.config.tool_mode != "backup_only":
             self.config.target_platform = self._get_selected_platform()
-            target_token = self.query_one("#inp_target_token", Input).value.strip()
-            self.config.target_bot_token = target_token or None
+            self.config.target_bot_token = self.query_one("#inp_target_token", Input).value.strip() or None
             
-            target_select = self.query_one("#inp_target_server", Select)
-            if target_select.value != Select.BLANK:
-                self.config.target_server_id = str(target_select.value)
-            else:
-                self.config.target_server_id = None
+            t_select = self.query_one("#inp_target_server", Select)
+            if t_select.value not in (Select.BLANK, Select.NULL):
+                self.config.target_server_id = str(t_select.value)
             
             target_api = self.query_one("#inp_target_api", Input).value.strip()
             self.config.target_api_url = target_api or None

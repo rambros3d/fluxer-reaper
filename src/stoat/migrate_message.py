@@ -304,9 +304,7 @@ async def migrate_messages(
                 logger.error(f"Failed to process message {msg.id}: {e}")
                 import traceback
                 logger.error(traceback.format_exc())
-            
-            # Delay for rate limit safety
-            await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
+        
     except (KeyboardInterrupt, asyncio.CancelledError):
         context.is_running = False
         pass

@@ -160,6 +160,5 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
             cloned_role_names.append(role.name)
         
         if progress_callback: await progress_callback(role.name, idx + 1, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
         
     return cloned_role_names

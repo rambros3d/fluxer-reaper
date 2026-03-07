@@ -116,7 +116,6 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         current_idx += 1
         if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
 
     # 2. Create missing channels (unparented for now)
     for channel in channels_to_create:
@@ -158,7 +157,6 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
 
     # 3. Move/Sync existing channels
     for channel, target_id in channels_to_move:
@@ -183,7 +181,6 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Syncing", current_idx, total)
-        await asyncio.sleep(context.config.migration.rate_limit_delay_seconds)
 
     # 4. Final step: Parent the channels into categories via mass server.edit()
     logger.info("Parenting all channels into their respective categories...")
