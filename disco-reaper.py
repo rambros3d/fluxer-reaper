@@ -58,6 +58,12 @@ def relaunch_in_terminal():
                 continue
 
 def main():
+    import os
+    # Ensure screenshots directory exists and is configured
+    shot_path = os.path.abspath("screenshots")
+    os.makedirs(shot_path, exist_ok=True)
+    os.environ["TEXTUAL_SCREENSHOT_LOCATION"] = shot_path
+
     relaunch_in_terminal()
     setup_logging()
     run_disco_reaper_tui()

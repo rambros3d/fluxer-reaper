@@ -46,10 +46,11 @@ test_release.zip
 test_release/
 DiscoReaper-*
 
-REAPER-*/
+# App data files
 ReaperFiles-*/
 Reaper-*/
 DISCORD-*/
 FLUXER-*/
 REAPER-*/
 EXPORT-*/
+screenshots/

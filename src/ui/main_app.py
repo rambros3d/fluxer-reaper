@@ -452,10 +452,35 @@ class ConfigScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ReaperApp(App):
-
     def on_mount(self) -> None:
         self.push_screen(ConfigSelectionScreen())
         self.theme = "dracula"
+
+    def action_screenshot(self, filename: str | None = None, path: str | None = None) -> None:
+        """Action to take a screenshot."""
+        self.deliver_screenshot(filename, path)
+
+    def deliver_screenshot(
+        self,
+        filename: str | None = None,
+        path: str | None = None,
+        time_format: str | None = None,
+    ) -> str | None:
+        """Deliver a screenshot by saving it locally and notifying the user."""
+        # Use our local screenshots folder if no path provided
+        save_path = path or os.path.abspath("screenshots")
+        try:
+            # Ensure directory exists
+            os.makedirs(save_path, exist_ok=True)
+            
+            # Using save_screenshot to write directly to disk
+            actual_path = self.save_screenshot(filename=filename, path=save_path, time_format=time_format)
+            self.notify(f"Screenshot saved to: {os.path.basename(actual_path)}", title="Screenshot", severity="information")
+            return actual_path
+        except Exception as e:
+            self.notify(f"Failed to save screenshot: {e}", title="Screenshot", severity="error")
+            logger.error(f"Screenshot delivery failed: {e}", exc_info=True)
+            return None
 
 
 def run_disco_reaper_tui():
