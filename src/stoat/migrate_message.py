@@ -7,7 +7,7 @@ from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None) -> str:
     if not content or not guild:
         return content
         
@@ -57,9 +57,22 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         channel = guild.get_channel(cid)
         return f"#{channel.name}" if channel else match.group(0)
 
+    def replace_emoji(match):
+        animated = match.group(1) == "a"
+        name = match.group(2)
+        eid = match.group(3)
+        
+        if emoji_map and eid in emoji_map:
+            target_eid = emoji_map[eid]
+            prefix = "a" if animated else ""
+            #return f"<{prefix}:{name}:{target_eid}>" name not require for stoat
+            return f":{target_eid}:"
+        return f":{name}:"
+
     content = re.sub(r'<@!?([0-9]+)>', replace_user, content)
     content = re.sub(r'<@&([0-9]+)>', replace_role, content)
     content = re.sub(r'<#([0-9]+)>', replace_channel, content)
+    content = re.sub(r'<(a?):([^:]+):([0-9]+)>', replace_emoji, content)
     content = content.replace("@everyone", "`@everyone`").replace("@here", "`@here`")
     return content
 
@@ -168,7 +181,15 @@ async def migrate_messages(
                 continue
             else:
                 # Use custom clean_mentions with msg mentions for accuracy
-                content = clean_mentions(msg.content, msg.guild, msg.mentions, msg.role_mentions, context.discord_reader.role_map)
+                # Use custom clean_mentions with msg mentions for accuracy
+                content = clean_mentions(
+                    msg.content, 
+                    msg.guild, 
+                    msg.mentions, 
+                    msg.role_mentions, 
+                    context.discord_reader.role_map,
+                    context.state.emoji_map
+                )
                 
             # Process attachments
             files = []
@@ -191,7 +212,8 @@ async def migrate_messages(
                                 msg.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
-                                context.discord_reader.role_map
+                                context.discord_reader.role_map,
+                                context.state.emoji_map
                             )
                     attachments_to_process.extend(snapshot.attachments)
                     logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")
