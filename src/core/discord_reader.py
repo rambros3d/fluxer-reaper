@@ -62,6 +62,7 @@ class DiscordReader:
         self.guild: discord.Guild | None = None
         self.client: discord.Client | None = None
         self.role_map: Dict[int, str] = {}
+        self.channel_name_map: Dict[int, str] = {}
 
     def _create_client(self):
         intents = discord.Intents.default()
@@ -97,6 +98,18 @@ class DiscordReader:
         except Exception as e:
             logger.error(f"Failed to fetch roles: {e}")
             self.role_map = {}
+
+        # Pre-fetch channels via API
+        try:
+            channels = await self.guild.fetch_channels()
+            self.channel_name_map = {c.id: c.name for c in channels}
+            logger.debug(f"Pre-fetched {len(self.channel_name_map)} channels")
+        except discord.Forbidden:
+            logger.warning("403 Forbidden: Missing Access to fetch channels. Continuing without channel name mapping.")
+            self.channel_name_map = {}
+        except Exception as e:
+            logger.error(f"Failed to fetch channels: {e}")
+            self.channel_name_map = {}
 
     async def validate(self) -> Dict[str, Any]:
         """Validates the token, server ID, intents, and permissions."""

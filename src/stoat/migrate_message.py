@@ -7,7 +7,7 @@ from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None, channel_map=None, discord_channel_map=None) -> str:
     if not content or not guild:
         return content
         
@@ -54,8 +54,19 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         
     def replace_channel(match):
         cid = int(match.group(1))
+        
+        # 1. Check if channel is mapped in state
+        if channel_map and str(cid) in channel_map:
+            return f"<#{channel_map[str(cid)]}>"
+            
+        # 2. Fallback to name in backticks
+        # Try metadata map first (robust)
+        if discord_channel_map and cid in discord_channel_map:
+            return f"`#{discord_channel_map[cid]}`"
+            
+        # Try cache
         channel = guild.get_channel(cid)
-        return f"#{channel.name}" if channel else match.group(0)
+        return f"`{channel.name}`" if channel else f"<#{cid}>"
 
     def replace_emoji(match):
         animated = match.group(1) == "a"
@@ -188,7 +199,9 @@ async def migrate_messages(
                     msg.mentions, 
                     msg.role_mentions, 
                     context.discord_reader.role_map,
-                    context.state.emoji_map
+                    context.state.emoji_map,
+                    context.state.channel_map,
+                    context.discord_reader.channel_name_map
                 )
                 
             # Process attachments
@@ -213,7 +226,9 @@ async def migrate_messages(
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
                                 context.discord_reader.role_map,
-                                context.state.emoji_map
+                                context.state.emoji_map,
+                                context.state.channel_map,
+                                context.discord_reader.channel_name_map
                             )
                     attachments_to_process.extend(snapshot.attachments)
                     logger.debug(f"Found forwarded snapshot content: {content[:50]}... and {len(snapshot.attachments)} attachments")
