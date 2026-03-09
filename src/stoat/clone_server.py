@@ -184,7 +184,8 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
 
     # 4. Final step: Parent the channels into categories via mass server.edit()
     logger.info("Parenting all channels into their respective categories...")
-    server = await context.writer._get_server(populate_channels=True)
+    # Force refetch to ensure we see all newly created categories from the loop above
+    server = await context.writer._get_server(populate_channels=True, force=True)
     cats = list(server.categories) if hasattr(server, "categories") and server.categories else []
     
     # Workaround: Ensure default properties are set for all categories

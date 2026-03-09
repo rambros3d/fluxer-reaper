@@ -138,6 +138,7 @@ class ShuttlePane(Container):
 
     def on_mount(self) -> None:
         self._rebuild_engine()
+        # run_validate is handled by the writer's internal caching now to prevent log flooding
         self.run_validate()
 
     def reload_config(self) -> None:
@@ -386,6 +387,9 @@ class ShuttlePane(Container):
             try:
                 await self.engine.start_connections()
                 connections_started = True
+                # Sync all entities before preview/confirmation
+                modal.set_status("Synchronizing entity mappings...")
+                await self._perform_auto_matching()
             except Exception as e:
                 logger.warning(f"Could not pre-connect for Clone preview: {e}")
 
@@ -394,7 +398,7 @@ class ShuttlePane(Container):
 
             modal.set_status(f"Awaiting Confirmation for {len(selections)} Operations...")
             
-            # Fetch and display live preview with presence highlighting
+            # Fetch and display live preview auto-matching already ran above
             preview = await self._fetch_clone_preview(selections) if connections_started else {}
 
             if connections_started:
@@ -503,6 +507,7 @@ class ShuttlePane(Container):
             modal.phase_report("Batch Operation", "error", show_back=False)
         finally:
             self.engine.is_running = False
+            # Ensure we only close if we actually started them and no other task is inheriting
             await self.engine.close_connections()
 
     @work(exclusive=True)
@@ -775,8 +780,12 @@ class ShuttlePane(Container):
             # Show info container
             modal.show_info("[bold cyan]Message Migration Ready[/bold cyan]", "Checking channel permissions...")
 
-            modal.set_status("Fetching channels...")
+            modal.set_status("Connecting to Servers...")
             await self.engine.start_connections()
+            
+            # Sync all entities before confirmation
+            modal.set_status("Synchronizing entity mappings...")
+            await self._perform_auto_matching()
 
             full_d = await self.engine.discord_reader.get_channels()
             
@@ -1052,6 +1061,10 @@ class ShuttlePane(Container):
             try:
                 await self.engine.start_target_only()
                 target_started = True
+                
+                # Sync all entities before confirmation (even in danger zone)
+                modal.set_status("Synchronizing entity mappings...")
+                await self._perform_auto_matching()
             except Exception as e:
                 logger.warning(f"Could not pre-connect for DZ preview: {e}")
 
@@ -1207,48 +1220,133 @@ class ShuttlePane(Container):
     async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
         """Fetches preview data from Discord (source server) for cloning confirmation,
         comparing with existing entities on the target server for presence highlighting."""
-        preview = {}
+    async def _perform_auto_matching(self):
+        """Matches Discord entities (roles, channels, emojis, stickers) with target platform items by name."""
+        if not self.engine:
+            return
+        
         reader = self.engine.discord_reader
         writer = self.engine.writer
         is_fluxer = self.target_platform == "fluxer"
 
-        # Fetch target data for comparison
-        target_roles = []
-        target_channels = []
+        # 1. Fetch target data for comparison
+        target_roles_map = {}
+        target_chans_map = {}
+        target_cats_map = {}
+        target_emojis_map = {}
+        target_stickers_map = {}
         try:
             if is_fluxer:
                 target_roles_raw = await writer.client.get_guild_roles(self.engine.config.target_server_id)
-                target_roles = [r.get("name", "").lower() for r in target_roles_raw]
+                target_roles_map = {r.get("name", "").lower(): str(r.get("id")) for r in target_roles_raw}
+                
+                target_emojis_raw = await writer.client.get_guild_emojis(self.engine.config.target_server_id)
+                target_emojis_map = {e.get("name", "").lower(): str(e.get("id")) for e in target_emojis_raw}
+                
+                try:
+                    target_stickers_raw = await writer.client.get_guild_stickers(self.engine.config.target_server_id)
+                    target_stickers_map = {s.get("name", "").lower(): str(s.get("id")) for s in target_stickers_raw}
+                except Exception:
+                    pass
             else:
                 server = await writer._get_server()
-                target_roles = [r.name.lower() for r in server.roles.values()]
+                target_roles_map = {r.name.lower(): str(r.id) for r in server.roles.values()}
+                
+                target_emojis_raw = await server.fetch_emojis()
+                target_emojis_map = {e.name.lower(): str(e.id) for e in target_emojis_raw}
             
             target_chans_raw = await writer.get_channels()
-            target_channels = [c.get("name", "").lower() for c in target_chans_raw]
+            target_chans_map = {c.get("name", "").lower(): str(c.get("id")) for c in target_chans_raw if c.get("type") != 4}
+            target_cats_map = {c.get("name", "").lower(): str(c.get("id")) for c in target_chans_raw if c.get("type") == 4}
         except Exception as e:
-            logger.warning(f"Clone Preview: failed to fetch target data for comparison: {e}")
+            logger.warning(f"Auto-matching: failed to fetch target data: {e}")
+            return # Cannot match without target data
+
+        # 2. Match entities
+        try:
+            # Roles
+            src_roles = await reader.get_roles()
+            for r in src_roles:
+                name_l = r.name.lower()
+                if name_l in target_roles_map and not self.engine.state.get_target_role_id(r.id):
+                    logger.info(f"Auto-matched Role: {r.name} -> {target_roles_map[name_l]}")
+                    self.engine.state.set_target_role_mapping(r.id, target_roles_map[name_l])
+            
+            # Categories
+            src_cats = await reader.get_categories()
+            for cat in src_cats:
+                name_l = cat.name.lower()
+                if name_l in target_cats_map and not self.engine.state.get_target_category_id(cat.id):
+                    logger.info(f"Auto-matched Category: {cat.name} -> {target_cats_map[name_l]}")
+                    self.engine.state.set_target_category_mapping(cat.id, target_cats_map[name_l])
+            
+            # Channels
+            src_channels = await reader.get_channels()
+            for ch in src_channels:
+                name_l = ch.name.lower()
+                if name_l in target_chans_map and not self.engine.state.get_target_channel_id(ch.id):
+                    logger.info(f"Auto-matched Channel: {ch.name} -> {target_chans_map[name_l]}")
+                    self.engine.state.set_target_channel_mapping(ch.id, target_chans_map[name_l])
+            
+            # Emojis
+            src_emojis = await reader.get_emojis()
+            for e in src_emojis:
+                name_l = e.name.lower()
+                if name_l in target_emojis_map and not self.engine.state.get_target_emoji_id(e.id):
+                    logger.info(f"Auto-matched Emoji: {e.name} -> {target_emojis_map[name_l]}")
+                    self.engine.state.set_target_emoji_mapping(e.id, target_emojis_map[name_l])
+            
+            # Stickers
+            if is_fluxer:
+                src_stickers = await reader.get_stickers()
+                for s in src_stickers:
+                    name_l = s.name.lower()
+                    if name_l in target_stickers_map and not self.engine.state.get_target_sticker_id(s.id):
+                        logger.info(f"Auto-matched Sticker: {s.name} -> {target_stickers_map[name_l]}")
+                        self.engine.state.set_target_sticker_mapping(s.id, target_stickers_map[name_l])
+        except Exception as e:
+            logger.warning(f"Auto-matching error: {e}")
+
+        return {
+            "target_roles": target_roles_map,
+            "target_channels": target_chans_map,
+            "target_categories": target_cats_map,
+            "target_emojis": target_emojis_map,
+            "target_stickers": target_stickers_map
+        }
+
+    async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
+        """Fetches preview data from Discord (source server) for cloning confirmation,
+        comparing with existing mappings in state-migration.json for presence highlighting."""
+        preview = {}
+        reader = self.engine.discord_reader
+        
+        # We rely on the global auto-match that ran during connection
+        mapping_ch = self.engine.state.channel_map
+        mapping_cat = self.engine.state.category_map
+        mapping_role = self.engine.state.role_map
 
         try:
             if "sub_clone_roles" in selections:
                 roles = await reader.get_roles()
-                preview["roles"] = [(r.name, r.name.lower() in target_roles) for r in roles]
+                # Highlight if existing in mapping
+                preview["roles"] = [(r.name, str(r.id) in mapping_role) for r in roles]
         except Exception as e:
             logger.warning(f"Clone Preview: failed to fetch roles: {e}")
 
         try:
             if "sub_clone_channels" in selections:
-                # Build hierarchy
                 src_categories = await reader.get_categories()
                 src_channels = await reader.get_channels()
                 
-                # structure[cat_id] = (cat_name, cat_exists, [(ch_name, ch_exists), ...])
+                # Build hierarchy for preview
                 structure = {}
                 for cat in src_categories:
-                    cat_exists = cat.name.lower() in target_channels
+                    cat_exists = str(cat.id) in mapping_cat
                     structure[cat.id] = (cat.name, cat_exists, [])
                 
                 for ch in src_channels:
-                    ch_exists = ch.name.lower() in target_channels
+                    ch_exists = str(ch.id) in mapping_ch
                     if ch.category_id in structure:
                         structure[ch.category_id][2].append((ch.name, ch_exists))
                     else:

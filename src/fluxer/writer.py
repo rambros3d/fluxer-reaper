@@ -15,6 +15,7 @@ class FluxerWriter:
         self._bot_task: Optional[asyncio.Task] = None
         self._ready_event = asyncio.Event()
         self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
+        self._channels_cache: List[Dict[str, Any]] | None = None
 
     @staticmethod
     async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
@@ -243,8 +244,11 @@ class FluxerWriter:
 
     async def get_channels(self) -> List[Dict[str, Any]]:
         """Returns all channels in the community."""
+        if self._channels_cache is not None:
+            return self._channels_cache
         assert self.client is not None
-        return await self.client.get_guild_channels(self.community_id)
+        self._channels_cache = await self.client.get_guild_channels(self.community_id)
+        return self._channels_cache
 
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: int, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
@@ -660,16 +664,23 @@ class FluxerWriter:
 
     async def close(self):
         """Cleanly close connection and stop bot task."""
-        if self.bot:
+        bot = self.bot
+        self.bot = None # Atomic clear
+        self._channels_cache = None
+        self._webhooks.clear()
+
+        if bot:
             try:
-                await self.bot.close()
+                await bot.close()
             except Exception as e:
                 logger.debug(f"Error closing Fluxer bot: {e}")
                 
         if self._bot_task:
-            self._bot_task.cancel()
+            task = self._bot_task
+            self._bot_task = None
+            task.cancel()
             try:
-                await self._bot_task
+                await task
             except asyncio.CancelledError:
                 pass
         self._ready_event.clear()

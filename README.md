@@ -7,7 +7,7 @@
 ![Disco Reaper](images/fluxer-reaper.jpg)
 
 ### Modern Terminal Interface
-The tool now features a unified, intuitive TUI (Terminal User Interface) - no more commands
+The tool now features a unified, intuitive TUI (Terminal User Interface) - no more text commands
 
 | Features | Fluxer | Stoat |
 | :--- | :---: | :---: |
@@ -21,7 +21,7 @@ The tool now features a unified, intuitive TUI (Terminal User Interface) - no mo
 | - Roles Cloning | 🟩 | 🟩 |
 | - Roles Permissions | 🟩 | 🟩 |
 | - Category Permissions | 🟩 | ⚠️ |
-| - Channel Permissions | 🟩 | ⏳to be done |
+| - Channel Permissions | 🟩 | ⏳ |
 | **Emojis & Stickers** |  |  |
 | - Copy Emojis | 🟩 | 🟩 |
 | - Copy Stickers | 🟩 | ⚠️ |
@@ -39,7 +39,7 @@ The tool now features a unified, intuitive TUI (Terminal User Interface) - no mo
 
 - ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels as normal messages. 
 - ⚠️**Stoat**: doesn't have features like Category Permissions or Slowmode settings for channels.
-- ⏳**Stoat**: permission sync for channels is pending due to architectural differences.
+- ⏳**Stoat**: permission sync for channels was not implemented due to architectural differences.
 
 ---
 

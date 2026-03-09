@@ -473,8 +473,12 @@ class ConfigScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ReaperApp(App):
+    SCREENS = {
+        "config_selection": ConfigSelectionScreen,
+    }
+
     def on_mount(self) -> None:
-        self.push_screen(ConfigSelectionScreen())
+        self.push_screen("config_selection")
         self.theme = "dracula"
 
     def action_screenshot(self, filename: str | None = None, path: str | None = None) -> None:

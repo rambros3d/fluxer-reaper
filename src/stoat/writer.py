@@ -10,6 +10,10 @@ class StoatWriter:
         self.token = token
         self.community_id = str(community_id)
         self.api_url = api_url
+        self.client: Optional[stoat.Client] = None
+        self._server = None
+        self._me = None
+        self._validation_cache = None
 
     @staticmethod
     async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
@@ -67,30 +71,44 @@ class StoatWriter:
         return guilds_list
 
     async def start(self):
+        if self.client:
+            # Check if client is actually usable (not half-closed)
+            try:
+                if self.client and not self.client.is_closed:
+                    return
+            except Exception:
+                pass
+            self.client = None
+
         client_kwargs = {"token": self.token, "bot": True}
         if self.api_url and self.api_url != "default":
             client_kwargs["http_base"] = self.api_url
             
         self.client = stoat.Client(**client_kwargs)
-        self._server = None
-        self._me = None
         try:
             self._me = await self.client.fetch_user("@me")
         except Exception as e:
             logger.error(f"Failed to fetch bot user in StoatWriter: {e}")
+            self.client = None # Reset if we can't even fetch @me
 
     @property
     def my_id(self):
         return str(self._me.id) if self._me else None
 
-    async def _get_server(self, populate_channels=False):
-        # Always refetch if channels are requested to ensure we have them
+    async def _get_server(self, populate_channels=False, force=False):
+        # Always refetch if channels are requested AND we don't already have them
+        # Or if force is True (e.g. after category creation/mutation)
         # Stoat Server objects use __slots__, so we can't easily add our own tracking attributes.
-        if not self._server or populate_channels:
-            self._server = await self.client.fetch_server(self.community_id, populate_channels=populate_channels)
+        if force or (populate_channels and (not self._server or not hasattr(self._server, "channels") or not self._server.channels)):
+            self._server = await self.client.fetch_server(self.community_id, populate_channels=True)
+        elif not self._server:
+            self._server = await self.client.fetch_server(self.community_id, populate_channels=False)
         return self._server
 
     async def validate(self) -> dict:
+        if self._validation_cache:
+            return self._validation_cache
+
         results = {
             "token": False,
             "community": False,
@@ -105,16 +123,21 @@ class StoatWriter:
             }
         }
         
-        # Use a temporary client for validation
-        client_kwargs = {"token": self.token, "bot": True}
-        if self.api_url and self.api_url != "default":
-            client_kwargs["http_base"] = self.api_url
+        # Ensure client is started
+        if not self.client:
+            await self.start()
+        
+        client = self.client
+        assert client is not None
 
-        client = stoat.Client(**client_kwargs)
         try:
             # Validate token by fetching current user
             try:
-                current_user = await client.fetch_user("@me")
+                # Reuse self._me if already fetched during start()
+                if not self._me:
+                    self._me = await client.fetch_user("@me")
+                
+                current_user = self._me
                 results["token"] = True
                 results["bot_name"] = current_user.display_name or current_user.name
             except stoat.Unauthorized:
@@ -128,12 +151,8 @@ class StoatWriter:
                 results["community_name"] = server.name
                 
                 # Check permissions using effective server permissions for the bot
-                # Use current_user.id since @me might not be supported in all member endpoints
                 try:
                     me = await server.fetch_member(current_user.id)
-                    # We use server.permissions_for(me) instead of me.server_permissions
-                    # to avoid cache-related NoData exceptions.
-                    # safe=False allows calculating even if some roles aren't in local cache.
                     perms = server.permissions_for(me, safe=False)
                     
                     results["permissions"] = {
@@ -166,9 +185,8 @@ class StoatWriter:
                 
         except Exception as e:
             logger.error(f"Stoat validation failed: {str(e)}")
-        finally:
-            await client.close()
             
+        self._validation_cache = results
         return results
     
     async def get_channels(self) -> List[Dict[str, Any]]:
@@ -217,6 +235,9 @@ class StoatWriter:
         try:
             if type == 4: # Category
                 # The POST /categories endpoint throws 404 on some server versions, so we use server.edit(categories)
+                # Force refetch to ensure we have the absolute latest state before editing categories array
+                server = await self._get_server(populate_channels=True, force=True)
+                
                 import random
                 import time
                 chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -234,7 +255,8 @@ class StoatWriter:
                 if not hasattr(new_cat, "role_permissions"): new_cat.role_permissions = {}
                 categories.append(new_cat)
                 
-                await server.edit(categories=categories)
+                # server.edit returns a new Server object on some versions/implementations; maintain local reference
+                self._server = await server.edit(categories=categories)
                 return new_id
             else: # Text Channel
                 ch = await server.create_text_channel(name=name, description=topic)
@@ -676,4 +698,13 @@ class StoatWriter:
         return {"emojis": count, "stickers": 0}
 
     async def close(self):
-        pass
+        client = self.client
+        self.client = None # Atomic clear to prevent new usage
+        self._me = None
+        self._server = None
+        if client:
+            try:
+                await client.close()
+            except Exception as e:
+                logger.debug(f"Error closing Stoat client: {e}")
+        self._validation_cache = None
