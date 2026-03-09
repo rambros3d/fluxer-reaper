@@ -110,7 +110,7 @@ class ProgressScreen(Screen[None]):
                         yield Button("Back", id="btn_back", disabled=False)
                         yield Button("Main Menu", id="btn_main_menu", disabled=False)
                     with Horizontal(classes="action_row", id="prog_actions_cancel"):
-                        yield Button("Cancel", id="btn_cancel", variant="error", tooltip="Stop current operation")
+                        yield Button("Back", id="btn_cancel", variant="default", tooltip="Stop current operation")
         yield Footer()
 
     def __init__(self, log_level: str = "INFO", *args, **kwargs):
@@ -157,18 +157,22 @@ class ProgressScreen(Screen[None]):
             self.confirm_future.set_result(btn_id)
             return
 
-        # If Cancel is pressed during operation, invoke callback and stay on screen
+        # If Cancel/Back is pressed during operation or loading
         if btn_id == "btn_cancel":
             if self.cancel_callback:
                 self.cancel_callback()
-            
-            # Show cancelling message and disable button
-            self.set_status("[bold red]Cancelling... waiting for tasks to finish...[/bold red]")
-            try:
-                event.button.disabled = True
-                event.button.label = "Stopping..."
-            except Exception:
-                pass
+                # Show cancelling message and disable button
+                self.set_status("[bold red]Cancelling... waiting for tasks to finish...[/bold red]")
+                try:
+                    event.button.disabled = True
+                    event.button.label = "Stopping..."
+                except Exception:
+                    pass
+            else:
+                # If no callback, just dismiss (likely in Loading phase)
+                if self.timer_event:
+                    self.timer_event.stop()
+                self.dismiss("btn_back")
             return
 
         # If operation is done (report phase), just dismiss with the action
@@ -312,7 +316,11 @@ class ProgressScreen(Screen[None]):
         except Exception: pass
         
         # Show Cancel button
-        try: self.query_one("#prog_actions_cancel", Horizontal).display = True
+        try:
+            cancel_btn = self.query_one("#btn_cancel", Button)
+            cancel_btn.label = "Cancel"
+            cancel_btn.variant = "error"
+            self.query_one("#prog_actions_cancel", Horizontal).display = True
         except Exception: pass
         
         try: self.query_one("#prog_loader", LoadingIndicator).display = True

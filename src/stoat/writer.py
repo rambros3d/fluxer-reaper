@@ -97,10 +97,12 @@ class StoatWriter:
 
     async def _get_server(self, populate_channels=False, force=False):
         # Always refetch if channels are requested AND we don't already have them
-        # Or if force is True (e.g. after category creation/mutation)
-        # Stoat Server objects use __slots__, so we can't easily add our own tracking attributes.
-        if force or (populate_channels and (not self._server or not hasattr(self._server, "channels") or not self._server.channels)):
-            self._server = await self.client.fetch_server(self.community_id, populate_channels=True)
+        # OR if force=True is passed.
+        if force:
+            self._server = await self.client.fetch_server(self.community_id, populate_channels=populate_channels)
+        elif populate_channels:
+            if not self._server or not hasattr(self._server, "channels") or not self._server.channels:
+                self._server = await self.client.fetch_server(self.community_id, populate_channels=True)
         elif not self._server:
             self._server = await self.client.fetch_server(self.community_id, populate_channels=False)
         return self._server
@@ -235,9 +237,6 @@ class StoatWriter:
         try:
             if type == 4: # Category
                 # The POST /categories endpoint throws 404 on some server versions, so we use server.edit(categories)
-                # Force refetch to ensure we have the absolute latest state before editing categories array
-                server = await self._get_server(populate_channels=True, force=True)
-                
                 import random
                 import time
                 chars = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
@@ -255,8 +254,8 @@ class StoatWriter:
                 if not hasattr(new_cat, "role_permissions"): new_cat.role_permissions = {}
                 categories.append(new_cat)
                 
-                # server.edit returns a new Server object on some versions/implementations; maintain local reference
-                self._server = await server.edit(categories=categories)
+                await server.edit(categories=categories)
+                self._server = None # Clear cache after structural change
                 return new_id
             else: # Text Channel
                 ch = await server.create_text_channel(name=name, description=topic)
@@ -283,6 +282,7 @@ class StoatWriter:
             
             if edit_kwargs:
                 await channel.edit(**edit_kwargs)
+                self._server = None # Clear cache
 
             # clone_server.py now handles all parenting bulk logic
             return True
