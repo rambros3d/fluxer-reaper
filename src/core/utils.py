@@ -1,0 +1,61 @@
+import re
+import logging
+from src.core.state import MigrationState
+
+logger = logging.getLogger(__name__)
+
+def resolve_discord_links(content: str, state: MigrationState, platform: str, target_server_id: str) -> str:
+    """
+    Finds Discord message/channel links and resolves them to the target platform 
+    if they have been migrated.
+    """
+    if not content:
+        return content
+
+    # Regex for Discord links: https://discord.com/channels/{guild}/{channel}/{message}
+    # Matches: https://discord.com/channels/123/456 or https://discord.com/channels/123/456/789
+    discord_link_re = re.compile(r'https?://(?:ptb\.|canary\.)?discord\.com/channels/(\d+)/(\d+)(?:/(\d+))?')
+
+    def replace_link(match):
+        full_url = match.group(0)
+        
+        # Check if already part of a markdown link: [text](link) or [text](<link>)        
+        # We look backwards for ]( or ](<
+        start_idx = match.start()
+        if start_idx > 2:
+            prev_chars = content[max(0, start_idx-3):start_idx]
+            if prev_chars.endswith("](") or prev_chars.endswith("]<"):
+                return full_url
+
+        guild_id = match.group(1)
+        channel_id = match.group(2)
+        message_id = match.group(3)
+
+        target_cid = state.get_target_channel_id(channel_id) or state.get_target_category_id(channel_id)
+        
+        if message_id:
+            # Message link resolution
+            t_cid, t_mid = state.find_message_mapping(message_id)
+            if t_mid:
+                # Use found channel ID if available, otherwise fallback to channel_id mapping
+                final_cid = t_cid or target_cid
+                if final_cid:
+                    if platform == "stoat":
+                        return f"https://stoat.chat/server/{target_server_id}/channel/{final_cid}/{t_mid}"
+                    else: # Fluxer
+                        return f"https://fluxer.app/channels/{target_server_id}/{final_cid}/{t_mid}"
+            
+            # Fallback for unmigrated message
+            return f"[`discord-message`](<{full_url}>)"
+        else:
+            # Channel link resolution
+            if target_cid:
+                if platform == "stoat":
+                    return f"https://stoat.chat/server/{target_server_id}/channel/{target_cid}"
+                else: # Fluxer
+                    return f"https://fluxer.app/channels/{target_server_id}/{target_cid}"
+            
+            # Fallback for unmigrated channel
+            return f"[`discord-channel`](<{full_url}>)"
+
+    return discord_link_re.sub(replace_link, content)

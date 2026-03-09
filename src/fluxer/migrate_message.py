@@ -4,10 +4,11 @@ import re
 from typing import Callable, Awaitable, Dict, Any
 
 from src.core.base import MigrationContext
+from src.core.utils import resolve_discord_links
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None, channel_map=None, discord_channel_map=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None, channel_map=None, discord_channel_map=None, state=None, target_server_id=None) -> str:
     if not content or not guild:
         return content
         
@@ -85,6 +86,11 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     content = re.sub(r'<#([0-9]+)>', replace_channel, content)
     content = re.sub(r'<(a?):([^:]+):([0-9]+)>', replace_emoji, content)
     content = content.replace("@everyone", "`@everyone`").replace("@here", "`@here`")
+
+    # Resolve Discord Links
+    if state and target_server_id:
+        content = resolve_discord_links(content, state, "fluxer", target_server_id)
+
     return content
 
 
@@ -193,7 +199,9 @@ async def migrate_messages(
                     context.discord_reader.role_map,
                     context.state.emoji_map,
                     context.state.channel_map,
-                    context.discord_reader.channel_name_map
+                    context.discord_reader.channel_name_map,
+                    state=context.state,
+                    target_server_id=context.fluxer_writer.community_id
                 )
                 
             # Process attachments
@@ -224,7 +232,9 @@ async def migrate_messages(
                                 context.discord_reader.role_map,
                                 context.state.emoji_map,
                                 context.state.channel_map,
-                                context.discord_reader.channel_name_map
+                                context.discord_reader.channel_name_map,
+                                state=context.state,
+                                target_server_id=context.fluxer_writer.community_id
                             )
                     # Add snapshot attachments to the list to process
                     attachments_to_process.extend(snapshot.attachments)

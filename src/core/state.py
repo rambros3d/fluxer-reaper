@@ -278,6 +278,24 @@ class MigrationState:
         if str(target_channel_id) in self.channel_messages:
             return self.channel_messages[str(target_channel_id)]["message_map"].get(str(discord_id))
         return None
+
+    def find_message_mapping(self, discord_id: str) -> tuple[str, str] | tuple[None, None]:
+        """
+        Searches for a message mapping across all tracked channels.
+        Returns (target_channel_id, target_message_id) or (None, None).
+        """
+        d_id = str(discord_id)
+        for t_cid, data in self.channel_messages.items():
+            # Check main message map
+            if d_id in data.get("message_map", {}):
+                return str(t_cid), str(data["message_map"][d_id])
+            # Check threads
+            for t_tid, t_data in data.get("threads", {}).items():
+                if d_id in t_data.get("thread_map", {}):
+                    # For thread links, the target_channel_id is technically the thread ID in some contexts,
+                    # but usually for the URL it's the thread ID itself.
+                    return str(t_tid), str(t_data["thread_map"][d_id])
+        return None, None
         
     def update_last_message_timestamp(self, target_channel_id: str, timestamp: str):
         self._ensure_channel_tracking(target_channel_id)
