@@ -1,7 +1,7 @@
 """
 BackupReader — discord.py-compatible local data provider.
 
-Reads from local backup JSON files (produced by DiscordExporter) instead of the
+Reads from local backup JSON files (produced by Reaper) instead of the
 Discord API.  Implements the same public interface as DiscordReader so that
 migration scripts and UI code can use either provider transparently.
 """
@@ -964,7 +964,7 @@ class BackupReader:
 
         for m in messages:
             msg_id = int(m["messageID"])
-            if after_id and msg_id <= after_id:
+            if after_id and msg_id < after_id:
                 continue
 
             yield self._hydrate_message(m, channel_id)

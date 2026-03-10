@@ -217,7 +217,8 @@ class DiscordReader:
         """Yields messages from a given channel, optionally handling pagination."""
         channel = await self.get_channel(channel_id)
         if isinstance(channel, discord.TextChannel) or isinstance(channel, discord.Thread):
-            after = discord.Object(id=after_id) if after_id else None
+            # Discord's 'after' is exclusive. To make it inclusive, we use after_id - 1.
+            after = discord.Object(id=after_id - 1) if after_id else None
             logger.info(f"Fetching message history for {channel.name} ({channel.id}) oldest_first=True after={after_id}")
             # To avoid exploding RAM, we yield items one by one
             async for message in channel.history(limit=limit, oldest_first=True, after=after):
