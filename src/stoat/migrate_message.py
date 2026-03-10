@@ -8,7 +8,7 @@ from src.core.utils import resolve_discord_links
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, role_map=None, emoji_map=None, channel_map=None, discord_channel_map=None, state=None, target_server_id=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None) -> str:
     if not content or not guild:
         return content
         
@@ -47,10 +47,6 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         if role and role.name:
             return f"`@{role.name}`"
             
-        # 4. Try provided role map
-        if role_map and rid in role_map:
-            return f"`@{role_map[rid]}`"
-            
         return match.group(0)
         
     def replace_channel(match):
@@ -61,13 +57,8 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
             return f"<#{channel_map[str(cid)]}>"
             
         # 2. Fallback to name in backticks
-        # Try metadata map first (robust)
-        if discord_channel_map and cid in discord_channel_map:
-            return f"`#{discord_channel_map[cid]}`"
-            
-        # Try cache
         channel = guild.get_channel(cid)
-        return f"`{channel.name}`" if channel else f"<#{cid}>"
+        return f"`#{channel.name}`" if channel else f"<#{cid}>"
 
     def replace_emoji(match):
         animated = match.group(1) == "a"
@@ -204,10 +195,8 @@ async def migrate_messages(
                     msg.guild, 
                     msg.mentions, 
                     msg.role_mentions, 
-                    context.discord_reader.role_map,
                     context.state.emoji_map,
                     context.state.channel_map,
-                    context.discord_reader.channel_name_map,
                     state=context.state,
                     target_server_id=context.stoat_writer.community_id
                 )
@@ -233,10 +222,8 @@ async def migrate_messages(
                                 msg.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
-                                context.discord_reader.role_map,
                                 context.state.emoji_map,
                                 context.state.channel_map,
-                                context.discord_reader.channel_name_map,
                                 state=context.state,
                                 target_server_id=context.stoat_writer.community_id
                             )

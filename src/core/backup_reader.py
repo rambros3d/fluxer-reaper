@@ -691,7 +691,6 @@ class BackupReader:
     def __init__(self, backup_path: str | Path):
         self.backup_path = Path(backup_path)
         self.guild: BackupGuild | None = None
-        self.role_map: Dict[int, str] = {}
 
         # Internal caches populated by start()
         self._categories: List[BackupCategory] = []
@@ -724,7 +723,6 @@ class BackupReader:
         if roles_file.exists():
             roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
             self._roles = [BackupRole(r) for r in roles_data]
-            self.role_map = {r.id: r.name for r in self._roles}
             logger.info(f"[Backup] Loaded {len(self._roles)} roles")
 
         # 3. Structure -> categories + channels

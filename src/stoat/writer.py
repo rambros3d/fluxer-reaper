@@ -337,7 +337,13 @@ class StoatWriter:
                 # Stoat requires SendableEmbed objects, not raw dicts
                 stoat_embeds = []
                 if embeds:
-                    for e in embeds:
+                    for raw_embed in embeds:
+                        # Normalize embed to dict (handles both live discord.Embed and backup dicts)
+                        if hasattr(raw_embed, "to_dict"):
+                            e = raw_embed.to_dict()
+                        else:
+                            e = raw_embed
+
                         # Convert integer color to hex string if present
                         color = None
                         if e.get("color"):

@@ -61,14 +61,6 @@ class DiscordReader:
         
         self.guild: discord.Guild | None = None
         self.client: discord.Client | None = None
-        self.role_map: Dict[int, str] = {}
-        self.channel_name_map: Dict[int, str] = {}
-        # Session-level caches to avoid redundant fetch calls
-        self._roles_cache: list[discord.Role] | None = None
-        self._channels_cache: list[discord.abc.GuildChannel] | None = None
-        self._categories_cache: list[discord.CategoryChannel] | None = None
-        self._emojis_cache: list[discord.Emoji] | None = None
-        self._stickers_cache: list[discord.GuildSticker] | None = None
 
     def _create_client(self):
         intents = discord.Intents.default()
@@ -86,6 +78,7 @@ class DiscordReader:
         await self.client.login(self.token)
         
         # Use fetch methods specifically to bypass dependency on gateway cache
+        # fetch_guild initializes the guild object needed for subsequent API calls
         try:
             logger.info(f"Fetching guild {self.server_id}...")
             self.guild = await self.client.fetch_guild(self.server_id)
@@ -93,32 +86,9 @@ class DiscordReader:
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to fetch guild {self.server_id}.")
             raise
-        
-        # Pre-fetch roles via API - Handle Forbidden gracefully
-        try:
-            roles = await self.guild.fetch_roles()
-            self.role_map = {r.id: r.name for r in roles}
-            self._roles_cache = [r for r in roles if not r.is_default()]
-        except discord.Forbidden:
-            logger.warning("403 Forbidden: Missing Access to fetch roles. Continuing without role mapping.")
-            self.role_map = {}
         except Exception as e:
-            logger.error(f"Failed to fetch roles: {e}")
-            self.role_map = {}
-
-        # Pre-fetch channels via API
-        try:
-            channels = await self.guild.fetch_channels()
-            self.channel_name_map = {c.id: c.name for c in channels}
-            self._channels_cache = [c for c in channels if not isinstance(c, discord.CategoryChannel)]
-            self._categories_cache = [c for c in channels if isinstance(c, discord.CategoryChannel)]
-            logger.debug(f"Pre-fetched {len(self.channel_name_map)} channels")
-        except discord.Forbidden:
-            logger.warning("403 Forbidden: Missing Access to fetch channels. Continuing without channel name mapping.")
-            self.channel_name_map = {}
-        except Exception as e:
-            logger.error(f"Failed to fetch channels: {e}")
-            self.channel_name_map = {}
+            logger.error(f"Failed to fetch guild {self.server_id}: {e}")
+            raise
 
     async def validate(self) -> Dict[str, Any]:
         """Validates the token, server ID, intents, and permissions."""
@@ -180,40 +150,27 @@ class DiscordReader:
     async def get_categories(self):
         if not self.guild:
             return []
-        if self._categories_cache is not None:
-            return self._categories_cache
         categories = await self.guild.fetch_channels()
-        self._categories_cache = [c for c in categories if isinstance(c, discord.CategoryChannel)]
-        return self._categories_cache
+        return [c for c in categories if isinstance(c, discord.CategoryChannel)]
 
     async def get_roles(self):
         """Returns all roles in the server (excluding @everyone)."""
         if not self.guild:
             return []
-        if self._roles_cache is not None:
-            return self._roles_cache
         roles = await self.guild.fetch_roles()
-        # Filter out default @everyone role which cannot typically be created
-        self._roles_cache = [r for r in roles if not r.is_default()]
-        return self._roles_cache
+        return [r for r in roles if not r.is_default()]
 
     async def get_emojis(self):
         """Returns all custom emojis in the server."""
         if not self.guild:
             return []
-        if self._emojis_cache is not None:
-            return self._emojis_cache
-        self._emojis_cache = await self.guild.fetch_emojis()
-        return self._emojis_cache
+        return await self.guild.fetch_emojis()
 
     async def get_stickers(self):
         """Returns all custom stickers in the server."""
         if not self.guild:
             return []
-        if self._stickers_cache is not None:
-            return self._stickers_cache
-        self._stickers_cache = await self.guild.fetch_stickers()
-        return self._stickers_cache
+        return await self.guild.fetch_stickers()
 
     async def get_members(self):
         """Returns all members in the server."""
@@ -230,11 +187,9 @@ class DiscordReader:
         if not self.guild:
             return []
         
-        if self._channels_cache is None:
-            channels = await self.guild.fetch_channels()
-            self._channels_cache = [c for c in channels if not isinstance(c, discord.CategoryChannel)]
+        channels = await self.guild.fetch_channels()
+        all_channels = [c for c in channels if not isinstance(c, discord.CategoryChannel)]
         
-        all_channels = self._channels_cache
         if category_id:
             all_channels = [c for c in all_channels if c.category_id == category_id]
         return all_channels
@@ -284,11 +239,6 @@ class DiscordReader:
         client = self.client
         self.client = None # Atomic clear
         self.guild = None
-        self._roles_cache = None
-        self._channels_cache = None
-        self._categories_cache = None
-        self._emojis_cache = None
-        self._stickers_cache = None
         if client:
             try:
                 await client.close()
