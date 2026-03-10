@@ -18,6 +18,8 @@ def setup_logging():
         level=level,
         handlers=handlers
     )
+    # Suppress PIL debug logs which are very noisy during Lottie conversion
+    logging.getLogger('PIL').setLevel(logging.INFO)
 
 def relaunch_in_terminal():
     """Detects if running without a terminal on Linux and relaunches in one."""

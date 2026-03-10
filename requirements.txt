@@ -5,3 +5,6 @@ rich # Terminal formatting and rich text
 textual # Terminal UI framework
 PyYAML # YAML parsing and serialization
 pydantic # Data validation using Python type hints
+lottie # Lottie file manipulation and conversion
+Pillow # Image processing (required for GIF rendering)
+cairosvg # SVG rendering (required for Lottie conversion)

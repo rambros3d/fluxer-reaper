@@ -1,7 +1,16 @@
 import asyncio
 import logging
 import re
+import json
+import io
 from typing import Callable, Awaitable, Dict, Any
+
+try:
+    from lottie.objects import Animation
+    from lottie.exporters.gif import export_gif
+    HAS_LOTTIE = True
+except ImportError:
+    HAS_LOTTIE = False
 
 from src.core.base import MigrationContext
 from src.core.utils import resolve_discord_links
@@ -245,18 +254,43 @@ async def migrate_messages(
                         sticker_data = await context.discord_reader.download_sticker(s)
                         if sticker_data:
                             # Use format to determine extension
-                            ext = getattr(s, 'format', 'png')
-                            if hasattr(ext, 'name'): # discord.py StickerFormat enum
-                                ext = ext.name
+                            format_val = getattr(s, 'format', 'png')
+                            logger.debug(f"Sticker {getattr(s, 'name', 'unknown')} format_val type: {type(format_val)}, value: {format_val}")
                             
-                            # Handle Lottie (json)
+                            if hasattr(format_val, 'name'): # discord.py StickerFormat enum
+                                ext = format_val.name.lower()
+                            elif isinstance(format_val, int):
+                                # Map common StickerFormat values if it's an int
+                                format_map = {1: 'png', 2: 'apng', 3: 'lottie', 4: 'gif'}
+                                ext = format_map.get(format_val, 'png')
+                            else:
+                                ext = str(format_val).lower()
+                            
+                            logger.debug(f"Determined sticker extension: {ext}")
+                            
+                            # Handle Lottie (json) -> Convert to GIF
                             if ext == 'lottie':
-                                ext = 'json'
+                                if HAS_LOTTIE:
+                                    try:
+                                        logger.debug(f"Converting Lottie sticker {s.name} to GIF...")
+                                        lottie_data = json.loads(sticker_data)
+                                        animation = Animation.load(lottie_data)
+                                        output = io.BytesIO()
+                                        export_gif(animation, output)
+                                        sticker_data = output.getvalue()
+                                        ext = 'gif'
+                                        logger.debug(f"Successfully converted Lottie sticker {s.name} to GIF")
+                                    except Exception as conv_err:
+                                        logger.error(f"Failed to convert Lottie sticker {s.name} to GIF: {conv_err}")
+                                        ext = 'json' # Fallback to json if conversion fails
+                                else:
+                                    logger.warning(f"Lottie library not available, sending sticker {s.name} as raw JSON")
+                                    ext = 'json'
                             
                             filename = f"sticker_{s.name}_{s.id}.{ext}"
                             files.append({"filename": filename, "data": sticker_data})
                             stats["attachments"] += 1
-                            logger.debug(f"Added sticker {s.name} as attachment")
+                            logger.debug(f"Added sticker {s.name} as attachment (extension: {ext})")
                     except Exception as e:
                         logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {e}")
                 
