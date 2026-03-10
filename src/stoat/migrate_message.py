@@ -237,6 +237,28 @@ async def migrate_messages(
                     stats["attachments"] += 1
                 except Exception as e:
                     logger.error(f"Failed to download attachment {att.filename}: {e}")
+            
+            # Process stickers as attachments
+            if hasattr(msg, 'stickers') and msg.stickers:
+                for s in msg.stickers:
+                    try:
+                        sticker_data = await context.discord_reader.download_sticker(s)
+                        if sticker_data:
+                            # Use format to determine extension
+                            ext = getattr(s, 'format', 'png')
+                            if hasattr(ext, 'name'): # discord.py StickerFormat enum
+                                ext = ext.name
+                            
+                            # Handle Lottie (json)
+                            if ext == 'lottie':
+                                ext = 'json'
+                            
+                            filename = f"sticker_{s.name}_{s.id}.{ext}"
+                            files.append({"filename": filename, "data": sticker_data})
+                            stats["attachments"] += 1
+                            logger.debug(f"Added sticker {s.name} as attachment")
+                    except Exception as e:
+                        logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {e}")
                 
             try:
                 # Check if this message is a reply

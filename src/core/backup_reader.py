@@ -411,19 +411,20 @@ class BackupEmoji:
 class BackupSticker:
     """Minimal stand-in for discord.GuildSticker."""
 
-    __slots__ = ("id", "name", "url", "format", "_file_path")
+    __slots__ = ("id", "name", "url", "format", "_backup_root")
 
-    def __init__(self, data: dict, media_dir: Path | None = None):
-        self.id = int(data["id"])
-        self.name = data["name"]
-        filename = data.get("filename", "")
-        self._file_path = media_dir / filename if media_dir and filename else None
-        self.url = str(self._file_path) if self._file_path else None
+    def __init__(self, data: dict, backup_root: Path | None = None):
+        self.id = int(data["messageID"]) if "messageID" in data else int(data.get("id", 0))
+        self.name = data.get("name", "Sticker")
+        self.url = data.get("localPath", "")
+        self._backup_root = backup_root
         self.format = data.get("format", "png")
 
     async def read(self) -> bytes:
-        if self._file_path and self._file_path.exists():
-            return self._file_path.read_bytes()
+        if self._backup_root and self.url:
+            full = self._backup_root / self.url
+            if full.exists():
+                return full.read_bytes()
         return b""
 
     def __repr__(self) -> str:
@@ -561,8 +562,11 @@ class BackupMessage:
         # Embeds — store raw dicts (discord.py Embed.from_dict compatible)
         self.embeds = data.get("embeds", [])
 
-        # Stickers — store raw dicts
-        self.stickers = data.get("stickers", [])
+        # Stickers
+        self.stickers = [
+            BackupSticker(s, backup_root=backup_root)
+            for s in data.get("stickers", [])
+        ]
 
         # Reactions
         self.reactions = [BackupReaction(r) for r in data.get("reactions", [])]
