@@ -552,13 +552,14 @@ class ChannelPickerScreen(Screen[tuple]):
     #chanpick_buttons Button { width: 1fr; margin: 0 1; }
     """
 
-    def __init__(self, src_channels: list, src_cat_map: dict, tgt_channels: list, tgt_cat_map: dict, tgt_name: str = "Fluxer"):
+    def __init__(self, src_channels: list, src_cat_map: dict, tgt_channels: list, tgt_cat_map: dict, tgt_name: str = "Fluxer", all_tgt_channels: list | None = None):
         super().__init__()
         self.src_channels = src_channels
         self.src_cat_map = src_cat_map
         self.tgt_channels = tgt_channels
         self.tgt_cat_map = tgt_cat_map
         self.tgt_name = tgt_name
+        self.all_tgt_channels = all_tgt_channels or tgt_channels
 
     def _render_pane(self, channels, categories, pane_id, prefix):
         cat_grouped: dict[int | None, list] = {}
@@ -585,6 +586,12 @@ class ChannelPickerScreen(Screen[tuple]):
                     name = c.name
                     cid = c.id
                 options.append(Option(name, id=f"{prefix}_{cid}"))
+        
+        # Add "Extras" category to the target pane only
+        if prefix == "tgt":
+            options.append(Option(f"[bold yellow]── Extras ──[/bold yellow]", id="header_extras", disabled=True))
+            options.append(Option("✨ Create New channel+", id="tgt_create_new"))
+            options.append(Option("🔗 Enter Channel ID", id="tgt_enter_id"))
         
         yield OptionList(*options, id=f"{prefix}_list", classes="split_pane")
 
@@ -654,11 +661,37 @@ class ChannelPickerScreen(Screen[tuple]):
                 opt = tgt_list.get_option_at_index(tgt_list.highlighted)
                 if opt.id and opt.id.startswith("tgt_"):
                     tgt_val = opt.id.split("_", 1)[1]
-                 
-            if src_val and tgt_val:
-                 self.dismiss((int(src_val), tgt_val)) # Source is guaranteed Discord ID (int), Target could be UUID/string
-            else:
-                 self.notify("Please select one channel from both lists.", severity="warning")
+            
+            if not src_val or not tgt_val:
+                self.notify("Please select one channel from both lists.", severity="warning")
+                return
+            
+            # Handle "Extras" options by pushing sub-modals on top of this screen
+            if tgt_val == "create_new":
+                # Get source channel name for default
+                src_name = ""
+                for c in self.src_channels:
+                    cid = c.get("id") if isinstance(c, dict) else c.id
+                    if str(cid) == src_val:
+                        src_name = c.get("name") if isinstance(c, dict) else c.name
+                        break
+                
+                def on_name_result(name):
+                    if name:
+                        self.dismiss((int(src_val), "create_new", name))
+                
+                self.app.push_screen(ChannelNameInputModal(default_name=src_name), on_name_result)
+                return
+            
+            elif tgt_val == "enter_id":
+                def on_chan_result(chan_dict):
+                    if chan_dict:
+                        self.dismiss((int(src_val), str(chan_dict.get("id")), chan_dict))
+                
+                self.app.push_screen(ChannelIDInputModal(known_channels=self.all_tgt_channels), on_chan_result)
+                return
+            
+            self.dismiss((int(src_val), tgt_val))  # Source is guaranteed Discord ID (int), Target could be UUID/string
 
 
 # ---------------------------------------------------------------------------
@@ -894,3 +927,148 @@ class MessageIDInputModal(ModalScreen[int | None]):
                 preview.update(f"[bold red]Error fetching message:[/bold red] {e}")
             finally:
                 btn.disabled = False
+
+
+# ---------------------------------------------------------------------------
+# ChannelNameInputModal – Input a channel name for creation
+# ---------------------------------------------------------------------------
+
+class ChannelNameInputModal(ModalScreen[str | None]):
+    """Modal to input a channel name for creation on the target platform."""
+
+    DEFAULT_CSS = """
+    ChannelNameInputModal { align: center middle; }
+    #chan_name_dialog {
+        width: 70%;
+        height: auto;
+        border: solid green;
+        padding: 1 2;
+        background: $surface;
+    }
+    #chan_name_buttons {
+        height: auto;
+        dock: bottom;
+        margin-top: 1;
+    }
+    #chan_name_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, default_name: str = ""):
+        super().__init__()
+        self.default_name = default_name
+
+    def compose(self) -> ComposeResult:
+        with Container(id="chan_name_dialog"):
+            yield Label("[bold green]Create New Channel[/bold green]")
+            yield Label("Enter a name for the new channel:")
+            yield Input(value=self.default_name, placeholder="channel-name", id="input_chan_name")
+            
+            with Horizontal(id="chan_name_buttons"):
+                yield Button("Create", variant="success", id="btn_create_chan")
+                yield Button("Back", id="btn_cancel_chan_name")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_cancel_chan_name":
+            self.dismiss(None)
+        elif event.button.id == "btn_create_chan":
+            name = self.query_one("#input_chan_name", Input).value.strip()
+            if name:
+                self.dismiss(name)
+            else:
+                self.notify("Please enter a channel name.", severity="warning")
+
+
+# ---------------------------------------------------------------------------
+# ChannelIDInputModal – Input and verify a channel ID
+# ---------------------------------------------------------------------------
+
+class ChannelIDInputModal(ModalScreen[dict | None]):
+    """Modal to input a target channel ID, verify it exists, and select it."""
+
+    DEFAULT_CSS = """
+    ChannelIDInputModal { align: center middle; }
+    #chan_id_dialog {
+        width: 80%;
+        height: auto;
+        border: solid yellow;
+        padding: 1 2;
+        background: $surface;
+    }
+    #chan_id_preview {
+        border: solid $primary;
+        padding: 1 2;
+        margin: 1 0;
+        height: auto;
+        min-height: 3;
+    }
+    #chan_id_buttons {
+        height: auto;
+        dock: bottom;
+        margin-top: 0;
+    }
+    #chan_id_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, known_channels: list[dict]):
+        super().__init__()
+        self.known_channels = known_channels  # list of channel dicts from writer.get_channels()
+        self.verified_channel: dict | None = None
+
+    def compose(self) -> ComposeResult:
+        with Container(id="chan_id_dialog"):
+            yield Label("[bold yellow]Enter Target Channel ID[/bold yellow]")
+            yield Input(placeholder="Enter Channel ID", id="input_chan_id", type="text")
+            with Container(id="chan_id_preview"):
+                yield Label("Enter an ID and click Verify.", id="lbl_chan_preview")
+            
+            with Horizontal(id="chan_id_buttons"):
+                yield Button("Verify", variant="primary", id="btn_verify_chan", disabled=True)
+                yield Button("Back", variant="warning", id="btn_cancel_chan_id")
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "input_chan_id":
+            btn = self.query_one("#btn_verify_chan", Button)
+            self.verified_channel = None
+            btn.label = "Verify"
+            btn.variant = "primary"
+            
+            val = event.input.value.strip()
+            btn.disabled = not bool(val)
+            
+            preview = self.query_one("#lbl_chan_preview", Label)
+            preview.update("Click Verify to check channel.")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_cancel_chan_id":
+            self.dismiss(None)
+        elif event.button.id == "btn_verify_chan":
+            if self.verified_channel is not None:
+                self.dismiss(self.verified_channel)
+                return
+            
+            inp = self.query_one("#input_chan_id", Input)
+            preview = self.query_one("#lbl_chan_preview", Label)
+            btn = event.button
+            
+            chan_id_str = inp.value.strip()
+            if not chan_id_str:
+                preview.update("[bold red]Please enter a Channel ID.[/bold red]")
+                return
+            
+            # Search in known channels
+            found = None
+            for ch in self.known_channels:
+                if str(ch.get("id")) == chan_id_str:
+                    found = ch
+                    break
+            
+            if found:
+                self.verified_channel = found
+                ch_name = found.get("name", "Unknown")
+                ch_type = found.get("type", 0)
+                type_label = {0: "Text", 2: "Voice", 4: "Category"}.get(ch_type, f"Type {ch_type}")
+                preview.update(f"[bold green]Channel Found![/bold green]\n\n  Name: [cyan]{ch_name}[/cyan]\n  Type: {type_label}\n  ID: {chan_id_str}")
+                btn.label = "Select This Channel"
+                btn.variant = "success"
+            else:
+                preview.update(f"[bold red]No channel found with ID: {chan_id_str}[/bold red]\n[dim]Make sure the ID belongs to a channel in the target community.[/dim]")

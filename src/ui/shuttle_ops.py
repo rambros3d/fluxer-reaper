@@ -827,20 +827,44 @@ class ShuttlePane(Container):
                     if not pick_future.done():
                         pick_future.set_result(result)
 
-                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name), on_pick)
+                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name, all_tgt_channels=full_f), on_pick)
                 res = await pick_future
 
                 if res is None:
                     await self.engine.close_connections()
                     return
                 
-                src_id, tgt_id = res
-                source_channel = next(c for c in d_channels if c.id == src_id)
-                target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
+                # Handle result from channel picker
+                # Normal: (src_id, tgt_id) - 2-tuple
+                # Create new: (src_id, "create_new", channel_name) - 3-tuple
+                # Enter ID: (src_id, tgt_id, channel_dict) - 3-tuple
+                
+                pending_create_name = None  # Deferred channel creation
+                
+                if len(res) == 3 and res[1] == "create_new":
+                    src_id, _, chan_name = res
+                    source_channel = next(c for c in d_channels if c.id == src_id)
+                    # Don't create yet — defer until user confirms migration
+                    pending_create_name = chan_name
+                    target_channel = {"id": "__pending__", "name": chan_name, "type": 0}
+                
+                elif len(res) == 3:
+                    src_id, _, chan_dict = res
+                    source_channel = next(c for c in d_channels if c.id == src_id)
+                    target_channel = chan_dict
+                
+                else:
+                    src_id, tgt_id = res
+                    source_channel = next(c for c in d_channels if c.id == src_id)
+                    target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
 
-                # Determine after_id status
-                last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
-                has_previous = bool(last_migrated)
+                # Determine after_id status (skip for pending channels)
+                if pending_create_name:
+                    last_migrated = None
+                    has_previous = False
+                else:
+                    last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
+                    has_previous = bool(last_migrated)
                 
                 # Analyze
                 modal = ProgressScreen(log_level=self.config.log_level)
@@ -962,6 +986,20 @@ class ShuttlePane(Container):
                 
                 # If we are here, we are proceeding with migration
                 break
+
+            # Create the channel now if it was deferred
+            if pending_create_name:
+                modal.set_status(f"Creating channel [green]#{pending_create_name}[/green]...")
+                try:
+                    new_id = await self.engine.writer.create_channel(name=pending_create_name)
+                    logger.info(f"Created new channel '{pending_create_name}' with ID: {new_id}")
+                    target_channel = {"id": new_id, "name": pending_create_name, "type": 0}
+                    f_channels.append(target_channel)
+                except Exception as e:
+                    logger.error(f"Failed to create channel '{pending_create_name}': {e}")
+                    modal.write(f"[bold red]Failed to create channel: {e}[/bold red]")
+                    modal.phase_report("Channel Creation", status="error")
+                    return
 
             # Phase 3: Progress
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)

@@ -46,16 +46,16 @@ class FluxerWriter:
         
         assert self.client is not None
         try:
-            # 1. Try to find existing webhook named "Stoat-Migrator"
+            # 1. Try to find existing webhook named "ReapersWebhook"
             webhooks_data = await self.client.get_channel_webhooks(channel_id)
             for w_data in webhooks_data:
-                if w_data.get("name") == "Stoat-Migrator":
+                if w_data.get("name") == "ReapersWebhook":
                     w = Webhook.from_data(w_data, self.client)
                     self._webhooks[channel_id] = w
                     return w
             
             # 2. Create new one if not found
-            w_data = await self.client.create_webhook(channel_id, name="Stoat-Migrator")
+            w_data = await self.client.create_webhook(channel_id, name="ReapersWebhook")
             w = Webhook.from_data(w_data, self.client)
             self._webhooks[channel_id] = w
             return w
