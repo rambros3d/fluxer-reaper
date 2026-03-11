@@ -257,7 +257,6 @@ async def migrate_messages(
                             if hasattr(format_val, 'name'): # discord.py StickerFormat enum
                                 ext = format_val.name.lower()
                             elif isinstance(format_val, int):
-                                # Map common StickerFormat values if it's an int
                                 format_map = {1: 'png', 2: 'apng', 3: 'lottie', 4: 'gif'}
                                 ext = format_map.get(format_val, 'png')
                             else:
@@ -265,24 +264,52 @@ async def migrate_messages(
                             
                             logger.debug(f"Determined sticker extension: {ext}")
                             
-                            # Handle Lottie (json) -> Convert to GIF
+                            # Fluxer: Convert animated stickers to WebP
+                            # Lottie (json) → GIF (via lottie lib) → WebP (via Pillow)
                             if ext == 'lottie':
                                 if HAS_LOTTIE:
                                     try:
-                                        logger.debug(f"Converting Lottie sticker {s.name} to GIF...")
+                                        logger.debug(f"Converting Lottie sticker {s.name} to WebP...")
                                         lottie_data = json.loads(sticker_data)
                                         animation = Animation.load(lottie_data)
-                                        output = io.BytesIO()
-                                        export_gif(animation, output)
-                                        sticker_data = output.getvalue()
-                                        ext = 'gif'
-                                        logger.debug(f"Successfully converted Lottie sticker {s.name} to GIF")
+                                        gif_buf = io.BytesIO()
+                                        export_gif(animation, gif_buf)
+                                        gif_buf.seek(0)
+                                        # GIF → WebP via Pillow
+                                        from PIL import Image
+                                        img = Image.open(gif_buf)
+                                        webp_buf = io.BytesIO()
+                                        if getattr(img, 'n_frames', 1) > 1:
+                                            img.save(webp_buf, format='WEBP', save_all=True, loop=0)
+                                        else:
+                                            img.save(webp_buf, format='WEBP')
+                                        sticker_data = webp_buf.getvalue()
+                                        ext = 'webp'
+                                        logger.debug(f"Successfully converted Lottie sticker {s.name} to WebP")
                                     except Exception as conv_err:
-                                        logger.error(f"Failed to convert Lottie sticker {s.name} to GIF: {conv_err}")
-                                        ext = 'json' # Fallback to json if conversion fails
+                                        logger.error(f"Failed to convert Lottie sticker {s.name} to WebP: {conv_err}")
+                                        ext = 'json'
                                 else:
                                     logger.warning(f"Lottie library not available, sending sticker {s.name} as raw JSON")
                                     ext = 'json'
+                            
+                            # APNG / GIF → WebP (via Pillow)
+                            elif ext in ('apng', 'gif'):
+                                try:
+                                    logger.debug(f"Converting {ext.upper()} sticker {s.name} to WebP...")
+                                    from PIL import Image
+                                    img = Image.open(io.BytesIO(sticker_data))
+                                    webp_buf = io.BytesIO()
+                                    if getattr(img, 'n_frames', 1) > 1:
+                                        img.save(webp_buf, format='WEBP', save_all=True, loop=0)
+                                    else:
+                                        img.save(webp_buf, format='WEBP')
+                                    sticker_data = webp_buf.getvalue()
+                                    ext = 'webp'
+                                    logger.debug(f"Successfully converted sticker {s.name} to WebP")
+                                except Exception as conv_err:
+                                    logger.error(f"Failed to convert {ext.upper()} sticker {s.name} to WebP: {conv_err}")
+                                    # Keep original format as fallback
                             
                             filename = f"sticker_{s.name}_{s.id}.{ext}"
                             files.append({"filename": filename, "data": sticker_data})

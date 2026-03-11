@@ -260,7 +260,6 @@ async def migrate_messages(
                             if hasattr(format_val, 'name'): # discord.py StickerFormat enum
                                 ext = format_val.name.lower()
                             elif isinstance(format_val, int):
-                                # Map common StickerFormat values if it's an int
                                 format_map = {1: 'png', 2: 'apng', 3: 'lottie', 4: 'gif'}
                                 ext = format_map.get(format_val, 'png')
                             else:
@@ -268,7 +267,8 @@ async def migrate_messages(
                             
                             logger.debug(f"Determined sticker extension: {ext}")
                             
-                            # Handle Lottie (json) -> Convert to GIF
+                            # Stoat: Convert animated stickers to GIF
+                            # Lottie (json) → GIF (via lottie lib)
                             if ext == 'lottie':
                                 if HAS_LOTTIE:
                                     try:
@@ -282,10 +282,45 @@ async def migrate_messages(
                                         logger.debug(f"Successfully converted Lottie sticker {s.name} to GIF")
                                     except Exception as conv_err:
                                         logger.error(f"Failed to convert Lottie sticker {s.name} to GIF: {conv_err}")
-                                        ext = 'json' # Fallback to json if conversion fails
+                                        ext = 'json'
                                 else:
                                     logger.warning(f"Lottie library not available, sending sticker {s.name} as raw JSON")
                                     ext = 'json'
+                            
+                            # APNG → GIF (via Pillow, with proper frame disposal)
+                            elif ext == 'apng':
+                                try:
+                                    logger.debug(f"Converting APNG sticker {s.name} to GIF...")
+                                    from PIL import Image
+                                    img = Image.open(io.BytesIO(sticker_data))
+                                    gif_buf = io.BytesIO()
+                                    if getattr(img, 'n_frames', 1) > 1:
+                                        # Extract each frame onto a clean background to avoid overlap
+                                        frames = []
+                                        durations = []
+                                        for frame_idx in range(img.n_frames):
+                                            img.seek(frame_idx)
+                                            # Create fresh background and composite the frame
+                                            canvas = Image.new('RGBA', img.size, (0, 0, 0, 0))
+                                            frame = img.convert('RGBA')
+                                            canvas.paste(frame, (0, 0), frame)
+                                            # Convert to palette mode for GIF
+                                            frames.append(canvas.convert('RGBA'))
+                                            durations.append(img.info.get('duration', 100))
+                                        # Save with disposal=2 (clear frame before next)
+                                        frames[0].save(
+                                            gif_buf, format='GIF', save_all=True,
+                                            append_images=frames[1:], loop=0,
+                                            duration=durations, disposal=2, transparency=0
+                                        )
+                                    else:
+                                        img.save(gif_buf, format='GIF')
+                                    sticker_data = gif_buf.getvalue()
+                                    ext = 'gif'
+                                    logger.debug(f"Successfully converted APNG sticker {s.name} to GIF")
+                                except Exception as conv_err:
+                                    logger.error(f"Failed to convert APNG sticker {s.name} to GIF: {conv_err}")
+                                    # Keep original apng as fallback
                             
                             filename = f"sticker_{s.name}_{s.id}.{ext}"
                             files.append({"filename": filename, "data": sticker_data})
