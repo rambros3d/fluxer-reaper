@@ -116,6 +116,7 @@ class StoatWriter:
             "community": False,
             "bot_name": "N/A",
             "community_name": "N/A",
+            "error_reason": None,
             "permissions": {
                 "manage_channels": False,
                 "manage_server": False,
@@ -143,7 +144,10 @@ class StoatWriter:
                 results["token"] = True
                 results["bot_name"] = current_user.display_name or current_user.name
             except stoat.Unauthorized:
-                logger.error("Invalid Stoat token.")
+                results["error_reason"] = "Invalid Stoat Token"
+                return results
+            except Exception as e:
+                results["error_reason"] = f"Token Error: {str(e)}"
                 return results
             
             # Validate server access
@@ -172,21 +176,20 @@ class StoatWriter:
                         "mention_roles": perms.mention_roles
                     }
                 except stoat.NotFound:
-                    logger.error(f"Bot member {current_user.id} not found in Stoat server {self.community_id}.")
+                    results["error_reason"] = "Bot not member of server"
                 except stoat.Forbidden:
-                    logger.error(f"Bot lacks permissions to fetch its own member data in Stoat server {self.community_id}.")
+                    results["error_reason"] = "Missing member data access"
                 except Exception as e:
-                    logger.error(f"Error fetching Stoat member permissions: {e}")
-
+                    results["error_reason"] = f"Permission error: {str(e)}"
             except stoat.NotFound:
-                logger.error(f"Stoat server {self.community_id} not found.")
+                results["error_reason"] = "Server not found"
             except stoat.Forbidden:
-                logger.error(f"Bot has no access to Stoat server {self.community_id}.")
+                results["error_reason"] = "Missing access to server"
             except Exception as e:
-                logger.error(f"Error validating Stoat server: {e}")
+                results["error_reason"] = f"Server error: {str(e)}"
                 
         except Exception as e:
-            logger.error(f"Stoat validation failed: {str(e)}")
+            results["error_reason"] = f"Stoat validation failed: {str(e)}"
             
         self._validation_cache = results
         return results

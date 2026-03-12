@@ -1,6 +1,6 @@
 """
-ShuttlePane – self-contained shuttle (migration) operations widget.
-Embedded inside ModeScreen's "Migrate" tab.
+OperationPane – unified operations widget for both Backup and Migration.
+Handles Discord backups and multi-platform migrations.
 """
 
 import asyncio
@@ -20,8 +20,10 @@ from textual import work
 from src.core.configuration import load_config
 from src.core.base import MigrationContext
 from src.core.audit import log_audit_event
+from src.core.exporter import DiscordExporter
 from src.ui.modals import (
     ProgressScreen, SubMenuModal, ChannelPickerScreen, OptionSelectModal, MessageIDInputModal,
+    ChannelSelectScreen
 )
 
 import src.fluxer.roles_permissions as fluxer_roles
@@ -78,68 +80,86 @@ class RateLimitHandler(logging.Handler):
                 pass
 
 
-class ShuttlePane(Container):
-    """Shuttle (migration) operations pane — clone, roles, emojis, metadata, messages, danger zone."""
+class OperationPane(Container):
+    """Unified operations pane — Backup, Clone, Sync, Migrate."""
 
     DEFAULT_CSS = """
-    ShuttlePane { height: auto; width: 100%; }
-    ShuttlePane #sp_info {
+    OperationPane { height: auto; width: 100%; }
+    OperationPane #op_info {
         height: auto; border: tall yellow; padding: 1; margin-bottom: 1; layout: vertical;
     }
-    #sp_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
+    #op_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
     .info_pane { width: 1fr; height: auto; }
     .info_pane Label { width: 100%; }
     .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
     .pane_status { text-style: bold; margin-top: 1; }
-    #sp_info_split Rule { height: 100%; margin: 0 2; color: $accent; }
-    #sp_lbl_status { display: none; }
+    #op_info_split Rule { height: 100%; margin: 0 2; color: $accent; }
+    #op_lbl_backup { display: none; }
     
-    ShuttlePane #sp_actions { height: auto; }
-    ShuttlePane #sp_actions Button { width: 100%; margin-bottom: 1; }
+    OperationPane #op_actions { height: auto; }
+    OperationPane #op_actions Button { width: 100%; margin-bottom: 1; }
     #footer_rule { margin: 0; }
     """
 
-    def __init__(self, cfg_name: str, cfg_path: Path, *args, **kwargs):
+    def __init__(self, cfg_name: str, cfg_path: Path, view_mode: str = "shuttle", *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cfg_name = cfg_name
         self.config_path = cfg_path
+        self.view_mode = view_mode  # "backup" or "shuttle" (migrate)
         self.config = load_config(cfg_path)
         self.target_platform = self.config.target_platform or "fluxer"
         self.engine: MigrationContext | None = None
+        self.exporter: DiscordExporter | None = None
         self.validation_results: dict = {}
         self.tokens_valid = False
         self.permissions_complete = False
+        self.has_backup = False
 
     def compose(self) -> ComposeResult:
         with VerticalScroll():
-            with Vertical(id="sp_info"):
-                with Horizontal(id="sp_info_split"):
+            with Vertical(id="op_info"):
+                with Horizontal(id="op_info_split"):
                     with Vertical(classes="info_pane"):
                         yield Label("Discord", classes="pane_header")
-                        yield Label("Server: [yellow]Loading...[/yellow]", id="sp_lbl_d_server")
-                        yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_d_bot")
-                        yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_d_status", classes="pane_status")
+                        yield Label("Server: [yellow]Loading...[/yellow]", id="op_lbl_d_server")
+                        if self.view_mode == "backup":
+                            yield Label("Source: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
+                        else:
+                            yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
+                        yield Label("Status: [yellow]Validating...[/yellow]", id="op_lbl_d_status", classes="pane_status")
                     
-                    yield Rule(orientation="vertical")
+                    yield Rule(orientation="vertical", id="op_vrule")
 
-                    with Vertical(classes="info_pane"):
-                        yield Label("Target", id="sp_lbl_t_header", classes="pane_header")
-                        yield Label("Community: [yellow]Loading...[/yellow]", id="sp_lbl_t_comm")
-                        yield Label("Bot: [yellow]Loading...[/yellow]", id="sp_lbl_t_bot")
-                        yield Label("Status: [yellow]Validating...[/yellow]", id="sp_lbl_t_status", classes="pane_status")
+                    with Vertical(classes="info_pane", id="op_target_pane"):
+                        yield Label("Target", id="op_lbl_t_header", classes="pane_header")
+                        yield Label("Community: [yellow]Loading...[/yellow]", id="op_lbl_t_comm")
+                        yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_t_bot")
+                        yield Label("Status: [yellow]Validating...[/yellow]", id="op_lbl_t_status", classes="pane_status")
                 
-                yield Label("", id="sp_lbl_status")
-            with Vertical(id="sp_actions"):
-                yield Button("Clone Server Template", id="sp_clone", disabled=True, tooltip="Clone server roles, categories, and channels to the target community")
-                yield Button("Sync Server Settings", id="sp_sync", disabled=True, tooltip="Sync emojis, stickers, server name, and icon to the target community")
-                yield Button("Migrate Message History", id="sp_messages", disabled=True, variant="primary", tooltip="Migrate message history from Discord to the target platform")
-                yield Rule(id="footer_rule")
-                yield Button("Danger Zone ⚠", id="sp_danger", variant="error", disabled=True, flat=True, tooltip="Dangerous operations:\ndelete channels, roles, emojis on target\n(use with caution)")
+                yield Label("", id="op_lbl_backup")
+
+            with Vertical(id="op_actions"):
+                if self.view_mode == "backup":
+                    yield Button("Backup Server Profile", id="op_backup_profile", disabled=True, tooltip="Backup Discord server roles, emojis, and channel structure")
+                    yield Button("Backup Channel Messages", id="op_backup_msgs", disabled=True, variant="primary", tooltip="Select and backup message history from text channels")
+                    yield Button("Update Existing Backup", id="op_backup_sync", disabled=True, variant="success", tooltip="Scan for new messages\n& Update existing backup")
+                    yield Rule(id="op_backup_stats_rule")
+                    yield Button("Backup Stats", id="op_backup_stats", variant="warning", flat=True, disabled=True, tooltip="View detailed statistics, storage, and entity metrics for the current backup profile")
+                else:
+                    yield Button("Clone Server Template", id="op_clone", disabled=True, tooltip="Clone server roles, categories, and channels to the target community")
+                    yield Button("Sync Server Settings", id="op_sync", disabled=True, tooltip="Sync emojis, stickers, server name, and icon to the target community")
+                    yield Button("Migrate Message History", id="op_messages", disabled=True, variant="primary", tooltip="Migrate message history from Discord to the target platform")
+                    yield Rule(id="footer_rule")
+                    yield Button("Danger Zone ⚠", id="op_danger", variant="error", disabled=True, flat=True, tooltip="Dangerous operations:\ndelete channels, roles, emojis on target\n(use with caution)")
 
     def on_mount(self) -> None:
         self._rebuild_engine()
-        # run_validate is handled by the writer's internal caching now to prevent log flooding
         self.run_validate()
+
+    def on_show(self) -> None:
+        """Re-validate when the pane regains visibility."""
+        if self.view_mode == "backup" or self.config.tool_mode == "backup_transfer":
+            self.run_validate()
 
     def reload_config(self) -> None:
         self.config = load_config(self.config_path)
@@ -153,6 +173,32 @@ class ShuttlePane(Container):
     def _rebuild_engine(self):
         source = "backup" if self.config.tool_mode == "backup_transfer" else "live"
         self.engine = MigrationContext(self.config, self.target_platform, source_mode=source, base_dir=self._base_dir())
+        if self.view_mode == "backup":
+            self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
+
+    def _get_backup_info(self) -> str | None:
+        import json
+        if not self.config or not self.config.discord_server_id:
+            return None
+            
+        target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        if not target_dir.exists():
+            return None
+            
+        profile_file = target_dir / "server_profile" / "profile.json"
+        if not profile_file.exists():
+            return None
+        try:
+            from datetime import datetime
+            with open(profile_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ts_str = data.get("last_backup")
+                if ts_str:
+                    dt = datetime.fromisoformat(ts_str)
+                    return dt.strftime("%d-%b-%Y %H:%M")
+        except Exception:
+            pass
+        return None
 
     # ── labels ────────────────────────────────────────────────────────────
 
@@ -169,69 +215,107 @@ class ShuttlePane(Container):
             s_disp = f'[green]"{d_name}"[/green]'
             b_disp = f'[green]{d_bot}[/green]'
         elif v.get("discord_token") is False:
-            if self.config.tool_mode == "backup_transfer":
+            if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
                 s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
             else:
                 s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
             s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
             
-        self.query_one("#sp_lbl_d_server", Label).update(f"Server: {s_disp}")
-        if self.config.tool_mode == "backup_transfer":
-            self.query_one("#sp_lbl_d_bot", Label).update(f"Source: {b_disp}")
+        self.query_one("#op_lbl_d_server", Label).update(f"Server: {s_disp}")
+        if self.view_mode == "backup":
+            self.query_one("#op_lbl_d_bot", Label).update(f"Source: {b_disp}")
+        elif self.config.tool_mode == "backup_transfer":
+            self.query_one("#op_lbl_d_bot", Label).update(f"Source: {b_disp}")
         else:
-            self.query_one("#sp_lbl_d_bot", Label).update(f"Bot: {b_disp}")
+            self.query_one("#op_lbl_d_bot", Label).update(f"Bot: {b_disp}")
 
         # Discord Side Status
-        if v.get("discord_token") and v.get("discord_server"):
-            d_status = "[green][VALID][/green]"
+        d_err = v.get("discord_error")
+        di = v.get("discord_intents", {})
+        dp = v.get("discord_permissions", {})
+        
+        d_missing = []
+        if d_err is None and v.get("discord_token") and v.get("discord_server"):
+            if not di.get("message_content"): d_missing.append("Message Intent")
+            if not dp.get("view_channel"): d_missing.append("View Channel")
+            if not dp.get("read_message_history"): d_missing.append("Msg History")
+
+        if v.get("discord_token") and v.get("discord_server") and not d_missing:
+            d_status = "[green]VALID[/green]"
         elif v.get("discord_timeout"):
-            d_status = "[red][TIMEOUT][/red]"
+            d_status = "[red]TIMEOUT[/red]"
+        elif d_err:
+            d_status = f"[red]{d_err}[/red]"
+        elif d_missing:
+            d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
         else:
-            d_status = "[red][INVALID][/red]"
-        self.query_one("#sp_lbl_d_status", Label).update(f"Status: {d_status}")
+            d_status = "[red]INVALID[/red]"
+        self.query_one("#op_lbl_d_status", Label).update(f"Status: {d_status}")
 
-        # Target
-        plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
-        t_name = v.get("target_community_name")
-        t_bot = v.get("target_bot_name")
-        
-        self.query_one("#sp_lbl_t_header", Label).update(plat)
-        
-        if v.get("target_timeout"):
-            c_disp, tb_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
-        elif v.get("target_token") and v.get("target_community"):
-            c_disp = f'[green]"{t_name}"[/green]'
-            tb_disp = f'[green]{t_bot}[/green]'
-        elif v.get("target_token") is False:
-            c_disp, tb_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
-        else:
-            c_disp, tb_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
+        # Target / Backup Info
+        if self.view_mode == "backup":
+            backup_text = v.get("backup_info_text", "")
+            self.query_one("#op_lbl_backup", Label).update(backup_text)
+            self.query_one("#op_lbl_backup", Label).display = bool(backup_text)
             
-        self.query_one("#sp_lbl_t_comm", Label).update(f"Community: {c_disp}")
-        self.query_one("#sp_lbl_t_bot", Label).update(f"Bot: {tb_disp}")
-
-        # Target Side Status
-        if v.get("target_token") and v.get("target_community"):
-            t_status = "[green][VALID][/green]"
-        elif v.get("target_timeout"):
-            t_status = "[red][TIMEOUT][/red]"
+            # Hide target side in backup mode completely
+            self.query_one("#op_vrule").display = False
+            self.query_one("#op_target_pane").display = False
+            
+            enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
+            for bid in ("#op_backup_profile", "#op_backup_msgs", "#op_backup_sync"):
+                self.query_one(bid, Button).disabled = not enabled
+                
+            self.query_one("#op_backup_stats", Button).display = self.has_backup
+            self.query_one("#op_backup_stats", Button).disabled = not self.has_backup
+            self.query_one("#op_backup_stats_rule", Rule).display = self.has_backup
         else:
-            t_status = "[red][INVALID][/red]"
-        self.query_one("#sp_lbl_t_status", Label).update(f"Status: {t_status}")
+            # Target
+            plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
+            t_name = v.get("target_community_name")
+            t_bot = v.get("target_bot_name")
+            
+            self.query_one("#op_lbl_t_header", Label).update(plat)
+            
+            if v.get("target_timeout"):
+                c_disp, tb_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
+            elif v.get("target_token") and v.get("target_community"):
+                c_disp = f'[green]"{t_name}"[/green]'
+                tb_disp = f'[green]{t_bot}[/green]'
+            elif v.get("target_token") is False:
+                c_disp, tb_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
+            else:
+                c_disp, tb_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
+                
+            self.query_one("#op_lbl_t_comm", Label).update(f"Community: {c_disp}")
+            self.query_one("#op_lbl_t_bot", Label).update(f"Bot: {tb_disp}")
 
-        # Status
-        if not self.tokens_valid:
-            val = "[red][INVALID][/red]"
-        elif not self.permissions_complete:
-            val = "[yellow][MISSING PERMISSIONS][/yellow]"
-        else:
-            val = "[green][VALID][/green]"
-        self.query_one("#sp_lbl_status", Label).update(f"Status: {val}")
+            # Target Side Status
+            t_err = v.get("target_error")
+            tp = v.get("target_permissions", {})
+            
+            t_missing = []
+            if t_err is None and v.get("target_token") and v.get("target_community"):
+                if tp:
+                    t_missing = [k.replace('_', ' ').title() for k, val_p in tp.items() if not val_p]
 
-        # Buttons
-        for bid in ("#sp_clone", "#sp_sync", "#sp_messages", "#sp_danger"):
-            self.query_one(bid, Button).disabled = not self.tokens_valid
+            if v.get("target_token") and v.get("target_community") and not t_missing:
+                t_status = "[green]VALID[/green]"
+            elif v.get("target_timeout"):
+                t_status = "[red]TIMEOUT[/red]"
+            elif t_err:
+                t_status = f"[red]{t_err}[/red]"
+            elif t_missing:
+                # Show first two for brevity
+                t_status = f"[yellow]MISSING: {', '.join(t_missing[:2])}{'...' if len(t_missing)>2 else ''}[/yellow]"
+            else:
+                t_status = "[red]INVALID[/red]"
+            self.query_one("#op_lbl_t_status", Label).update(f"Status: {t_status}")
+
+            # Buttons
+            for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
+                self.query_one(bid, Button).disabled = not self.tokens_valid
 
     # ── validation ────────────────────────────────────────────────────────
 
@@ -241,13 +325,17 @@ class ShuttlePane(Container):
             "discord_token": False, "discord_bot_name": None,
             "discord_server": False, "discord_server_name": None,
             "discord_intents": {}, "discord_permissions": {},
+            "discord_error": None,
             "target_token": False, "target_bot_name": None,
             "target_community": False, "target_community_name": None,
             "target_permissions": {},
+            "target_error": None,
             "discord_timeout": False, "target_timeout": False,
+            "backup_info_text": "",
         }
         self.tokens_valid = False
         self.permissions_complete = False
+        self.has_backup = False
 
         fillers = [
             "DISCORD_BOT_TOKEN", "FLUXER_BOT_TOKEN", "STOAT_BOT_TOKEN",
@@ -255,16 +343,21 @@ class ShuttlePane(Container):
             "000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID",
             "STOAT_SERVER_ID", "TARGET_SERVER_ID", "", None,
         ]
-        if self.config.tool_mode == "backup_transfer":
-            d_dummy = self.config.discord_server_id in fillers
-        else:
+        
+        # Check dummies
+        d_dummy = False
+        if self.view_mode == "backup" or self.config.tool_mode != "backup_transfer":
             d_dummy = self.config.discord_bot_token in fillers or self.config.discord_server_id in fillers
+        else:
+            # In shuttle mode of backup_transfer, we look at the source backup dir
+            d_dummy = self.config.discord_server_id in fillers
+            
         t_dummy = (self.config.target_bot_token or "") in fillers or (self.config.target_server_id or "") in fillers
 
         tasks = {}
         if not d_dummy:
             tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
-        if not t_dummy:
+        if not t_dummy and self.view_mode == "shuttle":
             tasks["target"] = asyncio.create_task(self.engine.writer.validate())
 
         all_tasks = list(tasks.values())
@@ -282,6 +375,7 @@ class ShuttlePane(Container):
                 self.validation_results["discord_server_name"] = res.get("server_name")
                 self.validation_results["discord_intents"] = res.get("intents", {})
                 self.validation_results["discord_permissions"] = res.get("permissions", {})
+                self.validation_results["discord_error"] = res.get("error_reason")
             elif dt and dt not in done:
                 self.validation_results["discord_timeout"] = True
                 dt.cancel()
@@ -294,15 +388,24 @@ class ShuttlePane(Container):
                 self.validation_results["target_community"] = res.get("community", False)
                 self.validation_results["target_community_name"] = res.get("community_name")
                 self.validation_results["target_permissions"] = res.get("permissions", {})
+                self.validation_results["target_error"] = res.get("error_reason")
             elif tt and tt not in done:
                 self.validation_results["target_timeout"] = True
                 tt.cancel()
 
             discord_ok = self.validation_results.get("discord_token") and self.validation_results.get("discord_server")
-            target_ok = self.validation_results.get("target_token") and self.validation_results.get("target_community")
-            self.tokens_valid = bool(discord_ok and target_ok)
+            
+            if self.view_mode == "backup":
+                self.tokens_valid = bool(discord_ok)
+                info = self._get_backup_info()
+                if info:
+                    self.validation_results["backup_info_text"] = f"Last backup: [cyan]{info}[/cyan]"
+                    self.has_backup = True
+            else:
+                target_ok = self.validation_results.get("target_token") and self.validation_results.get("target_community")
+                self.tokens_valid = bool(discord_ok and target_ok)
 
-            if self.tokens_valid:
+            if self.tokens_valid and self.view_mode == "shuttle":
                 srv_id = self.config.target_server_id
                 srv_name = self.validation_results.get("target_community_name", "unknown")
                 if srv_id and srv_name:
@@ -315,14 +418,16 @@ class ShuttlePane(Container):
                 dp = self.validation_results.get("discord_permissions", {})
                 if not all([di.get("message_content"), dp.get("view_channel"), dp.get("read_message_history")]):
                     self.permissions_complete = False
-                tp = self.validation_results.get("target_permissions", {})
-                if tp and not all(tp.values()):
-                    self.permissions_complete = False
+                
+                if self.view_mode == "shuttle":
+                    tp = self.validation_results.get("target_permissions", {})
+                    if tp and not all(tp.values()):
+                        self.permissions_complete = False
         except Exception:
             pass
         finally:
             for t in all_tasks:
-                if not t.done():
+                if t and not t.done():
                     t.cancel()
 
         self._update_info_labels()
@@ -331,16 +436,30 @@ class ShuttlePane(Container):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id
-        if not bid or not bid.startswith("sp_"):
+        if not bid or not bid.startswith("op_"):
             return
-        if bid == "sp_clone":
+            
+        # Migration Routing
+        if bid == "op_clone":
             self._open_clone_menu()
-        elif bid == "sp_sync":
+        elif bid == "op_sync":
             self._open_sync_menu()
-        elif bid == "sp_messages":
+        elif bid == "op_messages":
             self.run_migrate_messages()
-        elif bid == "sp_danger":
+        elif bid == "op_danger":
             self._open_danger_menu()
+            
+        # Backup Routing
+        elif bid == "op_backup_profile":
+            self.run_backup_profile()
+        elif bid == "op_backup_msgs":
+            self.run_backup_messages()
+        elif bid == "op_backup_sync":
+            self.run_backup_sync()
+        elif bid == "op_backup_stats":
+            from src.ui.backup_stats import BackupStatsScreen
+            target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+            self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
 
     # ── (1) clone server template (combined) ─────────────────────────────
 
@@ -1480,3 +1599,373 @@ class ShuttlePane(Container):
         counts = await danger_delete_all_emojis_and_stickers(self.engine, progress_callback=on_deleted)
         modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
         await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
+
+    # ── backup workers ───────────────────────────────────────────────────
+
+    @work(exclusive=True)
+    async def run_backup_profile(self) -> None:
+        modal = ProgressScreen(log_level=self.config.log_level)
+        self.app.push_screen(modal)
+        await asyncio.sleep(0.1)
+        modal.phase_progress()
+
+        try:
+            modal.set_status("Starting readers...")
+            await self.engine.discord_reader.start()
+            await self.exporter.setup()
+
+            # Gather and print summary
+            server = getattr(self.engine.discord_reader, 'guild', None)
+            if server:
+                modal.write(f"[bold cyan]Server Profile to Backup:[/bold cyan]")
+                modal.write(f"  Name: [green]{server.name}[/green]")
+                modal.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                modal.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
+                modal.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
+                modal.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
+                modal.write("")
+
+            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal.phase_progress()
+            modal.set_status("Exporting Server Structure...")
+            modal.write("[yellow]Backing up server profile & skeleton...[/yellow]")
+            await self.exporter.export_metadata()
+            await self.exporter.download_server_assets()
+
+            modal.write("Exporting structure...")
+            _, cat_count, chan_count = await self.exporter.export_channels_structure()
+
+            modal.write("Exporting roles...")
+            roles = await self.exporter.export_roles()
+
+            modal.write("Exporting assets...")
+            e_count, s_count = await self.exporter.export_assets()
+
+            modal.write(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
+            modal.write(f"- {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
+            modal.phase_report("Profile Backup", show_back=False)
+
+        except self.engine.discord_reader.Forbidden as e:
+            modal.write(f"[bold red]Backup failed: {e}[/bold red]")
+            modal.phase_report("Profile Backup", "error")
+        except Exception as e:
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Profile Backup", "error")
+        finally:
+            await self.engine.close_connections()
+            self.run_validate()
+
+    @work(exclusive=True)
+    async def run_backup_messages(self) -> None:
+        modal_prog = ProgressScreen(log_level=self.config.log_level)
+        self.app.push_screen(modal_prog)
+        await asyncio.sleep(0.1)
+
+        try:
+            modal_prog.set_status("Fetching channels...")
+            await self.engine.discord_reader.start()
+            await self.exporter.setup()
+
+            await self.exporter.export_channels_structure()
+            all_channels = await self.engine.discord_reader.get_channels()
+            all_categories = await self.engine.discord_reader.get_categories()
+            cat_map = {c.id: c.name for c in all_categories}
+
+            eligible_channels = [
+                c for c in all_channels
+                if c.type in [
+                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                ]
+            ]
+
+            if not eligible_channels:
+                modal_prog.write("[yellow]No text/news channels found to backup.[/yellow]")
+                modal_prog.allow_close()
+                return
+
+            any_found = False
+            backed_up_ids = set()
+            for chan in eligible_channels:
+                if (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists():
+                    any_found = True
+                    backed_up_ids.add(chan.id)
+
+            self.app.pop_screen()
+
+            while True:
+                loop = asyncio.get_running_loop()
+                future = loop.create_future()
+
+                def check_channels(reply: dict | None) -> None:
+                    if not future.done():
+                        future.set_result(reply)
+
+                self.app.push_screen(
+                    ChannelSelectScreen(eligible_channels, cat_map, backed_up_ids, any_found),
+                    check_channels,
+                )
+
+                reply = await future
+                if not reply:
+                    return
+
+                selected_ids = reply["channels"]
+                force_overwrite = reply["force"]
+                selected_channels = [c for c in eligible_channels if c.id in selected_ids]
+
+                # Phase 2: Confirmation
+                modal_prog = ProgressScreen(log_level=self.config.log_level) # Re-instantiate to avoid Textual re-push UI freeze
+                self.app.push_screen(modal_prog)
+                await asyncio.sleep(0.1)
+                
+                new_channels = [c for c in selected_channels if c.id not in backed_up_ids]
+                existing_channels = [c for c in selected_channels if c.id in backed_up_ids]
+
+                server = getattr(self.engine.discord_reader, 'guild', None)
+                if server:
+                    modal_prog.write(f"[bold cyan]Server Profile:[/bold cyan]")
+                    modal_prog.write(f"  Name: [green]{server.name}[/green]")
+                    modal_prog.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                    modal_prog.write("")
+
+                modal_prog.set_status(f"Confirm to proceed with Backup of [bold]{len(selected_channels)}[/bold] channels")
+                modal_prog.show_info(f"[cyan]Backup Channels[/cyan]", f"{len(new_channels)} new, {len(existing_channels)} existing")
+
+                # Show categorized channel lists in the bottom log
+                if new_channels:
+                    modal_prog.write("[bold green]New Backups to be created:[/bold green]")
+                    for idx, c in enumerate(new_channels):
+                        modal_prog.write(f"  {idx+1}. #{c.name}")
+
+                if existing_channels:
+                    action = "Overwritten" if force_overwrite else "Updated"
+                    modal_prog.write(f"[bold yellow]\nExisting backups to be {action}:[/bold yellow]")
+                    for idx, c in enumerate(existing_channels):
+                        modal_prog.write(f"  {idx+1}. #{c.name}")
+
+                choice = await modal_prog.phase_wait_confirm(btn_start_label="Start Channel Backup", show_id=False)
+                if choice == "btn_back":
+                    modal_prog.dismiss()
+                    continue
+                elif choice == "btn_start_id":
+                    loop = asyncio.get_running_loop()
+                    future = loop.create_future()
+                    def id_callback(res: int | None) -> None:
+                        if not future.done():
+                            future.set_result(res)
+                            
+                    id_modal = MessageIDInputModal(self.engine.discord_reader, selected_channels[0].id)
+                    self.app.push_screen(id_modal, id_callback)
+                    verified_id = await future
+                    
+                    if verified_id is None:
+                        # User cancelled the ID input
+                        continue
+                        
+                    after_id = verified_id
+                elif choice == "btn_main_menu":
+                    modal_prog.dismiss()
+                    self.app.switch_screen("config_selection")
+                    return
+                
+                # If we are here, proceeding either via Start First or Start from ID (after_id)
+                if choice == "btn_start_first":
+                    after_id = None
+                break
+
+            modal_prog.phase_progress()
+            modal_prog.show_stats()
+            
+            # Reset running flag and set cancel callback
+            self.exporter.is_running = True
+            modal_prog.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
+
+            total_chans = len(selected_channels)
+            modal_prog.set_status("Backing up messages...")
+            modal_prog.write(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
+
+            accumulated_msgs = 0
+
+            for i, chan in enumerate(selected_channels):
+                if not self.exporter.is_running:
+                    modal_prog.write("[bold red]Backup cancelled by user.[/bold red]")
+                    break
+                await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
+                
+                backup_exists = (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists()
+                is_sync = backup_exists and not force_overwrite
+
+                label = "Syncing Backup" if is_sync else "Backing up"
+                modal_prog.set_item_status(f"[cyan]Processing ({i+1}/{total_chans}): #{chan.name}[/cyan]")
+                modal_prog.set_progress(i, total_chans)
+                modal_prog.write(f"[cyan]{label}: {chan.name}[/cyan]")
+                logger.info(f"{label} for channel: #{chan.name} ({chan.id})")
+
+                _msg_log_counter = 0
+                async def update_msg_count(name, count, author_name=None, message_preview=None):
+                    nonlocal _msg_log_counter
+                    modal_prog.update_stats(messages=str(count))
+                    _msg_log_counter += 1
+                    if author_name and message_preview and _msg_log_counter % 10 == 0:
+                        modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
+
+                accumulated_msgs = await self.exporter.export_channel_messages(
+                    chan.id, progress_callback=update_msg_count, force=force_overwrite,
+                    accumulated_count=accumulated_msgs, after_id=after_id
+                )
+                accumulated_msgs = await self.exporter.export_threads(
+                    chan.id, progress_callback=update_msg_count, force=force_overwrite,
+                    accumulated_count=accumulated_msgs
+                )
+
+                modal_prog.write(f"[green]Completed: {chan.name}[/green]")
+
+            if not self.exporter.is_running:
+                modal_prog.set_item_status("[bold red]Backup Cancelled.[/bold red]")
+                modal_prog.phase_report("Message Backup", "stopped", show_back=False)
+                return
+
+            modal_prog.set_progress(total_chans, total_chans)
+            modal_prog.set_item_status("[bold green]Backup completed successfully![/bold green]")
+
+            await self.exporter.export_metadata()
+            modal_prog.write("[bold green]Message backup complete![/bold green]")
+            logger.info("Message backup operation completed successfully.")
+            modal_prog.phase_report("Message Backup", show_back=False)
+
+        except Exception as e:
+            logger.error(f"Message backup failed: {e}\n{traceback.format_exc()}")
+            modal_prog.write(f"[bold red]Message backup failed: {e}[/bold red]")
+            modal_prog.phase_report("Message Backup", "error", show_back=False)
+        finally:
+            await self.engine.close_connections()
+            self.run_validate()
+
+    @work(exclusive=True)
+    async def run_backup_sync(self) -> None:
+        modal_prog = ProgressScreen(log_level=self.config.log_level)
+        self.app.push_screen(modal_prog)
+        await asyncio.sleep(0.1)
+        modal_prog.phase_progress()
+
+        try:
+            modal_prog.set_status("Starting sync...")
+            await self.engine.discord_reader.start()
+            await self.exporter.setup()
+
+            # Gather and print summary
+            server = getattr(self.engine.discord_reader, 'guild', None)
+            if server:
+                modal_prog.write(f"[bold cyan]Server Profile to Sync:[/bold cyan]")
+                modal_prog.write(f"  Name: [green]{server.name}[/green]")
+                modal_prog.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
+                modal_prog.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
+                modal_prog.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
+                modal_prog.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
+                modal_prog.write("\n[dim]This operation will update the profile and scan existing backed-up channels for new messages.[/dim]")
+                modal_prog.write("")
+
+            modal_prog.show_info("[bold green]Sync Ready[/bold green]", f"Overview: {len(server.channels) if server else '?'} Channels")
+            modal_prog.set_status("Awaiting Confirmation to Sync Profile and Messages...")
+
+            choice = await modal_prog.phase_wait_confirm(
+                btn_start_label="Start Sync",
+                show_id=False
+            )
+            if choice in ("btn_back", "btn_main_menu"):
+                modal_prog.dismiss()
+                self.engine.is_running = False
+                await self.engine.close_connections()
+                if choice == "btn_main_menu":
+                    self.app.switch_screen("config_selection")
+                return
+
+            modal_prog.cancel_callback = lambda: setattr(self.engine, "is_running", False)
+            modal_prog.phase_progress()
+            modal_prog.set_status("Updating structure...")
+            modal_prog.write("Updating structure...")
+            await self.exporter.export_metadata()
+            await self.exporter.download_server_assets()
+            await self.exporter.export_channels_structure()
+            await self.exporter.export_assets()
+
+            all_channels = await self.engine.discord_reader.get_channels()
+            eligible_channels = [
+                c for c in all_channels
+                if c.type in [
+                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                ]
+            ]
+
+            selected_channels = [
+                c for c in eligible_channels
+                if (self.exporter.export_path / "message_backup" / str(c.id) / "messages.json").exists()
+            ]
+
+            if not selected_channels:
+                modal_prog.write("[yellow]No existing backups found to sync.[/yellow]")
+            else:
+                total_chans = len(selected_channels)
+                modal_prog.show_stats()
+                modal_prog.set_status("Syncing messages...")
+                modal_prog.write(f"[yellow]Syncing {total_chans} channels...[/yellow]")
+                
+                # Reset running flag and set cancel callback
+                self.exporter.is_running = True
+                modal_prog.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
+                
+                accumulated_msgs = 0
+                
+                for i, chan in enumerate(selected_channels):
+                    if not self.exporter.is_running:
+                        modal_prog.write("[bold red]Sync cancelled by user.[/bold red]")
+                        break
+                    await asyncio.sleep(0.01) # Yield to UI thread
+                    
+                    modal_prog.set_item_status(f"[cyan]Syncing ({i+1}/{total_chans}): #{chan.name}[/cyan]")
+                    modal_prog.set_progress(i, total_chans)
+                    modal_prog.write(f"[cyan]Syncing: {chan.name}[/cyan]")
+                    logger.info(f"Syncing backup for channel: #{chan.name} ({chan.id})")
+
+                    _msg_log_counter = 0
+                    async def update_msg_count(name, count, author_name=None, message_preview=None):
+                        nonlocal _msg_log_counter
+                        modal_prog.update_stats(messages=str(count))
+                        _msg_log_counter += 1
+                        if author_name and message_preview and _msg_log_counter % 10 == 0:
+                            modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
+
+                    accumulated_msgs = await self.exporter.export_channel_messages(
+                        chan.id, progress_callback=update_msg_count, force=False,
+                        accumulated_count=accumulated_msgs
+                    )
+                    accumulated_msgs = await self.exporter.export_threads(
+                        chan.id, progress_callback=update_msg_count, force=False,
+                        accumulated_count=accumulated_msgs
+                    )
+                    modal_prog.write(f"[green]Synced: {chan.name}[/green]")
+                
+                if not self.exporter.is_running:
+                    modal_prog.set_item_status("[bold red]Sync Cancelled.[/bold red]")
+                    modal_prog.phase_report("Backup Sync", "stopped", show_back=False)
+                    return
+
+                modal_prog.set_progress(total_chans, total_chans)
+                modal_prog.set_item_status("[bold green]Sync operation complete![/bold green]")
+
+            await self.exporter.export_metadata()
+            modal_prog.write("[bold green]Sync operation complete![/bold green]")
+            logger.info("Sync operation completed successfully.")
+            modal_prog.phase_report("Backup Sync", show_back=False)
+
+        except Exception as e:
+            logger.error(f"Sync failed: {e}\n{traceback.format_exc()}")
+            modal_prog.write(f"[bold red]Sync failed: {e}[/bold red]")
+            modal_prog.phase_report("Backup Sync", "error", show_back=False)
+        finally:
+            await self.engine.close_connections()
+            self.run_validate()

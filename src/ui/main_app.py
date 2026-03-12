@@ -370,29 +370,40 @@ class ConfigScreen(Screen):
                 return
         except Exception as e:
             logger.error(f"Failed to fetch {platform} servers: {e}")
-            self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
-            self.query_one("#inp_target_server", Select).prompt = "Invalid token"
+            try:
+                self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
+                self.query_one("#inp_target_server", Select).prompt = "Invalid token"
+            except Exception as dom_err:
+                logger.debug(f"Could not update target server UI elements: {dom_err}")
+
             if not initial:
                 self.notify(f"Failed to fetch {platform} servers: {e}", severity="error")
             return
 
         if not servers:
-            self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
-            self.query_one("#inp_target_server", Select).prompt = "No servers found"
+            try:
+                self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
+                self.query_one("#inp_target_server", Select).prompt = "No servers found"
+            except Exception:
+                pass
             if not initial:
                 self.notify(f"No {platform} servers found or invalid token.", severity="warning")
             return
 
-        self.query_one("#btn_fetch_target_servers", Button).variant = "success"
-        options = [(label, sid) for label, sid in servers]
-        select_widget = self.query_one("#inp_target_server", Select)
-        select_widget.prompt = "Select a server"
-        select_widget.set_options(options)
+        try:
+            self.query_one("#btn_fetch_target_servers", Button).variant = "success"
+            options = [(label, sid) for label, sid in servers]
+            select_widget = self.query_one("#inp_target_server", Select)
+            select_widget.prompt = "Select a server"
+            select_widget.set_options(options)
 
-        # Restore saved value
-        saved_id = self.config.target_server_id
-        if saved_id and any(sid == saved_id for _, sid in servers):
-            select_widget.value = saved_id
+            # Restore saved value
+            saved_id = self.config.target_server_id
+            if saved_id and any(sid == saved_id for _, sid in servers):
+                select_widget.value = saved_id
+        except Exception as dom_err:
+            logger.debug(f"Could not update target server DOM: {dom_err}")
+
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_fetch_guilds":

@@ -14,8 +14,7 @@ from textual.widgets import Header, Footer, Button, ContentSwitcher, Rule
 from textual.screen import Screen
 
 from src.core.configuration import load_config
-from src.ui.backup_ops import BackupPane
-from src.ui.shuttle_ops import ShuttlePane
+from src.ui.shuttle_ops import OperationPane
 
 
 class ModeScreen(Screen):
@@ -122,13 +121,13 @@ class ModeScreen(Screen):
         with Container(id="main_outer"):
             with Container(id="main_container"):
                 if mode == "backup_only":
-                    yield BackupPane(self.cfg_name, self.config_path, id="pane_backup")
+                    yield OperationPane(self.cfg_name, self.config_path, view_mode="backup", id="pane_backup")
                 elif mode == "direct_transfer":
-                    yield ShuttlePane(self.cfg_name, self.config_path, id="pane_migrate")
+                    yield OperationPane(self.cfg_name, self.config_path, view_mode="shuttle", id="pane_migrate")
                 else:  # backup_transfer
                     with ContentSwitcher(initial="pane_backup", id="switcher"):
-                        yield BackupPane(self.cfg_name, self.config_path, id="pane_backup")
-                        yield ShuttlePane(self.cfg_name, self.config_path, id="pane_migrate")
+                        yield OperationPane(self.cfg_name, self.config_path, view_mode="backup", id="pane_backup")
+                        yield OperationPane(self.cfg_name, self.config_path, view_mode="shuttle", id="pane_migrate")
                 
                 with Vertical(id="mode_footer"):
                     yield Rule(id="footer_rule")
@@ -155,9 +154,7 @@ class ModeScreen(Screen):
                         self.app.push_screen(ModeScreen(self.cfg_name, self.config_path))
                     else:
                         self.config = new_cfg
-                        for pane in self.query(BackupPane):
-                            pane.reload_config()
-                        for pane in self.query(ShuttlePane):
+                        for pane in self.query(OperationPane):
                             pane.reload_config()
             self.app.push_screen(ConfigScreen(self.cfg_name, self.config_path), reload_screen)
         elif bid == "btn_switch":

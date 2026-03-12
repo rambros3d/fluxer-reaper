@@ -97,36 +97,50 @@ class DiscordReader:
             "server": False, 
             "bot_name": None, 
             "server_name": None,
+            "error_reason": None,
             "intents": {"message_content": False},
             "permissions": {"view_channel": False, "read_message_history": False}
         }
         temp_client = self._create_client()
         try:
-            await temp_client.login(self.token)
-            results["token"] = True
-            if temp_client.user:
-                results["bot_name"] = temp_client.user.display_name
+            try:
+                await temp_client.login(self.token)
+                results["token"] = True
+                if temp_client.user:
+                    results["bot_name"] = temp_client.user.display_name
+            except discord.LoginFailure:
+                results["error_reason"] = "Invalid Discord Token"
+                return results
+            except Exception as e:
+                results["error_reason"] = f"Login Error: {str(e)}"
+                return results
                 
-            guild = await temp_client.fetch_guild(self.server_id)
-            if guild is not None:
-                results["server"] = True
-                results["server_name"] = guild.name
-                
-                # Check intents
-                results["intents"]["message_content"] = temp_client.intents.message_content
-                
-                # Check permissions
-                # We need to fetch the member to check permissions
-                try:
-                    member = await guild.fetch_member(temp_client.user.id)
-                    perms = member.guild_permissions
-                    results["permissions"]["view_channel"] = perms.view_channel
-                    results["permissions"]["read_message_history"] = perms.read_message_history
-                except Exception:
-                    # Fallback if member fetch fails, though it shouldn't for the bot itself
-                    pass
-        except Exception:
-            pass
+            try:
+                guild = await temp_client.fetch_guild(self.server_id)
+                if guild is not None:
+                    results["server"] = True
+                    results["server_name"] = guild.name
+                    
+                    # Check intents
+                    results["intents"]["message_content"] = temp_client.intents.message_content
+                    
+                    # Check permissions
+                    try:
+                        member = await guild.fetch_member(temp_client.user.id)
+                        perms = member.guild_permissions
+                        results["permissions"]["view_channel"] = perms.view_channel
+                        results["permissions"]["read_message_history"] = perms.read_message_history
+                    except Exception as e:
+                        logger.debug(f"Member fetch failed: {e}")
+                        # Fallback if member fetch fails, though it shouldn't for the bot itself
+            except discord.Forbidden:
+                results["error_reason"] = "Missing Access to Server"
+            except discord.NotFound:
+                results["error_reason"] = "Server Not Found"
+            except Exception as e:
+                results["error_reason"] = f"Server Error: {str(e)}"
+        except Exception as e:
+            results["error_reason"] = str(e)
         finally:
             if not temp_client.is_closed():
                 await temp_client.close()
