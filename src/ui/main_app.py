@@ -16,7 +16,7 @@ from textual.screen import Screen, ModalScreen
 from src.core.configuration import (
     get_available_configs, create_new_config, load_config, save_config,
 )
-from src.ui.widgets import RamDisplay
+from src.ui.widgets import RamDisplay, Footnote
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -101,6 +101,7 @@ class ConfigSelectionScreen(Screen):
                 yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
                 yield Button("Exit", id="btn_exit", variant="error")
         yield Footer()
+        yield Footnote()
         yield RamDisplay()
 
     def on_mount(self) -> None:
@@ -320,92 +321,80 @@ class ConfigScreen(Screen):
                         initial=True
                     ))
 
-    async def _do_fetch_guilds(self, token: str, initial: bool = False) -> None:
-        """Background worker to fetch guilds and update the Select widget."""
-        from src.core.discord_reader import DiscordReader
+    async def _fetch_and_populate(
+        self, 
+        fetch_coro, 
+        btn_id: str, 
+        select_id: str, 
+        error_msg: str, 
+        saved_id: str | None = None,
+        initial: bool = False
+    ) -> None:
+        """Generic helper to fetch data and update a Select widget."""
         try:
-            guilds = await DiscordReader.fetch_guilds(token)
-            
-            if not guilds:
-                self.query_one("#btn_fetch_guilds", Button).variant = "warning"
-                self.query_one("#inp_discord_server", Select).prompt = "No servers found"
+            results = await fetch_coro
+            if not results:
+                try:
+                    self.query_one(btn_id, Button).variant = "warning"
+                    self.query_one(select_id, Select).prompt = "No results found"
+                except Exception: pass
                 if not initial:
-                    self.notify("No Discord servers found or invalid token.", severity="warning")
+                    self.notify(error_msg, severity="warning")
                 return
 
-            self.query_one("#btn_fetch_guilds", Button).variant = "success"
-            options = [(name, gid) for name, gid in guilds]
-            select_widget = self.query_one("#inp_discord_server", Select)
-            select_widget.prompt = "Select a server"
-            select_widget.set_options(options)
-            
-            # Restore saved value if it exists in the fetched list
-            saved_id = self.config.discord_server_id
-            if saved_id and any(gid == saved_id for _, gid in guilds):
-                select_widget.value = saved_id
+            try:
+                self.query_one(btn_id, Button).variant = "success"
+                options = [(label, sid) for label, sid in results]
+                select_widget = self.query_one(select_id, Select)
+                select_widget.prompt = "Select an item"
+                select_widget.set_options(options)
+                
+                if saved_id and any(sid == saved_id for _, sid in results):
+                    select_widget.value = saved_id
+            except Exception: pass
         except Exception as e:
-            self.query_one("#btn_fetch_guilds", Button).variant = "warning"
-            self.query_one("#inp_discord_server", Select).prompt = "Invalid token"
+            try:
+                self.query_one(btn_id, Button).variant = "warning"
+                self.query_one(select_id, Select).prompt = "Invalid token"
+            except Exception: pass
             if not initial:
-                self.notify(f"Failed to fetch Discord servers: {e}", severity="error")
+                self.notify(f"Fetch failed: {e}", severity="error")
+
+    async def _do_fetch_guilds(self, token: str, initial: bool = False) -> None:
+        from src.core.discord_reader import DiscordReader
+        await self._fetch_and_populate(
+            DiscordReader.fetch_guilds(token),
+            "#btn_fetch_guilds",
+            "#inp_discord_server",
+            "No Discord servers found.",
+            self.config.discord_server_id,
+            initial
+        )
 
     async def _do_fetch_target_servers(self, token: str = None, api_url: str = None, platform: str = None, initial: bool = False) -> None:
-        """Background worker to fetch target platform servers."""
-        if not platform:
-            platform = self._get_selected_platform()
-        if not token:
-            token = self.query_one("#inp_target_token", Input).value.strip()
-        if not api_url:
-            api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
-
-        if not token:
-            return
-
-        servers = []
+        if not platform: platform = self._get_selected_platform()
         try:
-            if platform == "fluxer":
-                from src.fluxer.writer import FluxerWriter
-                servers = await FluxerWriter.fetch_guilds(token, api_url)
-            elif platform == "stoat":
-                from src.stoat.writer import StoatWriter
-                servers = await StoatWriter.fetch_guilds(token, api_url)
-            else:
-                return
-        except Exception as e:
-            logger.error(f"Failed to fetch {platform} servers: {e}")
-            try:
-                self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
-                self.query_one("#inp_target_server", Select).prompt = "Invalid token"
-            except Exception as dom_err:
-                logger.debug(f"Could not update target server UI elements: {dom_err}")
+            if not token: token = self.query_one("#inp_target_token", Input).value.strip()
+            if not api_url: api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
+        except Exception: return
+        if not token: return
 
-            if not initial:
-                self.notify(f"Failed to fetch {platform} servers: {e}", severity="error")
-            return
+        if platform == "fluxer":
+            from src.fluxer.writer import FluxerWriter
+            coro = FluxerWriter.fetch_guilds(token, api_url)
+        elif platform == "stoat":
+            from src.stoat.writer import StoatWriter
+            coro = StoatWriter.fetch_guilds(token, api_url)
+        else: return
 
-        if not servers:
-            try:
-                self.query_one("#btn_fetch_target_servers", Button).variant = "warning"
-                self.query_one("#inp_target_server", Select).prompt = "No servers found"
-            except Exception:
-                pass
-            if not initial:
-                self.notify(f"No {platform} servers found or invalid token.", severity="warning")
-            return
-
-        try:
-            self.query_one("#btn_fetch_target_servers", Button).variant = "success"
-            options = [(label, sid) for label, sid in servers]
-            select_widget = self.query_one("#inp_target_server", Select)
-            select_widget.prompt = "Select a server"
-            select_widget.set_options(options)
-
-            # Restore saved value
-            saved_id = self.config.target_server_id
-            if saved_id and any(sid == saved_id for _, sid in servers):
-                select_widget.value = saved_id
-        except Exception as dom_err:
-            logger.debug(f"Could not update target server DOM: {dom_err}")
+        await self._fetch_and_populate(
+            coro,
+            "#btn_fetch_target_servers",
+            "#inp_target_server",
+            f"No {platform} servers found.",
+            self.config.target_server_id,
+            initial
+        )
 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -498,6 +487,15 @@ class ReaperApp(App):
         height: 1;
         margin-left: 2;
         color: green;
+    }
+    Footnote {
+        dock: bottom;
+        width: 100%;
+        height: 1;
+        text-align: right;
+        padding-right: 1;
+        background: $surface;
+        color: $text;
     }
     """
 

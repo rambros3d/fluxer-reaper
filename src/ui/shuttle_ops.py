@@ -171,7 +171,13 @@ class OperationPane(Container):
         return f"ReaperFiles-{self.cfg_name}"
 
     def _rebuild_engine(self):
-        source = "backup" if self.config.tool_mode == "backup_transfer" else "live"
+        # In backup_transfer mode, the Backup tab reads from LIVE discord, 
+        # while the Shuttle tab reads from the LOCAL BACKUP.
+        if self.view_mode == "backup":
+            source = "live"
+        else:
+            source = "backup" if self.config.tool_mode == "backup_transfer" else "live"
+            
         self.engine = MigrationContext(self.config, self.target_platform, source_mode=source, base_dir=self._base_dir())
         if self.view_mode == "backup":
             self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
@@ -214,9 +220,16 @@ class OperationPane(Container):
         elif v.get("discord_token") and v.get("discord_server"):
             s_disp = f'[green]"{d_name}"[/green]'
             b_disp = f'[green]{d_bot}[/green]'
+        elif v.get("discord_token") and not v.get("discord_server"):
+            s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", f"[green]{d_bot}[/green]"
         elif v.get("discord_token") is False:
             if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-                s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
+                # Check if it's missing because no server was selected
+                fillers = ["DISCORD_SERVER_ID", "000000000000000000", "", None]
+                if self.config.discord_server_id in fillers:
+                    s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", "[red]SERVER NOT SELECTED[/red]"
+                else:
+                    s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
             else:
                 s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
@@ -243,6 +256,8 @@ class OperationPane(Container):
 
         if v.get("discord_token") and v.get("discord_server") and not d_missing:
             d_status = "[green]VALID[/green]"
+        elif v.get("discord_token") and not v.get("discord_server"):
+            d_status = "[red]SERVER NOT SET[/red]"
         elif v.get("discord_timeout"):
             d_status = "[red]TIMEOUT[/red]"
         elif d_err:
@@ -345,19 +360,23 @@ class OperationPane(Container):
         ]
         
         # Check dummies
-        d_dummy = False
-        if self.view_mode == "backup" or self.config.tool_mode != "backup_transfer":
-            d_dummy = self.config.discord_bot_token in fillers or self.config.discord_server_id in fillers
-        else:
-            # In shuttle mode of backup_transfer, we look at the source backup dir
-            d_dummy = self.config.discord_server_id in fillers
-            
-        t_dummy = (self.config.target_bot_token or "") in fillers or (self.config.target_server_id or "") in fillers
+        d_token_dummy = self.config.discord_bot_token in fillers
+        d_server_dummy = self.config.discord_server_id in fillers
+        
+        t_token_dummy = (self.config.target_bot_token or "") in fillers
+        t_server_dummy = (self.config.target_server_id or "") in fillers
 
         tasks = {}
-        if not d_dummy:
-            tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
-        if not t_dummy and self.view_mode == "shuttle":
+        # We always validate Discord token if it's not a dummy, even if server ID is missing
+        if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
+            # Backup validation: only if we have a server ID to search for
+            if not d_server_dummy:
+                tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
+        else:
+            if not d_token_dummy:
+                tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
+        
+        if self.view_mode == "shuttle" and not t_token_dummy:
             tasks["target"] = asyncio.create_task(self.engine.writer.validate())
 
         all_tasks = list(tasks.values())
@@ -1003,61 +1022,8 @@ class OperationPane(Container):
 
                 modal.set_status("Analyzing channel...")
                 modal.show_stats()
-
-                self.engine.is_running = True
-                stats_analysis = {"messages": 0, "threads": 0, "attachments": 0}
-
-                async def update_scan(current_stats):
-                    modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
-
-                logger.info(f"Analyzing message history for Discord #{source_channel.name}...")
-                stats_analysis = await migrate_mod.analyze_migration(
-                    self.engine,
-                    source_channel_id=source_channel.id,
-                    after_message_id=int(last_migrated) if last_migrated else None,
-                    progress_callback=update_scan,
-                )
-                logger.info(f"Analysis complete: {stats_analysis['messages']} new messages found.")
-                self.engine.is_running = False
-
-                # Set initial total stats for the confirmation block
-                modal.update_stats(
-                    messages=stats_analysis['messages'],
-                    threads=stats_analysis['threads'],
-                    files=stats_analysis['attachments']
-                )
-
-                # Setup the info container
-                m_status = "[bold yellow]Previous Migration Detected[/bold yellow]" if has_previous else "[bold cyan]No previous migration data.[/bold cyan]"
-                i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
-                modal.show_info(m_status, i_status)
-
-                # Fetch and display message previews
-                try:
-                    first_msg = await self.engine.discord_reader.get_first_message(source_channel.id)
-                    if first_msg:
-                        content = first_msg.content or (f"[dim]({len(first_msg.attachments)} attachments)[/dim]" if first_msg.attachments else "[dim](no content)[/dim]")
-                        modal.write("[bold cyan]Start from first message:[/bold cyan]")
-                        modal.write(f"[bold]{first_msg.author.display_name}:[/bold] {content[:200]}")
-                        modal.write("")
-
-                    if has_previous and last_migrated:
-                        try:
-                            prev_msg = await self.engine.discord_reader.get_message(source_channel.id, int(last_migrated))
-                            if prev_msg:
-                                content = prev_msg.content or (f"[dim]({len(prev_msg.attachments)} attachments)[/dim]" if prev_msg.attachments else "[dim](no content)[/dim]")
-                                modal.write("[bold yellow]Continue from previous migration:[/bold yellow]")
-                                modal.write(f"[bold]{prev_msg.author.display_name}:[/bold] {content[:200]}")
-                                modal.write("")
-                        except Exception as e:
-                            logger.warning(f"Could not fetch previous message {last_migrated}: {e}")
-                except Exception as e:
-                    logger.warning(f"Error fetching message previews: {e}")
-
-                modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
-
-                # Phase 2: Confirmation
-                choice = await modal.phase_wait_confirm(
+                # Show buttons early so user can skip analysis
+                modal.show_early_buttons(
                     show_continue=has_previous,
                     show_id=True,
                     btn_start_label="Start from\nFirst Message",
@@ -1067,7 +1033,104 @@ class OperationPane(Container):
                     btn_continue_tooltip="Resume from the last successfully migrated message",
                     btn_id_tooltip="Start migrating from a specific Discord message ID"
                 )
+
+                self.engine.is_running = True
+                stats_analysis = {"messages": 0, "threads": 0, "attachments": 0}
+
+                async def update_scan(current_stats):
+                    modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
+
+                logger.info(f"Analyzing message history for Discord #{source_channel.name}...")
+                
+                # Run analysis and wait for confirmation concurrently
+                analysis_task = asyncio.create_task(migrate_mod.analyze_migration(
+                    self.engine,
+                    source_channel_id=source_channel.id,
+                    after_message_id=int(last_migrated) if last_migrated else None,
+                    progress_callback=update_scan,
+                ))
+
+                # Fetch and display message previews as background tasks
+                async def fetch_previews():
+                    try:
+                        first_msg_task = asyncio.create_task(self.engine.discord_reader.get_first_message(source_channel.id))
+                        prev_msg_task = None
+                        if has_previous and last_migrated:
+                            prev_msg_task = asyncio.create_task(self.engine.discord_reader.get_message(source_channel.id, int(last_migrated)))
+                        
+                        first_msg = await first_msg_task
+                        if first_msg:
+                            content = first_msg.content or (f"[dim]({len(first_msg.attachments)} attachments)[/dim]" if first_msg.attachments else "[dim](no content)[/dim]")
+                            modal.write("[bold cyan]Start from first message:[/bold cyan]")
+                            modal.write(f"[bold]{first_msg.author.display_name}:[/bold] {content[:200]}\n")
+                            
+                        if prev_msg_task:
+                            try:
+                                prev_msg = await prev_msg_task
+                                if prev_msg:
+                                    content = prev_msg.content or (f"[dim]({len(prev_msg.attachments)} attachments)[/dim]" if prev_msg.attachments else "[dim](no content)[/dim]")
+                                    modal.write("[bold yellow]Continue from previous migration:[/bold yellow]")
+                                    modal.write(f"[bold]{prev_msg.author.display_name}:[/bold] {content[:200]}\n")
+                            except Exception as e:
+                                logger.warning(f"Could not fetch previous message {last_migrated}: {e}")
+                    except Exception as e:
+                        logger.warning(f"Error fetching message previews: {e}")
+
+                preview_task = asyncio.create_task(fetch_previews())
+                
+                # Cleanup function for confirmation phase
+                def cleanup_preview():
+                    if not preview_task.done():
+                        preview_task.cancel()
+
+                # Create a task for waiting for confirmation
+                confirm_task = asyncio.create_task(modal.phase_wait_confirm(
+                    show_continue=has_previous,
+                    show_id=True,
+                    btn_start_label="Start from\nFirst Message",
+                    btn_continue_label="Continue\nMigration",
+                    btn_id_label="Start from\nmessage ID",
+                    btn_start_tooltip="Start migrating from the earliest available message",
+                    btn_continue_tooltip="Resume from the last successfully migrated message",
+                    btn_id_tooltip="Start migrating from a specific Discord message ID"
+                ))
+
+                # Wait for either analysis to finish OR user to make a choice
+                done, pending = await asyncio.wait(
+                    [analysis_task, confirm_task], 
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+
+                if confirm_task in done:
+                    # User clicked a button early
+                    choice = confirm_task.result()
+                    if not analysis_task.done():
+                        analysis_task.cancel()
+                        logger.info("Analysis cancelled by early user choice.")
+                else:
+                    # Analysis finished first
+                    stats_analysis = analysis_task.result()
+                    logger.info(f"Analysis complete: {stats_analysis['messages']} new messages found.")
+                    
+                    # Update stats in UI
+                    modal.update_stats(
+                        messages=stats_analysis['messages'],
+                        threads=stats_analysis['threads'],
+                        files=stats_analysis['attachments']
+                    )
+                    m_status = "[bold yellow]Previous Migration Detected[/bold yellow]" if has_previous else "[bold cyan]No previous migration data.[/bold cyan]"
+                    i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
+                    modal.show_info(m_status, i_status)
+                    
+                    modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+                    
+                    # Now wait for the choice if not already made
+                    choice = await confirm_task
+
+                self.engine.is_running = False
+                cleanup_preview()
                 logger.info(f"User confirmation choice: {choice}")
+
                 if choice == "btn_back":
                     modal.dismiss()
                     continue # Return to channel picker
@@ -1104,17 +1167,29 @@ class OperationPane(Container):
                     logger.info("Proceeding with 'Start from First' (clean sink).")
                     after_id = None
                 
+                is_inclusive = (choice == "btn_start_id")
+                
                 # If after_id changed from the initial analysis, we must re-analyze 
                 # to get the correct total count for the UI fraction (e.g. Messages: 8/8 instead of 8/1)
                 initial_after = int(last_migrated) if last_migrated else None
+
+                # User selected a different start point, transition UI immediately
                 if after_id != initial_after:
-                    modal.set_status("Re-analyzing channel from new starting point...")
+                    modal.phase_progress() # Hide buttons immediately
+                    if choice == "btn_start_first":
+                        modal.set_status("Starting from first message...")
+                    elif choice == "btn_start_id":
+                        modal.set_status(f"Starting from ID [cyan]{after_id}[/cyan]...")
+                    else:
+                        modal.set_status("Re-analyzing channel from new starting point...")
+
                     try:
                         self.engine.is_running = True
                         stats_analysis = await migrate_mod.analyze_migration(
                             self.engine,
                             source_channel_id=source_channel.id,
                             after_message_id=after_id,
+                            inclusive=is_inclusive,
                             progress_callback=update_scan,
                         )
                         modal.update_stats(
@@ -1163,13 +1238,17 @@ class OperationPane(Container):
                 c_threads = current_stats["threads"]
                 c_files = current_stats["attachments"]
                 
-                modal.set_item_status(f"[cyan]Migrated {c_msgs}/{total_messages} messages...")
-                modal.set_progress(c_msgs, total_messages)
+                msg_stat = f"{c_msgs}/{total_messages}" if total_messages > 0 else str(c_msgs)
+                thr_stat = f"{c_threads}/{total_threads}" if total_threads > 0 else str(c_threads)
+                fil_stat = f"{c_files}/{total_attachments}" if total_attachments > 0 else str(c_files)
+
+                modal.set_item_status(f"[cyan]Migrated {msg_stat} messages...")
+                modal.set_progress(c_msgs, total_messages or 100) # Fallback total for bar animation
                 
                 modal.update_stats(
-                    messages=f"{c_msgs}/{total_messages}",
-                    threads=f"{c_threads}/{total_threads}",
-                    files=f"{c_files}/{total_attachments}"
+                    messages=msg_stat,
+                    threads=thr_stat,
+                    files=fil_stat
                 )
                 
                 # optionally show a scrolling trace if the backend provided it
@@ -1187,6 +1266,7 @@ class OperationPane(Container):
                 source_channel_id=source_channel.id,
                 target_channel_id=target_channel.get("id"),
                 after_message_id=after_id,
+                inclusive=is_inclusive,
                 progress_callback=update_msg,
             )
 

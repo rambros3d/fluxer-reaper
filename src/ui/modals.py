@@ -251,17 +251,53 @@ class ProgressScreen(Screen[None]):
         btn_id_tooltip: str | None = None
     ):
         """Phase 2: Wait for user confirmation after analysis."""
+        # Hide loading state if it was still running
         try: self.query_one("#prog_loader", LoadingIndicator).display = False
         except Exception: pass
 
-        try: self.query_one("#prog_timer", Label).display = False
+        try: self.query_one("#prog_status", Label).styles.color = None # Reset potential colors
         except Exception: pass
+
+        # Update labels and show buttons
+        self.show_early_buttons(
+            show_continue=show_continue,
+            show_id=show_id,
+            btn_start_label=btn_start_label,
+            btn_continue_label=btn_continue_label,
+            btn_id_label=btn_id_label,
+            btn_start_variant=btn_start_variant,
+            btn_start_tooltip=btn_start_tooltip,
+            btn_continue_tooltip=btn_continue_tooltip,
+            btn_id_tooltip=btn_id_tooltip
+        )
+            
+        loop = asyncio.get_running_loop()
+        if not self.confirm_future or self.confirm_future.done():
+            self.confirm_future = loop.create_future()
         
+        # Wait until the user clicks one of the buttons
+        choice = await self.confirm_future
+        return choice
+
+    def show_early_buttons(
+        self,
+        show_continue: bool = False,
+        show_id: bool = True,
+        btn_start_label: str = "Start from First",
+        btn_continue_label: str = "Continue Migration",
+        btn_id_label: str = "Start from ID",
+        btn_start_variant: str = "primary",
+        btn_start_tooltip: str | None = None,
+        btn_continue_tooltip: str | None = None,
+        btn_id_tooltip: str | None = None
+    ):
+        """Show the operation buttons early (e.g. during analysis) so user can skip wait."""
         # Update button labels, variants and tooltips
         try:
             btn_start = self.query_one("#btn_start_first", Button)
             btn_start.label = btn_start_label
             btn_start.variant = btn_start_variant
+            btn_start.disabled = False
             if btn_start_tooltip:
                 btn_start.tooltip = btn_start_tooltip
         except Exception: pass
@@ -269,6 +305,8 @@ class ProgressScreen(Screen[None]):
         try:
             btn_cont = self.query_one("#btn_continue", Button)
             btn_cont.label = btn_continue_label
+            btn_cont.disabled = not show_continue
+            btn_cont.display = show_continue
             if btn_continue_tooltip:
                 btn_cont.tooltip = btn_continue_tooltip
         except Exception: pass
@@ -276,11 +314,13 @@ class ProgressScreen(Screen[None]):
         try:
             btn_id = self.query_one("#btn_start_id", Button)
             btn_id.label = btn_id_label
+            btn_id.disabled = not show_id
+            btn_id.display = show_id
             if btn_id_tooltip:
                 btn_id.tooltip = btn_id_tooltip
         except Exception: pass
 
-        # Show confirmation buttons
+        # Show confirmation button rows
         try: self.query_one("#prog_actions_row1", Horizontal).display = True
         except Exception: pass
         try: self.query_one("#prog_actions_row2", Horizontal).display = True
@@ -288,30 +328,10 @@ class ProgressScreen(Screen[None]):
         try: self.query_one("#prog_actions_cancel", Horizontal).display = False
         except Exception: pass
         
-        try: self.query_one("#btn_start_first", Button).disabled = False
-        except Exception: pass
-        
-        try: 
-            btn_id = self.query_one("#btn_start_id", Button)
-            btn_id.disabled = not show_id
-            btn_id.display = show_id
-        except Exception: pass
-        
-        try:
-            if show_continue:
-                self.query_one("#btn_continue", Button).disabled = False
-                self.query_one("#btn_continue", Button).display = True
-            else:
-                self.query_one("#btn_continue", Button).display = False
-        except Exception:
-            pass
-            
-        loop = asyncio.get_running_loop()
-        self.confirm_future = loop.create_future()
-        
-        # Wait until the user clicks one of the buttons
-        choice = await self.confirm_future
-        return choice
+        # Ensure confirm_future is ready for clicks
+        if not self.confirm_future or self.confirm_future.done():
+            loop = asyncio.get_running_loop()
+            self.confirm_future = loop.create_future()
 
     def phase_progress(self):
         """Phase 3: The actual operation begins. Only Cancel visible."""

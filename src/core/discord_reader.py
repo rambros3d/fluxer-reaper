@@ -216,7 +216,14 @@ class DiscordReader:
         """Returns a specific message."""
         channel = await self.get_channel(channel_id)
         if hasattr(channel, "fetch_message"):
-            return await channel.fetch_message(message_id)
+            try:
+                return await channel.fetch_message(message_id)
+            except discord.NotFound:
+                logger.warning(f"Message {message_id} not found in channel {channel_id}.")
+                return None
+            except Exception as e:
+                logger.error(f"Error fetching message {message_id}: {e}")
+                return None
         return None
 
     async def get_first_message(self, channel_id: int):

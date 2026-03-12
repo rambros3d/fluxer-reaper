@@ -94,7 +94,7 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     return content
 
 
-async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, int]:
+async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, inclusive: bool = False, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, int]:
     """
     Scans channel history to count messages, threads, and attachments.
     """
@@ -106,7 +106,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
         "last_message_url": ""
     }
     
-    async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=True):
+    async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
         if not context.is_running:
             break
         
@@ -137,6 +137,7 @@ async def migrate_messages(
     source_channel_id: int, 
     target_channel_id: str, 
     after_message_id: int | None = None, 
+    inclusive: bool = False,
     progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None,
     thread_id: str | None = None,
     parent_target_id: str | None = None,
@@ -158,7 +159,7 @@ async def migrate_messages(
         logger.info(f"Resuming migration from after message ID: {after_message_id}")
         
     try:
-        async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=True):
+        async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
             if not context.is_running:
                 logger.warning("Migration interrupted by user (is_running=False)")
                 break

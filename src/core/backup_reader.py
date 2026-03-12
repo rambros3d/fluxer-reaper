@@ -940,14 +940,14 @@ class BackupReader:
         )
 
     async def get_message(self, channel_id: int, message_id: int) -> BackupMessage | None:
-        messages = self._load_channel_messages(channel_id)
+        messages = self._load_channel_messages_data(channel_id)
         for m in messages:
             if int(m["messageID"]) == message_id:
                 return self._hydrate_message(m, channel_id)
         return None
 
     async def get_first_message(self, channel_id: int) -> BackupMessage | None:
-        messages = self._load_channel_messages(channel_id)
+        messages = self._load_channel_messages_data(channel_id)
         if messages:
             return self._hydrate_message(messages[0], channel_id)
         return None
@@ -960,7 +960,7 @@ class BackupReader:
         inclusive: bool = False
     ) -> AsyncGenerator["BackupMessage", None]:
         """Yields BackupMessages from the backup, respecting after_id and limit."""
-        messages = self._load_channel_messages(channel_id)
+        messages = self._load_channel_messages_data(channel_id)
         count = 0
 
         for m in messages:
