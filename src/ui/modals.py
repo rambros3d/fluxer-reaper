@@ -57,17 +57,17 @@ class ProgressScreen(Screen[None]):
         layout: horizontal; 
         border: solid cyan; 
         padding: 1; 
-        margin-bottom: 1; 
+        margin-bottom: 0; 
         display: none; 
     }
     .stat_label { width: 1fr; content-align: center middle; text-style: bold; }
     
-    #prog_log { height: 1fr; margin-bottom: 1; border: solid $primary; }
-    #live_log { height: 10; margin-bottom: 1; border: solid yellow; }
+    #prog_log { height: 1fr; margin-bottom: 0; border: solid $primary; }
+    #live_log { height: 10; margin-bottom: 0; border: solid yellow; }
     
     #prog_item_status { margin-bottom: 1; text-style: bold; color: cyan; width: 100%; text-align: center; }
     
-    #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 1; display: none; }
+    #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 0; display: none; }
     .info_label { text-style: bold; content-align: center middle; width: 100%; color: cyan; }
     
     #prog_actions { height: auto; margin-top: 0; dock: bottom; margin-bottom: 0; layout: vertical; }

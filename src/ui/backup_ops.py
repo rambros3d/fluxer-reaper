@@ -76,8 +76,14 @@ class BackupPane(Container):
                 yield Button("Backup Server Profile", id="bp_backup_profile", disabled=True, tooltip="Backup Discord server roles, emojis, and channel structure")
                 yield Button("Backup Channel Messages", id="bp_backup_msgs", disabled=True, variant="primary", tooltip="Select and backup message history from text channels")
                 yield Button("Update Existing Backup", id="bp_backup_sync", disabled=True, variant="success", tooltip="Scan for new messages\n& Update existing backup")
+                yield Rule(id="bp_backup_stats_rule")
+                yield Button("Backup Stats", id="bp_backup_stats", variant="warning", flat=True,disabled=True, tooltip="View detailed statistics, storage, and entity metrics for the current backup profile")
 
     def on_mount(self) -> None:
+        self._validate()
+
+    def on_show(self) -> None:
+        """Re-validate when the pane regains visibility (e.g. after a backup operation finishes)."""
         self._validate()
 
     def reload_config(self) -> None:
@@ -105,28 +111,42 @@ class BackupPane(Container):
 
             backup_text = ""
             info = self._get_backup_info()
+            has_backup = False
             if info:
                 backup_text = f"Last backup: [cyan]{info}[/cyan]"
+                has_backup = True
 
-            self._update_ui(s_text, b_text, backup_text, valid)
+            self._update_ui(s_text, b_text, backup_text, valid, has_backup)
         except Exception as e:
-            self._update_ui(f"[red]Error: {e}[/red]", "", "", False)
+            self._update_ui(f"[red]Error: {e}[/red]", "", "", False, False)
 
     def _get_backup_info(self) -> str | None:
-        profile_file = Path(f"ReaperFiles-{self.cfg_name}") / "server_profile" / "profile.json"
-        if profile_file.exists():
-            try:
-                with open(profile_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    ts_str = data.get("last_backup")
-                    if ts_str:
-                        dt = datetime.fromisoformat(ts_str)
-                        return dt.strftime("%d-%b-%Y %H:%M")
-            except Exception:
-                pass
+        base_dir = Path(f"ReaperFiles-{self.cfg_name}")
+        if not base_dir.exists():
+            return None
+            
+        target_dir = None
+        for child in base_dir.iterdir():
+            if child.is_dir() and (child / "server_profile" / "profile.json").exists():
+                target_dir = child
+                break
+                
+        if not target_dir:
+            return None
+            
+        profile_file = target_dir / "server_profile" / "profile.json"
+        try:
+            with open(profile_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                ts_str = data.get("last_backup")
+                if ts_str:
+                    dt = datetime.fromisoformat(ts_str)
+                    return dt.strftime("%d-%b-%Y %H:%M")
+        except Exception:
+            pass
         return None
 
-    def _update_ui(self, server_text, bot_text, backup_text, enabled):
+    def _update_ui(self, server_text, bot_text, backup_text, enabled, has_backup: bool = False):
         try:
             self.query_one("#bp_lbl_server", Label).update(f"Server: {server_text}")
             self.query_one("#bp_lbl_bot", Label).update(f"Source: {bot_text}")
@@ -144,6 +164,10 @@ class BackupPane(Container):
             
             for bid in ("#bp_backup_profile", "#bp_backup_msgs", "#bp_backup_sync"):
                 self.query_one(bid, Button).disabled = not enabled
+                
+            self.query_one("#bp_backup_stats", Button).display = has_backup
+            self.query_one("#bp_backup_stats", Button).disabled = not has_backup
+            self.query_one("#bp_backup_stats_rule", Rule).display = has_backup
         except Exception:
             pass
 
@@ -157,6 +181,9 @@ class BackupPane(Container):
             self.run_backup_messages()
         elif bid == "bp_backup_sync":
             self.run_backup_sync()
+        elif bid == "bp_backup_stats":
+            from src.ui.backup_stats import BackupStatsScreen
+            self.app.push_screen(BackupStatsScreen(self.cfg_name))
 
     # ── workers ───────────────────────────────────────────────────────────
 
@@ -211,6 +238,7 @@ class BackupPane(Container):
             modal.phase_report("Profile Backup", "error")
         finally:
             await self.engine.close_connections()
+            self._validate()
 
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
@@ -395,6 +423,7 @@ class BackupPane(Container):
             modal_prog.phase_report("Message Backup", "error", show_back=False)
         finally:
             await self.engine.close_connections()
+            self._validate()
 
     @work(exclusive=True)
     async def run_backup_sync(self) -> None:
@@ -518,3 +547,4 @@ class BackupPane(Container):
             modal_prog.phase_report("Backup Sync", "error", show_back=False)
         finally:
             await self.engine.close_connections()
+            self._validate()

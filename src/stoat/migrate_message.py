@@ -106,7 +106,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
         "last_message_url": ""
     }
     
-    async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
+    async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=True):
         if not context.is_running:
             break
         
@@ -157,7 +157,7 @@ async def migrate_messages(
         logger.info(f"Resuming migration from after message ID: {after_message_id}")
         
     try:
-        async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id):
+        async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=True):
             if not context.is_running:
                 logger.warning("Migration interrupted by user (is_running=False)")
                 break
