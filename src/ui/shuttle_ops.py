@@ -1576,7 +1576,7 @@ class OperationPane(Container):
 
     async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
         """Fetches preview data from Discord (source server) for cloning confirmation,
-        comparing with existing mappings in state-migration.json for presence highlighting."""
+        comparing with existing mappings in SQLite for presence highlighting."""
         preview = {}
         reader = self.engine.discord_reader
         

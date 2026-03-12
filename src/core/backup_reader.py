@@ -696,7 +696,15 @@ class BackupReader:
         self.backup_path = Path(backup_path)
         self.guild: BackupGuild | None = None
 
-        # Internal caches populated by start()
+        self._thread_info: Dict[int, Dict[str, Any]] = {}  # channel_id -> metadata (like name, parentID)
+
+        # Lazy loading flags
+        self._roles_loaded = False
+        self._structure_loaded = False
+        self._assets_loaded = False
+        self._members_loaded = False
+        
+        # Internal storage
         self._categories: List[BackupCategory] = []
         self._channels: List[BackupChannel] = []
         self._roles: List[BackupRole] = []
@@ -704,12 +712,11 @@ class BackupReader:
         self._stickers: List[BackupSticker] = []
         self._members: List[BackupMember] = []
         self._member_map: Dict[int, BackupMember] = {}
-        self._thread_info: Dict[int, Dict[str, Any]] = {}  # channel_id -> metadata (like name, parentID)
 
     # ── startup ──────────────────────────────────────────────────────────
 
     async def start(self):
-        """Loads all JSON files from the backup directory into memory."""
+        """Initializes the backup path and loads the server profile."""
         bp = self.backup_path
 
         # 1. Server profile -> BackupGuild
@@ -717,60 +724,95 @@ class BackupReader:
         if profile_file.exists():
             profile = json.loads(profile_file.read_text(encoding="utf-8"))
             self.guild = BackupGuild(profile, bp, reader=self)
-            logger.info(f"[Backup] Loaded server profile: {self.guild.name} ({self.guild.id})")
+            logger.info(f"[Backup] Initialized server: {self.guild.name} ({self.guild.id})")
         else:
             logger.warning(f"[Backup] server_profile/profile.json not found in {bp}")
             self.guild = None
 
-        # 2. Roles
-        roles_file = bp / "server_profile" / "roles.json"
-        if roles_file.exists():
-            roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
-            self._roles = [BackupRole(r) for r in roles_data]
-            logger.info(f"[Backup] Loaded {len(self._roles)} roles")
+    @property
+    def roles(self) -> List[BackupRole]:
+        if not self._roles_loaded:
+            roles_file = self.backup_path / "server_profile" / "roles.json"
+            if roles_file.exists():
+                logger.info(f"[Backup] Lazy-loading roles...")
+                roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
+                self._roles = [BackupRole(r) for r in roles_data]
+            self._roles_loaded = True
+        return self._roles
 
-        # 3. Structure -> categories + channels
-        struct_file = bp / "server_profile" / "structure.json"
+    @property
+    def categories(self) -> List[BackupCategory]:
+        self._ensure_structure_loaded()
+        return self._categories
+
+    @property
+    def channels(self) -> List[BackupChannel]:
+        self._ensure_structure_loaded()
+        return self._channels
+
+    def _ensure_structure_loaded(self):
+        if self._structure_loaded:
+            return
+        struct_file = self.backup_path / "server_profile" / "structure.json"
         if struct_file.exists():
+            logger.info(f"[Backup] Lazy-loading server structure...")
             structure = json.loads(struct_file.read_text(encoding="utf-8"))
             for cat_data in structure:
                 cat = BackupCategory(cat_data)
-                if cat.id != 0:  # skip 'uncategorized' as a real category
+                if cat.id != 0:
                     self._categories.append(cat)
-
                 for ch_data in cat_data.get("channels", []):
                     ch_cat_id = cat.id if cat.id != 0 else None
                     channel = BackupChannel(ch_data, category_id=ch_cat_id, guild=self.guild)
                     self._channels.append(channel)
+        self._structure_loaded = True
 
-            logger.info(f"[Backup] Loaded {len(self._categories)} categories, "
-                        f"{len(self._channels)} channels")
+    @property
+    def emojis(self) -> List[BackupEmoji]:
+        self._ensure_assets_loaded()
+        return self._emojis
 
-        # 4. Assets (emojis + stickers)
-        assets_file = bp / "server_profile" / "assets.json"
-        media_dir = bp / "server_profile" / "assets"
+    @property
+    def stickers(self) -> List[BackupSticker]:
+        self._ensure_assets_loaded()
+        return self._stickers
+
+    def _ensure_assets_loaded(self):
+        if self._assets_loaded:
+            return
+        assets_file = self.backup_path / "server_profile" / "assets.json"
+        media_dir = self.backup_path / "server_profile" / "assets"
         if assets_file.exists():
+            logger.info(f"[Backup] Lazy-loading assets...")
             assets = json.loads(assets_file.read_text(encoding="utf-8"))
             self._emojis = [BackupEmoji(e, media_dir) for e in assets.get("emojis", [])]
             self._stickers = [BackupSticker(s, media_dir) for s in assets.get("stickers", [])]
-            logger.info(f"[Backup] Loaded {len(self._emojis)} emojis, "
-                        f"{len(self._stickers)} stickers")
+        self._assets_loaded = True
 
-        # 5. Users
-        user_info_file = bp / "message_backup" / "users" / "user_info.json"
+    @property
+    def members(self) -> List[BackupMember]:
+        self._ensure_members_loaded()
+        return self._members
+
+    def _ensure_members_loaded(self):
+        if self._members_loaded:
+            return
+        user_info_file = self.backup_path / "message_backup" / "users" / "user_info.json"
         if user_info_file.exists():
+            logger.info(f"[Backup] Lazy-loading members...")
             try:
                 users = json.loads(user_info_file.read_text(encoding="utf-8"))
-                backup_root = bp / "message_backup"
+                backup_root = self.backup_path / "message_backup"
                 for u in users:
                     user_role_ids = {int(r["id"]) for r in u.get("userRoles", [])}
-                    role_objs = [r for r in self._roles if r.id in user_role_ids]
+                    # Note: this triggers roles lazy load
+                    role_objs = [r for r in self.roles if r.id in user_role_ids]
                     member = BackupMember(u, role_objects=role_objs, avatar_base=backup_root)
                     self._members.append(member)
                     self._member_map[member.id] = member
-                logger.info(f"[Backup] Loaded {len(self._members)} users")
             except Exception as e:
-                logger.warning(f"[Backup] Failed to load user_info.json: {e}")
+                logger.warning(f"[Backup] Failed to lazy-load user_info.json: {e}")
+        self._members_loaded = True
 
     # ── validation ───────────────────────────────────────────────────────
 

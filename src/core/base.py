@@ -89,6 +89,16 @@ class MigrationContext:
                 "target_community_name": t_valid.get("community_name"),
                 "target_permissions": t_valid.get("permissions", {})
             }
+            
+            # CONSISTENCY: Once target metadata is known, initialize the flat SQLite DB.
+            if results["target_community"] and results["target_community_name"]:
+                import re
+                clean_name = re.sub(r'[^\w\s-]', '', results["target_community_name"]).strip()
+                clean_name = re.sub(r'[-\s]+', '_', clean_name)
+                db_community_id = str(self.config.target_server_id or "")
+                self.state.set_folder(db_community_id, clean_name, base_dir=base_dir)
+                
+            return results
         except Exception as e:
             logger.error(f"Validation failed with exception: {e}")
             return {
