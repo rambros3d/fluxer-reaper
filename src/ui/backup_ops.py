@@ -121,20 +121,16 @@ class BackupPane(Container):
             self._update_ui(f"[red]Error: {e}[/red]", "", "", False, False)
 
     def _get_backup_info(self) -> str | None:
-        base_dir = Path(f"ReaperFiles-{self.cfg_name}")
-        if not base_dir.exists():
+        if not self.config or not self.config.discord_server_id:
             return None
             
-        target_dir = None
-        for child in base_dir.iterdir():
-            if child.is_dir() and (child / "server_profile" / "profile.json").exists():
-                target_dir = child
-                break
-                
-        if not target_dir:
+        target_dir = Path(f"ReaperFiles-{self.cfg_name}") / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        if not target_dir.exists():
             return None
             
         profile_file = target_dir / "server_profile" / "profile.json"
+        if not profile_file.exists():
+            return None
         try:
             with open(profile_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -183,7 +179,8 @@ class BackupPane(Container):
             self.run_backup_sync()
         elif bid == "bp_backup_stats":
             from src.ui.backup_stats import BackupStatsScreen
-            self.app.push_screen(BackupStatsScreen(self.cfg_name))
+            target_dir = Path(f"ReaperFiles-{self.cfg_name}") / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+            self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
 
     # ── workers ───────────────────────────────────────────────────────────
 

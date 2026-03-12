@@ -148,10 +148,10 @@ class BackupStatsScreen(Screen[None]):
     }
     """
 
-    def __init__(self, profile_name: str, *args, **kwargs):
+    def __init__(self, profile_name: str, target_dir: Path, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.profile_name = profile_name
-        self.base_dir = Path(f"ReaperFiles-{self.profile_name}")
+        self.target_dir = target_dir
         self.profile_path = None
         self.backup_path = None
 
@@ -252,22 +252,13 @@ class BackupStatsScreen(Screen[None]):
     @work(exclusive=True)
     async def load_data(self) -> None:
         try:
-            # Locate the correct backup directory inside base_dir
-            if not self.base_dir.exists():
-                raise FileNotFoundError(f"Config directory {self.base_dir} not found.")
+            # Locate the correct backup directory passed from backup_ops
+            if not self.target_dir.exists():
+                raise FileNotFoundError(f"Config directory {self.target_dir} not found.")
 
-            target_dir = None
-            # The exporter creates directories like DISCORD_BACKUP-<id> or <name>-<id>
-            # We look for the first one that contains a server_profile
-            for child in self.base_dir.iterdir():
-                if child.is_dir() and (child / "server_profile" / "profile.json").exists():
-                    target_dir = child
-                    # If it's a recent backup, prefer it. We'll simply grab the first valid one if multiple exist.
-                    # Usually there's only one valid backup per profile.
-                    break
-            
-            if not target_dir:
-                raise FileNotFoundError(f"No valid backup found in {self.base_dir}")
+            target_dir = self.target_dir
+            if not (target_dir / "server_profile" / "profile.json").exists():
+                raise FileNotFoundError(f"No valid backup found in {self.target_dir}")
                 
             self.profile_path = target_dir / "server_profile"
             self.backup_path = target_dir / "message_backup"
