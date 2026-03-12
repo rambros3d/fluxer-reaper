@@ -884,8 +884,8 @@ class BackupReader:
         self._member_map[uid] = stub
         return stub
 
-    def _load_channel_messages(self, channel_id: int) -> list[dict]:
-        """Loads the messages array from a channel JSON file."""
+    def _load_channel_messages_data(self, channel_id: int) -> list[dict]:
+        """Loads the raw messages array from a channel JSON file."""
         bp = self.backup_path / "message_backup"
         
         # Primary: message_backup/{channel_id}/messages.json
@@ -957,6 +957,7 @@ class BackupReader:
         channel_id: int,
         limit: int = None,
         after_id: int = None,
+        inclusive: bool = False
     ) -> AsyncGenerator["BackupMessage", None]:
         """Yields BackupMessages from the backup, respecting after_id and limit."""
         messages = self._load_channel_messages(channel_id)
@@ -964,8 +965,11 @@ class BackupReader:
 
         for m in messages:
             msg_id = int(m["messageID"])
-            if after_id and msg_id < after_id:
-                continue
+            if after_id:
+                if inclusive and msg_id < after_id:
+                    continue
+                if not inclusive and msg_id <= after_id:
+                    continue
 
             yield self._hydrate_message(m, channel_id)
             count += 1
