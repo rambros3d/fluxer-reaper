@@ -15,6 +15,7 @@ from textual.screen import Screen
 
 from src.core.configuration import load_config
 from src.ui.shuttle_ops import OperationPane
+from src.ui.widgets import RamDisplay, Footnote
 
 
 class ModeScreen(Screen):
@@ -138,6 +139,8 @@ class ModeScreen(Screen):
                         yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()
+        yield Footnote()
+        yield RamDisplay()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id

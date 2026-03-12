@@ -9,13 +9,14 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.widgets import (
     Header, Footer, Button, Label, Input, ListItem,
-    ListView, Rule, RadioButton, RadioSet, Select,
+    ListView, Rule, RadioButton, RadioSet, Select, Static,
 )
 from textual.screen import Screen, ModalScreen
 
 from src.core.configuration import (
     get_available_configs, create_new_config, load_config, save_config,
 )
+from src.ui.widgets import RamDisplay
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -100,6 +101,7 @@ class ConfigSelectionScreen(Screen):
                 yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
                 yield Button("Exit", id="btn_exit", variant="error")
         yield Footer()
+        yield RamDisplay()
 
     def on_mount(self) -> None:
         self.refresh_configs()
@@ -298,6 +300,7 @@ class ConfigScreen(Screen):
                     yield Button("Save Configuration", variant="success", id="btn_save", tooltip="Save all changes to config.yaml")
                     yield Button("Back", id="btn_back")
         yield Footer()
+        yield RamDisplay()
 
     def on_mount(self) -> None:
         self._toggle_target_section()
@@ -487,6 +490,16 @@ class ReaperApp(App):
     SCREENS = {
         "config_selection": ConfigSelectionScreen,
     }
+
+    DEFAULT_CSS = """
+    RamDisplay {
+        dock: bottom;
+        width: 30;
+        height: 1;
+        margin-left: 2;
+        color: green;
+    }
+    """
 
     def on_mount(self) -> None:
         self.push_screen("config_selection")

@@ -7,6 +7,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll, Container, 
 from textual.widgets import Button, Label, Input, ProgressBar, RichLog, Rule, RadioButton, LoadingIndicator, Header, Footer, RadioSet, OptionList
 from textual.widgets.option_list import Option
 from textual.screen import ModalScreen, Screen
+from src.ui.widgets import RamDisplay
 
 
 import time
@@ -113,6 +114,7 @@ class ProgressScreen(Screen[None]):
                     with Horizontal(classes="action_row", id="prog_actions_cancel"):
                         yield Button("Back", id="btn_cancel", variant="default", tooltip="Stop current operation")
         yield Footer()
+        yield RamDisplay()
 
     def __init__(self, log_level: str = "INFO", *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -419,6 +421,7 @@ class SubMenuModal(ModalScreen[str]):
                 yield Button(label, id=btn_id, variant=variant)
             yield Rule(id="footer_rule")
             yield Button("Cancel", id="btn_cancel_sub")
+        yield RamDisplay()
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "btn_cancel_sub":
@@ -475,6 +478,7 @@ class OptionSelectModal(ModalScreen[list[str]]):
             with Horizontal(id="opt_buttons"):
                 yield Button("Proceed", variant="success", id="btn_opt_ok", tooltip="Proceed with the selected options")
                 yield Button("Back", id="btn_opt_back", tooltip="Return to the previous menu")
+        yield RamDisplay()
 
     def on_button_pressed(self, event: Button.Pressed):
         if event.button.id == "btn_opt_back":
@@ -618,6 +622,7 @@ class ChannelPickerScreen(Screen[tuple]):
                     yield Button("Select", variant="success", id="btn_pick_ok", tooltip="Confirm selection and start migration")
                     yield Button("Back", id="btn_pick_back", tooltip="Cancel selection")
         yield Footer()
+        yield RamDisplay()
 
     def on_mount(self) -> None:
         """Set initial highlights after mounting."""
@@ -805,7 +810,8 @@ class ChannelSelectScreen(Screen[dict]):
                         yield Button("Backup", variant="success", id="btn_backup", tooltip="Start backing up selected channels")
                     yield Button("Back", id="btn_cancel_chan", tooltip="Cancel and go back")
         yield Footer()
-
+        yield RamDisplay()
+        
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_all":
             for cb in self.query(RadioButton):
@@ -874,6 +880,7 @@ class MessageIDInputModal(ModalScreen[int | None]):
             with Horizontal(id="msg_id_buttons"):
                 yield Button("Verify", variant="primary", id="btn_verify_start", disabled=True, tooltip="Check if this message ID exists in the channel")
                 yield Button("Back", variant="warning", id="btn_cancel_msg_id", tooltip="Cancel and go back")
+        yield RamDisplay()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "input_msg_id":
@@ -970,6 +977,7 @@ class ChannelNameInputModal(ModalScreen[str | None]):
             with Horizontal(id="chan_name_buttons"):
                 yield Button("Create", variant="success", id="btn_create_chan")
                 yield Button("Back", id="btn_cancel_chan_name")
+        yield RamDisplay()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_cancel_chan_name":
@@ -1028,6 +1036,7 @@ class ChannelIDInputModal(ModalScreen[dict | None]):
             with Horizontal(id="chan_id_buttons"):
                 yield Button("Verify", variant="primary", id="btn_verify_chan", disabled=True)
                 yield Button("Back", variant="warning", id="btn_cancel_chan_id")
+        yield RamDisplay()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         if event.input.id == "input_chan_id":
@@ -1076,3 +1085,4 @@ class ChannelIDInputModal(ModalScreen[dict | None]):
                 btn.variant = "success"
             else:
                 preview.update(f"[bold red]No channel found with ID: {chan_id_str}[/bold red]\n[dim]Make sure the ID belongs to a channel in the target community.[/dim]")
+        yield RamDisplay()

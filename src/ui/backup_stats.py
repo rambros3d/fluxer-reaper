@@ -7,6 +7,7 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.widgets import Button, Label, Rule, Tree
+from src.ui.widgets import RamDisplay
 from textual import work
 from rich.text import Text
 from rich.style import Style
@@ -211,6 +212,7 @@ class BackupStatsScreen(Screen[None]):
 
             with Horizontal(id="bs_actions"):
                 yield Button("Back", id="btn_back", variant="default")
+        yield RamDisplay()
 
     def on_mount(self) -> None:
         self.stats_tree = self.query_one("#stats_tree", Tree)
