@@ -37,14 +37,21 @@ class RamDisplay(Static):
             curr_net_io = psutil.net_io_counters()
             curr_time = time.time()
             
+            # Check if this is the first call or too soon
+            if not hasattr(self, "_prev_net_io") or self._prev_net_io is None:
+                self._prev_net_io = curr_net_io
+                self._prev_time = curr_time
+                self.update(f" RAM: [yellow]{ram_usage}[/yellow] | Net: [cyan]0.0 B/s[/cyan]")
+                return
+
             delta_time = curr_time - self._prev_time
-            if delta_time <= 0:
-                delta_time = 1.0
+            if delta_time < 0.5: # Don't calculate for very small intervals to avoid spikes
+                return
                 
             sent_speed = (curr_net_io.bytes_sent - self._prev_net_io.bytes_sent) / delta_time
             recv_speed = (curr_net_io.bytes_recv - self._prev_net_io.bytes_recv) / delta_time
             
-            # Simple combined speed display or separately
+            # Combined speed display
             speed_str = self._format_speed(sent_speed + recv_speed)
             
             self._prev_net_io = curr_net_io

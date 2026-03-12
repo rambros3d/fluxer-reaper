@@ -483,7 +483,7 @@ class ReaperApp(App):
     DEFAULT_CSS = """
     RamDisplay {
         dock: bottom;
-        width: 30;
+        width: 35;
         height: 1;
         margin-left: 2;
         color: green;
