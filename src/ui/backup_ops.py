@@ -388,9 +388,12 @@ class BackupPane(Container):
                 modal_prog.write(f"[cyan]{label}: {chan.name}[/cyan]")
                 logger.info(f"{label} for channel: #{chan.name} ({chan.id})")
 
+                _msg_log_counter = 0
                 async def update_msg_count(name, count, author_name=None, message_preview=None):
+                    nonlocal _msg_log_counter
                     modal_prog.update_stats(messages=str(count))
-                    if author_name and message_preview:
+                    _msg_log_counter += 1
+                    if author_name and message_preview and _msg_log_counter % 10 == 0:
                         modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
                 accumulated_msgs = await self.exporter.export_channel_messages(
@@ -513,9 +516,12 @@ class BackupPane(Container):
                     modal_prog.write(f"[cyan]Syncing: {chan.name}[/cyan]")
                     logger.info(f"Syncing backup for channel: #{chan.name} ({chan.id})")
 
+                    _msg_log_counter = 0
                     async def update_msg_count(name, count, author_name=None, message_preview=None):
+                        nonlocal _msg_log_counter
                         modal_prog.update_stats(messages=str(count))
-                        if author_name and message_preview:
+                        _msg_log_counter += 1
+                        if author_name and message_preview and _msg_log_counter % 10 == 0:
                             modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
                     accumulated_msgs = await self.exporter.export_channel_messages(
