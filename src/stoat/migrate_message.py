@@ -128,6 +128,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
         if progress_callback and stats["messages"] % 10 == 0:
             await progress_callback(stats)
 
+
     return stats
 
 
@@ -195,6 +196,9 @@ async def migrate_messages(
                         channel_id=target_channel_id,
                         content=f"> <<< END OF THREAD >>>"
                     )
+                    
+                if progress_callback:
+                    await progress_callback(stats)
                 continue
             else:
                 # Use custom clean_mentions with msg mentions for accuracy
@@ -382,10 +386,6 @@ async def migrate_messages(
                 stats["last_message_content"] = content
                 stats["last_message_author"] = msg.author.display_name
                 
-                # Periodic log
-                if stats["messages"] % 50 == 0:
-                    logger.info(f"Progress: Migrated {stats['messages']} messages in this channel.")
-
                 # Check for associated thread (Normal case: parent message is migrated)
                 if hasattr(msg, 'thread') and msg.thread:
                     thread = msg.thread

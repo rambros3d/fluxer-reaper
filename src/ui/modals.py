@@ -55,20 +55,20 @@ class ProgressScreen(Screen[None]):
     #prog_stats { 
         height: auto; 
         layout: horizontal; 
-        border: solid cyan; 
-        padding: 1; 
         margin-bottom: 0; 
         display: none; 
     }
     .stat_label { width: 1fr; content-align: center middle; text-style: bold; }
+    #stats_rule { display: none; margin: 0; }
     
     #prog_log { height: 1fr; margin-bottom: 0; border: solid $primary; }
     #live_log { height: 10; margin-bottom: 0; border: solid yellow; }
     
-    #prog_item_status { margin-bottom: 1; text-style: bold; color: cyan; width: 100%; text-align: center; }
+    #prog_item_status { margin-bottom: 0; text-style: bold; color: cyan; width: 100%; text-align: center; }
     
     #info_container { height: auto; layout: vertical; border: solid cyan; padding: 1; margin-bottom: 0; display: none; }
     .info_label { text-style: bold; content-align: center middle; width: 100%; color: cyan; }
+
     
     #prog_actions { height: auto; margin-top: 0; dock: bottom; margin-bottom: 0; layout: vertical; }
     .action_row { height: auto; layout: horizontal; }
@@ -86,16 +86,17 @@ class ProgressScreen(Screen[None]):
                     yield LoadingIndicator(id="prog_loader")
                     yield Label("00:00", id="prog_timer")
                 
-                with Horizontal(id="prog_stats"):
-                    yield Label("Messages: 0", id="stat_messages", classes="stat_label")
-                    yield Label("Threads: 0", id="stat_threads", classes="stat_label")
-                    yield Label("Files: 0", id="stat_files", classes="stat_label")
-
-
                 with Vertical(id="info_container"):
+                    with Horizontal(id="prog_stats"):
+                        yield Label("Messages: 0", id="stat_messages", classes="stat_label")
+                        yield Label("Threads: 0", id="stat_threads", classes="stat_label")
+                        yield Label("Files: 0", id="stat_files", classes="stat_label")
+                    
+                    yield Rule(id="stats_rule")
                     yield Label("", id="info_migration_status", classes="info_label")
                     yield Label("", id="info_new_items", classes="info_label")
                     yield Label("", id="prog_item_status")
+
 
                 yield RichLog(id="prog_log", highlight=True, markup=True)
                 yield RichLog(id="live_log", highlight=True, markup=True)
@@ -221,8 +222,11 @@ class ProgressScreen(Screen[None]):
     def show_stats(self):
         try:
             self.query_one("#prog_stats", Horizontal).display = True
+            self.query_one("#stats_rule", Rule).display = True
+            self.query_one("#info_container", Vertical).display = True
         except Exception:
             pass
+
 
     def update_stats(self, **kwargs):
         # kwargs can be messages, threads, files

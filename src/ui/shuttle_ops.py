@@ -983,7 +983,29 @@ class ShuttlePane(Container):
                     after_id = verified_id
                 else:
                     logger.info("Proceeding with 'Start from First' (clean sink).")
+                    after_id = None
                 
+                # If after_id changed from the initial analysis, we must re-analyze 
+                # to get the correct total count for the UI fraction (e.g. Messages: 8/8 instead of 8/1)
+                initial_after = int(last_migrated) if last_migrated else None
+                if after_id != initial_after:
+                    modal.set_status("Re-analyzing channel from new starting point...")
+                    try:
+                        self.engine.is_running = True
+                        stats_analysis = await migrate_mod.analyze_migration(
+                            self.engine,
+                            source_channel_id=source_channel.id,
+                            after_message_id=after_id,
+                            progress_callback=update_scan,
+                        )
+                        modal.update_stats(
+                            messages=stats_analysis['messages'],
+                            threads=stats_analysis['threads'],
+                            files=stats_analysis['attachments']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to re-analyze for correct totals: {e}")
+
                 # If we are here, we are proceeding with migration
                 break
 

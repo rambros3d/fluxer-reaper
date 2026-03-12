@@ -208,15 +208,28 @@ class DiscordReader:
     async def get_first_message(self, channel_id: int):
         """Returns the first (oldest) message in a channel."""
         channel = await self.get_channel(channel_id)
-        if isinstance(channel, discord.TextChannel) or isinstance(channel, discord.Thread):
+        if hasattr(channel, 'history'):
             async for message in channel.history(limit=1, oldest_first=True):
                 return message
+        elif isinstance(channel, discord.ForumChannel):
+            # For forums, find the oldest thread and get its starter message
+            threads = []
+            threads.extend(channel.threads)
+            async for arch_thread in channel.archived_threads(limit=None):
+                threads.append(arch_thread)
+            if threads:
+                threads.sort(key=lambda t: t.id)
+                oldest_thread = threads[0]
+                try:
+                    return await oldest_thread.fetch_message(oldest_thread.id)
+                except Exception:
+                    pass
         return None
 
     async def fetch_message_history(self, channel_id: int, limit: int = None, after_id: int = None, inclusive: bool = False) -> AsyncGenerator[discord.Message, None]:
         """Yields messages from a given channel, optionally handling pagination."""
         channel = await self.get_channel(channel_id)
-        if isinstance(channel, discord.TextChannel) or isinstance(channel, discord.Thread):
+        if hasattr(channel, 'history'):
             # Discord's 'after' is exclusive. To make it inclusive, we use after_id - 1 if requested.
             after = None
             if after_id:
@@ -225,6 +238,32 @@ class DiscordReader:
             # To avoid exploding RAM, we yield items one by one
             async for message in channel.history(limit=limit, oldest_first=True, after=after):
                 yield message
+        elif isinstance(channel, discord.ForumChannel):
+            logger.info(f"Fetching message history for ForumChannel {channel.name} ({channel.id}) oldest_first=True after={after_id} inclusive={inclusive}")
+            threads = []
+            threads.extend(channel.threads)
+            async for arch_thread in channel.archived_threads(limit=None):
+                threads.append(arch_thread)
+            
+            # Sort threads chronologically (by ID)
+            threads.sort(key=lambda t: t.id)
+            
+            for thread in threads:
+                if after_id:
+                    if not inclusive and thread.id <= after_id:
+                        continue
+                    if inclusive and thread.id < after_id:
+                        continue
+                
+                try:
+                    # In a forum, the starter message ID is the thread ID
+                    starter = await thread.fetch_message(thread.id)
+                    # Bind the thread so migrate_messages handles it properly
+                    if not hasattr(starter, 'thread') or starter.thread is None:
+                        starter.thread = thread
+                    yield starter
+                except Exception as e:
+                    logger.debug(f"Could not fetch starter message for forum thread {thread.id}: {e}")
 
     async def download_emoji(self, emoji: discord.Emoji) -> bytes:
         """Downloads a Discord emoji into memory."""
