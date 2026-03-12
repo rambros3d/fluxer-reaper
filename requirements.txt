@@ -8,3 +8,4 @@ pydantic # Data validation using Python type hints
 lottie # Lottie file manipulation and conversion
 Pillow # Image processing (required for GIF rendering)
 cairosvg # SVG rendering (required for Lottie conversion)
+psutil
