@@ -140,11 +140,10 @@ class OperationPane(Container):
 
             with Vertical(id="op_actions"):
                 if self.view_mode == "backup":
-                    yield Button("Backup Server Profile", id="op_backup_profile", disabled=True, tooltip="Backup Discord server roles, emojis, and channel structure")
-                    yield Button("Backup Channel Messages", id="op_backup_msgs", disabled=True, variant="primary", tooltip="Select and backup message history from text channels")
+                    yield Button("Backup Channel Messages", id="op_backup_msgs", disabled=True, tooltip="Select and backup message history from text channels")
                     yield Button("Update Existing Backup", id="op_backup_sync", disabled=True, variant="success", tooltip="Scan for new messages\n& Update existing backup")
                     yield Rule(id="op_backup_stats_rule")
-                    yield Button("Backup Stats", id="op_backup_stats", variant="warning", flat=True, disabled=True, tooltip="View detailed statistics, storage, and entity metrics for the current backup profile")
+                    yield Button("Backup Stats", id="op_backup_stats", variant="primary", flat=True, disabled=True, tooltip="View detailed statistics, storage, and entity metrics for the current backup profile")
                 else:
                     yield Button("Clone Server Template", id="op_clone", disabled=True, tooltip="Clone server roles, categories, and channels to the target community")
                     yield Button("Sync Server Settings", id="op_sync", disabled=True, tooltip="Sync emojis, stickers, server name, and icon to the target community")
@@ -280,7 +279,7 @@ class OperationPane(Container):
             self.query_one("#op_target_pane").display = False
             
             enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
-            for bid in ("#op_backup_profile", "#op_backup_msgs", "#op_backup_sync"):
+            for bid in ("#op_backup_msgs", "#op_backup_sync"):
                 self.query_one(bid, Button).disabled = not enabled
                 
             self.query_one("#op_backup_stats", Button).display = self.has_backup
@@ -470,8 +469,6 @@ class OperationPane(Container):
             self._open_danger_menu()
             
         # Backup Routing
-        elif bid == "op_backup_profile":
-            self.run_backup_profile()
         elif bid == "op_backup_msgs":
             self.run_backup_messages()
         elif bid == "op_backup_sync":
@@ -1683,58 +1680,6 @@ class OperationPane(Container):
 
     # ── backup workers ───────────────────────────────────────────────────
 
-    @work(exclusive=True)
-    async def run_backup_profile(self) -> None:
-        modal = ProgressScreen(log_level=self.config.log_level)
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
-        modal.phase_progress()
-
-        try:
-            modal.set_status("Starting readers...")
-            await self.engine.discord_reader.start()
-            await self.exporter.setup()
-
-            # Gather and print summary
-            server = getattr(self.engine.discord_reader, 'guild', None)
-            if server:
-                modal.write(f"[bold cyan]Server Profile to Backup:[/bold cyan]")
-                modal.write(f"  Name: [green]{server.name}[/green]")
-                modal.write(f"  Icon: [green]{'Present' if server.icon else 'None'}[/green]")
-                modal.write(f"  Roles: [green]{len(getattr(server, 'roles', []))}[/green]")
-                modal.write(f"  Emojis: [green]{len(getattr(server, 'emojis', []))}[/green]")
-                modal.write(f"  Channels: [green]{len(getattr(server, 'channels', []))}[/green]")
-                modal.write("")
-
-            modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
-            modal.phase_progress()
-            modal.set_status("Exporting Server Structure...")
-            modal.write("[yellow]Backing up server profile & skeleton...[/yellow]")
-            await self.exporter.export_metadata()
-            await self.exporter.download_server_assets()
-
-            modal.write("Exporting structure...")
-            _, cat_count, chan_count = await self.exporter.export_channels_structure()
-
-            modal.write("Exporting roles...")
-            roles = await self.exporter.export_roles()
-
-            modal.write("Exporting assets...")
-            e_count, s_count = await self.exporter.export_assets()
-
-            modal.write(f"[bold green]Server Profile backed up to: {self.exporter.export_path}[/bold green]")
-            modal.write(f"- {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
-            modal.phase_report("Profile Backup", show_back=False)
-
-        except self.engine.discord_reader.Forbidden as e:
-            modal.write(f"[bold red]Backup failed: {e}[/bold red]")
-            modal.phase_report("Profile Backup", "error")
-        except Exception as e:
-            modal.write(f"[bold red]Error: {e}[/bold red]")
-            modal.phase_report("Profile Backup", "error")
-        finally:
-            await self.engine.close_connections()
-            self.run_validate()
 
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
@@ -1747,7 +1692,38 @@ class OperationPane(Container):
             await self.engine.discord_reader.start()
             await self.exporter.setup()
 
-            await self.exporter.export_channels_structure()
+            # Check if profile is empty
+            profile_exists = False
+            if self.exporter.db:
+                try:
+                    profile_exists = self.exporter.db.get_guild_profile() is not None
+                except Exception:
+                    profile_exists = False
+            
+            if not profile_exists:
+                modal_prog.set_status("First-Time Setup: Exporting Server Profile...")
+                modal_prog.write("[yellow]No existing profile found. Performing primary profile backup...[/yellow]")
+                
+                modal_prog.write("[yellow]Exporting server metadata...[/yellow]")
+                await self.exporter.export_metadata()
+                
+                modal_prog.write("[yellow]Syncing server assets (icon/banner)...[/yellow]")
+                await self.exporter.download_server_assets()
+                
+                modal_prog.write("[yellow]Exporting server structure...[/yellow]")
+                await self.exporter.export_channels_structure()
+                
+                modal_prog.write("[yellow]Exporting roles & permissions...[/yellow]")
+                await self.exporter.export_roles()
+                
+                modal_prog.write("[yellow]Exporting custom emojis & stickers...[/yellow]")
+                await self.exporter.export_assets()
+                
+                modal_prog.write("[bold green]Primary profile setup complete![/bold green]")
+                modal_prog.write("")
+            else:
+                modal_prog.write("[dim]Existing profile detected. Scanning structure...[/dim]")
+                await self.exporter.export_channels_structure()
             all_channels = await self.engine.discord_reader.get_channels()
             all_categories = await self.engine.discord_reader.get_categories()
             cat_map = {c.id: c.name for c in all_categories}
@@ -1966,12 +1942,25 @@ class OperationPane(Container):
 
             modal_prog.cancel_callback = lambda: setattr(self.engine, "is_running", False)
             modal_prog.phase_progress()
-            modal_prog.set_status("Updating structure...")
-            modal_prog.write("Updating structure...")
+            modal_prog.set_status("Updating Server Profile & Structure...")
+            
+            modal_prog.write("[yellow]Updating server metadata...[/yellow]")
             await self.exporter.export_metadata()
+            
+            modal_prog.write("[yellow]Syncing server assets (icon/banner)...[/yellow]")
             await self.exporter.download_server_assets()
+            
+            modal_prog.write("[yellow]Syncing server structure & channels...[/yellow]")
             await self.exporter.export_channels_structure()
-            await self.exporter.export_assets()
+            
+            modal_prog.write("[yellow]Syncing roles & permissions...[/yellow]")
+            roles = await self.exporter.export_roles()
+            
+            modal_prog.write("[yellow]Syncing custom emojis & stickers...[/yellow]")
+            e_count, s_count = await self.exporter.export_assets()
+            
+            modal_prog.write(f"[bold green]Profile Sync Complete:[/bold green] {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
+            modal_prog.write("")
 
             all_channels = await self.engine.discord_reader.get_channels()
             eligible_channels = [
