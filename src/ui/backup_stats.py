@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 from datetime import datetime
 import asyncio
@@ -7,10 +8,14 @@ from textual.app import ComposeResult
 from textual.screen import Screen
 from textual.containers import Container, Vertical, VerticalScroll, Horizontal
 from textual.widgets import Button, Label, Rule, Tree
-from src.ui.widgets import RamDisplay
 from textual import work
 from rich.text import Text
 from rich.style import Style
+
+from src.ui.widgets import RamDisplay
+from src.core.backup_reader import BackupReader, ChannelType
+
+logger = logging.getLogger(__name__)
 
 class BackupStatsScreen(Screen[None]):
     """Full-screen view for displaying detailed backup statistics."""
@@ -254,178 +259,133 @@ class BackupStatsScreen(Screen[None]):
     @work(exclusive=True)
     async def load_data(self) -> None:
         try:
-            # Locate the correct backup directory passed from backup_ops
-            if not self.target_dir.exists():
-                raise FileNotFoundError(f"Config directory {self.target_dir} not found.")
-
-            target_dir = self.target_dir
-            if not (target_dir / "server_profile" / "profile.json").exists():
+            # Initialize BackupReader
+            reader = BackupReader(self.target_dir)
+            await reader.start()
+            
+            if not reader.guild:
                 raise FileNotFoundError(f"No valid backup found in {self.target_dir}")
-                
-            self.profile_path = target_dir / "server_profile"
-            self.backup_path = target_dir / "message_backup"
-
+            
             # 1. Profile / Server Info
-            server_name = "Unknown Server"
-            server_id = "0"
+            guild = reader.guild
+            server_name = guild.name
+            server_id = str(guild.id)
+            
+            # Get last backup info from guild profile
+            profile = reader.db.get_guild_profile()
             last_backup_str = "Never"
-            profile_file = self.profile_path / "profile.json"
-            if profile_file.exists():
-                with open(profile_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    server_name = data.get("name", server_name)
-                    server_id = data.get("id", server_id)
-                    ts = data.get("last_backup")
-                    if ts:
-                        try:
-                            dt = datetime.fromisoformat(ts)
-                            last_backup_str = dt.strftime("%d %b, %Y - %H:%M")
-                        except Exception:
-                            last_backup_str = ts
+            ts = profile.get("last_backup")
+            if ts:
+                try:
+                    dt = datetime.fromisoformat(ts)
+                    last_backup_str = dt.strftime("%d %b, %Y - %H:%M")
+                except Exception:
+                    last_backup_str = ts
             
             self.query_one("#bs_name", Label).update(f"{server_name}")
             self.query_one("#bs_id", Label).update(f"{server_id}")
             self.query_one("#bs_last_backup", Label).update(f"{last_backup_str}")
 
-            # 2. Assets / Entities
-            member_count = 0
-            emoji_count = 0
-            sticker_count = 0
-            
-            # Fetch members from users/user_info.json
-            if self.backup_path:
-                user_info_file = self.backup_path / "users" / "user_info.json"
-                if user_info_file.exists():
-                    try:
-                        with open(user_info_file, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                member_count = len(data)
-                            elif isinstance(data, dict):
-                                member_count = len(data)
-                    except Exception:
-                        pass
-                        
-            assets_file = self.profile_path / "assets.json"
-            if assets_file.exists():
-                with open(assets_file, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    emoji_count = len(data.get("emojis", []))
-                    sticker_count = len(data.get("stickers", []))
-                    
-            role_count = 0
-            roles_file = self.profile_path / "roles.json"
-            if roles_file.exists():
-                with open(roles_file, "r", encoding="utf-8") as f:
-                    role_count = len(json.load(f))
+            # 2. Assets / Entities (using properties)
+            member_count = len(reader.members)
+            emoji_count = len(reader.emojis)
+            sticker_count = len(reader.stickers)
+            role_count = len(reader.roles)
 
             self.query_one("#bs_val_members", Label).update(f"{member_count}")
             self.query_one("#bs_val_roles", Label).update(f"{role_count}")
             self.query_one("#bs_val_emojis", Label).update(f"{emoji_count}")
             self.query_one("#bs_val_stickers", Label).update(f"{sticker_count}")
 
-            # 3. Structure & Per-Channel Stats
-            structure_file = self.profile_path / "structure.json"
-            total_channels = 0
-            backed_up_channels = 0
+            # 3. Aggregate Stats from DB
+            channel_stats = reader.db.get_stats_by_channel()
             
-            total_msgs = 0
-            total_threads = 0
-            total_files = 0
-            total_size = 0
+            total_msgs = sum(s["message_count"] for s in channel_stats.values())
+            total_threads = sum(s["thread_count"] for s in channel_stats.values())
+            total_files = sum(s["attachment_count"] for s in channel_stats.values())
+            total_size = sum(s["total_size"] for s in channel_stats.values())
             
-            cat_nodes = [] # Collect category data
+            backed_up_channel_ids = set(channel_stats.keys())
+            
+            # 4. Structure & Per-Channel Stats
+            categories = reader.categories
+            all_channels = reader.channels
+            
+            total_channels = len([c for c in all_channels if c.type != ChannelType.category])
+            backed_up_channels = len([cid for cid in backed_up_channel_ids if any(c.id == cid for c in all_channels)])
+            
+            # Helper to map channels to categories
+            cat_map = {cat.id: {"cat": cat, "chans": []} for cat in categories}
+            cat_map[None] = {"cat": None, "chans": []} # Uncategorized
+            
+            for chan in all_channels:
+                if chan.type == ChannelType.category: continue
+                cid = chan.category_id
+                if cid not in cat_map: cid = None
+                cat_map[cid]["chans"].append(chan)
 
-            if structure_file.exists():
-                with open(structure_file, "r", encoding="utf-8") as f:
-                    structure = json.load(f)
-                    
-                for cat in structure:
-                    cat_name = cat.get("name", "Unknown Category").upper()
-                    c_msgs = 0
-                    c_thds = 0
-                    c_files = 0
-                    c_size = 0
-                    
-                    chan_list = []
-                    
-                    for chan in cat.get("channels", []):
-                        total_channels += 1
-                        ch_id = chan.get("id")
-                        ch_name = f"# {chan.get('name', 'unknown')}"
-                        
-                        m_count = 0
-                        t_count = 0
-                        f_count = 0
-                        s_bytes = 0
-                        is_backed_up = False
-                        
-                        msg_file = self.backup_path / str(ch_id) / "messages.json"
-                        if msg_file.exists():
-                            is_backed_up = True
-                            backed_up_channels += 1
-                            try:
-                                with open(msg_file, "r", encoding="utf-8") as mf:
-                                    mdata = json.load(mf)
-                                    m_count = mdata.get("messageCount", 0)
-                                    t_count = mdata.get("threadCount", 0)
-                                    f_count = mdata.get("numberOfAttachments", 0)
-                                    s_bytes = mdata.get("totalAttachmentSizeBytes", 0)
-                            except Exception:
-                                pass
-                                
-                        chan_list.append({
-                            "name": ch_name,
-                            "msgs": m_count if is_backed_up else "NA",
-                            "threads": t_count if is_backed_up else "NA",
-                            "files": f_count if is_backed_up else "NA",
-                            "size": s_bytes,
-                            "is_backed_up": is_backed_up
-                        })
-                        c_msgs += m_count
-                        c_thds += t_count
-                        c_files += f_count
-                        c_size += s_bytes
-                        
-                    total_msgs += c_msgs
-                    total_threads += c_thds
-                    total_files += c_files
-                    total_size += c_size
-                    
-                    cat_nodes.append({
-                        "name": cat_name,
-                        "channels": chan_list,
-                        "msgs": c_msgs,
-                        "threads": c_thds,
-                        "files": c_files,
-                        "size": c_size
-                    })
-
-            # 4. Global Stats
+            # Global update
             self.query_one("#bs_val_msgs", Label).update(f"{total_msgs}")
             self.query_one("#bs_val_threads", Label).update(f"{total_threads}")
             self.query_one("#bs_val_files", Label).update(f"{total_files}")
             self.query_one("#bs_val_size", Label).update(f"{self._format_size(total_size)}")
-            
             self.query_one("#bs_val_coverage", Label).update(f"{backed_up_channels} / {total_channels}")
 
             # 5. Build Tree
-            for cat in cat_nodes:
-                cat_lbl = self._format_tree_row(f"{cat['name']}", cat['msgs'], cat['threads'], cat['files'], self._format_size(cat['size']))
+            for cat_id, info in cat_map.items():
+                cat = info["cat"]
+                chans = info["chans"]
+                if not chans: continue
+                
+                cat_name = cat.name.upper() if cat else "UNCATEGORIZED"
+                
+                # Aggregate for category
+                c_msgs = 0
+                c_thds = 0
+                c_files = 0
+                c_size = 0
+                
+                chan_nodes_data = []
+                for ch in chans:
+                    stats = channel_stats.get(ch.id, {"message_count": 0, "thread_count": 0, "attachment_count": 0, "total_size": 0})
+                    is_bu = ch.id in backed_up_channel_ids
+                    
+                    chan_nodes_data.append({
+                        "name": f"# {ch.name}",
+                        "msgs": stats["message_count"] if is_bu else "NA",
+                        "threads": stats["thread_count"] if is_bu else "NA",
+                        "files": stats["attachment_count"] if is_bu else "NA",
+                        "size": stats["total_size"] if is_bu else 0,
+                        "is_backed_up": is_bu
+                    })
+                    
+                    c_msgs += stats["message_count"]
+                    c_thds += stats["thread_count"]
+                    c_files += stats["attachment_count"]
+                    c_size += stats["total_size"]
+                
+                cat_lbl = self._format_tree_row(cat_name, c_msgs, c_thds, c_files, self._format_size(c_size))
                 cat_lbl.stylize("bold yellow")
                 node = self.stats_tree.root.add(cat_lbl, expand=True)
                 
-                for ch in cat["channels"]:
-                    size_str = self._format_size(ch['size']) if ch['is_backed_up'] else "NA"
-                    ch_lbl = self._format_tree_row(f"  {ch['name']}", ch['msgs'], ch['threads'], ch['files'], size_str)
+                for ch_data in chan_nodes_data:
+                    size_str = self._format_size(ch_data['size']) if ch_data['is_backed_up'] else "NA"
+                    ch_lbl = self._format_tree_row(f"  {ch_data['name']}", ch_data['msgs'], ch_data['threads'], ch_data['files'], size_str)
                     
-                    if ch['is_backed_up']:
+                    if ch_data['is_backed_up']:
                         ch_lbl.stylize("bold white")
                     else:
-                        ch_lbl.stylize("dim white") # Textual 'dim' looks like a dull grey
+                        ch_lbl.stylize("dim white")
                     
                     node.add_leaf(ch_lbl)
 
         except Exception as e:
+            import traceback
+            logger.exception("Failed to load backup stats")
+            trace_str = traceback.format_exc()
+            logger.error(f"Full Traceback: {trace_str}")
             self.query_one("#bs_name", Label).update(f"[red]Error loading data[/red]")
             self.query_one("#bs_id", Label).update(f"[red]{e}[/red]")
+        finally:
+            if 'reader' in locals():
+                await reader.close()

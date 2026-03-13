@@ -2,9 +2,11 @@ import os
 import json
 import logging
 import asyncio
+import hashlib
 import discord
 from pathlib import Path
 from typing import Dict, Any, List, Optional, AsyncGenerator
+from src.core.backup_database import BackupDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +20,7 @@ class DiscordExporter:
         self.user_cache = {}
         self.base_dir = Path(base_dir) if base_dir else Path(".")
         self.is_running = True
+        self.db: Optional[BackupDatabase] = None
 
     async def setup(self):
         """Prepares the output directory and fetches server metadata."""
@@ -25,93 +28,94 @@ class DiscordExporter:
         self.server_name = metadata.get("name", "Unknown Server")
         self.server_id = metadata.get("id", "0")
 
-        # Create safe folder name
-        import re
-        safe_name = re.sub(r'[^a-zA-Z0-9_\-\.]', '_', self.server_name)
+        # Root export path: DISCORD_BACKUP-{id}
         self.export_path = self.base_dir / f"DISCORD_BACKUP-{self.server_id}"
         self.export_path.mkdir(parents=True, exist_ok=True)
         
-        # Server profile directory for metadata and assets
-        self.profile_path = self.export_path / "server_profile"
-        self.profile_path.mkdir(exist_ok=True)
+        # New directory structure
+        self.assets_path = self.export_path / "server_assets"
+        self.assets_path.mkdir(exist_ok=True)
         
-        # Consolidate media into server_profile/assets/
-        self.media_path = self.profile_path / "assets"
-        self.media_path.mkdir(exist_ok=True)
+        self.users_path = self.export_path / "users"
+        self.users_path.mkdir(exist_ok=True)
+
+        self.attachments_path = self.export_path / "attachments"
+        self.attachments_path.mkdir(exist_ok=True)
+
+        # Initialize SQLite database
+        db_path = self.export_path / "backup.db"
+        self.db = BackupDatabase(db_path)
         
         logger.info(f"Export directory set to: {self.export_path}")
-        logger.info(f"Targeting server: {self.server_name} ({self.server_id})")
+        logger.info(f"Initialized backup database at {db_path}")
         return metadata
 
-    def _save_json_sync(self, file_path, data):
-        """Sync helper for saving JSON, meant to be run in a thread."""
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=4, ensure_ascii=False)
-
-    async def _save_json(self, file_path, data):
-        """Async wrapper for saving JSON in a thread."""
-        await asyncio.to_thread(self._save_json_sync, file_path, data)
+    def _calculate_sha256(self, file_path: Path) -> str:
+        """Calculates SHA-256 hash of a file."""
+        hash_sha256 = hashlib.sha256()
+        with open(file_path, "rb") as f:
+            for chunk in iter(lambda: f.read(4096), b""):
+                hash_sha256.update(chunk)
+        return hash_sha256.hexdigest()
 
     async def export_metadata(self):
-        """Saves server metadata to a JSON file."""
+        """Saves server metadata to the SQLite database."""
         metadata = await self.reader.get_server_metadata()
         
-        # Add relative paths to local assets
+        # Relative paths to local assets for the UI/Reader
         if self.reader.guild:
             if self.reader.guild.icon:
                 ext = "gif" if self.reader.guild.icon.is_animated() else "png"
-                metadata["icon"] = f"server_profile/assets/server_icon.{ext}"
+                metadata["icon_file"] = f"server_assets/server_icon.{ext}"
+                metadata["icon_url"] = str(self.reader.guild.icon.url)
             else:
-                metadata["icon"] = None
+                metadata["icon_file"] = None
+                metadata["icon_url"] = None
                 
             if self.reader.guild.banner:
                 ext = "gif" if self.reader.guild.banner.is_animated() else "png"
-                metadata["banner"] = f"server_profile/assets/server_banner.{ext}"
+                metadata["banner_file"] = f"server_assets/server_banner.{ext}"
+                metadata["banner_url"] = str(self.reader.guild.banner.url)
             else:
-                metadata["banner"] = None
+                metadata["banner_file"] = None
+                metadata["banner_url"] = None
 
-        # Add metadata fields
         from datetime import datetime
         metadata["last_backup"] = datetime.now().isoformat()
         
-        output_file = self.profile_path / "profile.json"
-        
-        # Preserve ignore_channels if the file already exists
-        ignore_channels = []
-        if output_file.exists():
-            try:
-                with open(output_file, "r", encoding="utf-8") as f:
-                    old_data = json.load(f)
-                    ignore_channels = old_data.get("ignore_channels", [])
-            except Exception as e:
-                logger.warning(f"Could not read existing profile.json to preserve ignore_channels: {e}")
-        
-        metadata["ignore_channels"] = ignore_channels
-
-        await self._save_json(output_file, metadata)
+        # Fetch existing ignore_channels from DB if available
+        if self.db:
+            existing_profile = self.db.get_guild_profile()
+            if existing_profile and "ignore_channels" in existing_profile:
+                metadata["ignore_channels"] = existing_profile["ignore_channels"]
+            else:
+                metadata["ignore_channels"] = [] # Initialize if not present
+            
+            self.db.set_guild_profile(metadata)
+            
         return metadata
 
     async def export_roles(self):
-        """Exports all roles to server_roles.json."""
+        """Exports all roles to the SQLite database."""
         roles = await self.reader.get_roles()
         role_data = []
         for r in roles:
             role_data.append({
                 "id": str(r.id),
                 "name": r.name,
-                "color": str(r.color),
+                "color": r.color.value,
                 "position": r.position,
-                "permissions": r.permissions.value,
-                "hoist": r.hoist,
-                "mentionable": r.mentionable
+                "permissions": str(r.permissions.value),
+                "hoist": 1 if r.hoist else 0,
+                "mentionable": 1 if r.mentionable else 0
             })
         
-        output_file = self.profile_path / "roles.json"
-        await self._save_json(output_file, role_data)
+        if self.db:
+            self.db.save_roles(role_data)
         return role_data
 
     async def download_server_assets(self):
-        """Downloads server icon and banner to media folder."""
+        """Downloads server icon and banner to server_assets folder."""
         metadata = await self.reader.get_server_metadata()
         # Download Server Icon
         if metadata.get("icon_url"):
@@ -120,18 +124,12 @@ class DiscordExporter:
                     logger.info(f"Downloading server icon: {self.reader.guild.icon.url}")
                     data = await self.reader.download_asset(self.reader.guild.icon)
                     ext = "gif" if self.reader.guild.icon.is_animated() else "png"
-                    icon_path = self.media_path / f"server_icon.{ext}"
+                    icon_path = self.assets_path / f"server_icon.{ext}"
                     with open(icon_path, "wb") as f:
                         f.write(data)
                     logger.info(f"Saved server icon to {icon_path}")
-                else:
-                    logger.warning("Icon URL found in metadata but guild icon asset is missing.")
-            except discord.Forbidden:
-                logger.error("403 Forbidden: Missing Access to download server icon.")
             except Exception as e:
                 logger.error(f"Failed to download server icon: {e}")
-        else:
-            logger.info("No server icon found to download.")
 
         # Download Server Banner
         if metadata.get("banner_url"):
@@ -140,19 +138,15 @@ class DiscordExporter:
                     logger.info(f"Downloading server banner: {self.reader.guild.banner.url}")
                     data = await self.reader.download_asset(self.reader.guild.banner)
                     ext = "gif" if self.reader.guild.banner.is_animated() else "png"
-                    banner_path = self.media_path / f"server_banner.{ext}"
+                    banner_path = self.assets_path / f"server_banner.{ext}"
                     with open(banner_path, "wb") as f:
                         f.write(data)
                     logger.info(f"Saved server banner to {banner_path}")
-            except discord.Forbidden:
-                logger.error("403 Forbidden: Missing Access to download server banner.")
             except Exception as e:
                 logger.error(f"Failed to download server banner: {e}")
-        else:
-            logger.info("No server banner found to download.")
 
     async def export_assets(self):
-        """Exports emojis, stickers, and server media to assets.json and server_profile/assets/."""
+        """Exports emojis and stickers to server_assets/ folder."""
         await self.download_server_assets()
         
         emojis = await self.reader.get_emojis()
@@ -162,20 +156,21 @@ class DiscordExporter:
         logger.info(f"Exporting {len(emojis)} emojis...")
         for e in emojis:
             ext = "gif" if e.animated else "png"
-            filename = f"emoji_{e.name}_{e.id}.{ext}"
-            emoji_path = self.media_path / filename
+            filename = f"emoji_{e.id}.{ext}"
+            emoji_path = self.assets_path / filename
             try:
-                data = await self.reader.download_emoji(e)
-                with open(emoji_path, "wb") as f:
-                    f.write(data)
+                if not emoji_path.exists():
+                    data = await self.reader.download_emoji(e)
+                    with open(emoji_path, "wb") as f:
+                        f.write(data)
                 emoji_data.append({
                     "id": str(e.id),
                     "name": e.name,
-                    "animated": e.animated,
-                    "filename": filename
+                    "type": "emoji",
+                    "filename": filename,
+                    "url": str(e.url),
+                    "mime_type": "image/gif" if e.animated else "image/png"
                 })
-            except discord.Forbidden:
-                logger.error(f"403 Forbidden: Missing Access to download emoji {e.name}")
             except Exception as ex:
                 logger.error(f"Failed to download emoji {e.name}: {ex}")
 
@@ -188,537 +183,441 @@ class DiscordExporter:
                 elif ".gif" in str(s.url): ext = "gif"
                 elif ".webp" in str(s.url): ext = "webp"
             
-            filename = f"sticker_{s.name}_{s.id}.{ext}"
-            sticker_path = self.media_path / filename
+            filename = f"sticker_{s.id}.{ext}"
+            sticker_path = self.assets_path / filename
             try:
-                data = await self.reader.download_sticker(s)
-                with open(sticker_path, "wb") as f:
-                    f.write(data)
+                if not sticker_path.exists():
+                    data = await self.reader.download_sticker(s)
+                    with open(sticker_path, "wb") as f:
+                        f.write(data)
+                mime_type = "image/png"
+                if ext == "json": mime_type = "application/json"
+                elif ext == "gif": mime_type = "image/gif"
+                elif ext == "webp": mime_type = "image/webp"
+
                 sticker_data.append({
                     "id": str(s.id),
                     "name": s.name,
-                    "filename": filename
+                    "type": "sticker",
+                    "filename": filename,
+                    "url": str(s.url),
+                    "mime_type": mime_type
                 })
-            except discord.Forbidden:
-                logger.error(f"403 Forbidden: Missing Access to download sticker {s.name}")
             except Exception as ex:
                 logger.error(f"Failed to download sticker {s.name}: {ex}")
 
-        # Try to load existing customization to merge (if it exists)
-        custom_file = self.profile_path / "assets.json"
-        customization = {"emojis": emoji_data, "stickers": sticker_data, "members": []}
-        if custom_file.exists():
-            try:
-                with open(custom_file, "r", encoding="utf-8") as f:
-                    old_data = json.load(f)
-                    customization["members"] = old_data.get("members", [])
-            except Exception: pass
+        # Save to database
+        if self.db:
+            all_assets = emoji_data + sticker_data
+            if all_assets:
+                self.db.save_server_assets(all_assets)
 
-        await self._save_json(custom_file, customization)
-            
         return len(emoji_data), len(sticker_data)
 
 
     async def export_channels_structure(self):
-        """Exports categories and channels hierarchy."""
+        """Exports categories and channels hierarchy to SQLite."""
         categories = await self.reader.get_categories()
         channels = await self.reader.get_channels()
         
-        structure = []
+        db_channels = []
+        db_permissions = []
+        db_forum_tags = []
         chan_count = 0
         cat_count = len(categories)
         
         for cat in categories:
             cat_channels = [c for c in channels if c.category_id == cat.id]
-            formatted_channels = await asyncio.gather(*[self._format_channel(c) for c in cat_channels])
+            formatted_channels, cat_chan_perms, cat_forum_tags = await self._process_channel_batch(cat_channels)
             chan_count += len(formatted_channels)
-            # Serialize role-only permission overwrites
-            cat_overwrites = []
+            db_permissions.extend(cat_chan_perms)
+            db_forum_tags.extend(cat_forum_tags)
+            
+            # Category permissions
             for target, ow in cat.overwrites.items():
-                if isinstance(target, discord.Role):
+                if isinstance(target, (discord.Role, discord.Member)):
                     allow, deny = ow.pair()
-                    cat_overwrites.append({
-                        "id": str(target.id),
+                    db_permissions.append({
+                        "channel_id": str(cat.id),
+                        "target_id": str(target.id),
+                        "target_type": "role" if isinstance(target, discord.Role) else "member",
                         "allow": allow.value,
                         "deny": deny.value
                     })
 
-            structure.append({
-                "type": "category",
+            db_channels.append({
                 "id": str(cat.id),
                 "name": cat.name,
+                "type": int(cat.type.value) if hasattr(cat.type, "value") else 4,
                 "position": cat.position,
-                "overwrites": cat_overwrites,
-                "channels": list(formatted_channels)
+                "category_id": None,
+                "topic": None,
+                "nsfw": 0
             })
+
+            # Add child channels to list
+            for fc in formatted_channels:
+                fc["category_id"] = str(cat.id)
+                db_channels.append(fc)
             
         # Uncategorized
         uncategorized = [c for c in channels if not c.category_id]
         if uncategorized:
-            formatted_uncat = await asyncio.gather(*[self._format_channel(c) for c in uncategorized])
+            formatted_uncat, uncat_perms, uncat_forum_tags = await self._process_channel_batch(uncategorized)
             chan_count += len(formatted_uncat)
-            structure.append({
-                "type": "category",
-                "id": "uncategorized",
-                "name": "Uncategorized",
-                "channels": list(formatted_uncat)
-            })
-            # No need to increment cat_count for 'Uncategorized' usually, 
-            # but let's see if the user wants it. For now, cat_count is real Discord categories.
+            db_permissions.extend(uncat_perms)
+            db_forum_tags.extend(uncat_forum_tags)
+            for fc in formatted_uncat:
+                fc["category_id"] = None
+                db_channels.append(fc)
             
-        output_file = self.profile_path / "structure.json"
-        await self._save_json(output_file, structure)
-        return structure, cat_count, chan_count
+        if self.db:
+            self.db.save_channels(db_channels)
+            if db_permissions:
+                self.db.save_permissions(db_permissions)
+            if db_forum_tags:
+                self.db.save_forum_tags(db_forum_tags)
+            
+        return db_channels, cat_count, chan_count
+
+    async def _process_channel_batch(self, channels):
+        """Processes a batch of channels, extracting metadata, permissions, and forum tags."""
+        results = await asyncio.gather(*[self._format_channel(c) for c in channels])
+        formatted = []
+        permissions = []
+        forum_tags = []
+        for f_data, f_perms, f_tags in results:
+            formatted.append(f_data)
+            permissions.extend(f_perms)
+            if f_tags:
+                forum_tags.extend(f_tags)
+        return formatted, permissions, forum_tags
 
     async def _format_channel(self, c):
-        # Serialize role-only permission overwrites
-        ch_overwrites = []
+        """Prepares channel data, its permissions, and forum tags for DB storage."""
+        ch_permissions = []
         for target, ow in c.overwrites.items():
-            if isinstance(target, discord.Role):
+            if isinstance(target, (discord.Role, discord.Member)):
                 allow, deny = ow.pair()
-                ch_overwrites.append({
-                    "id": str(target.id),
+                ch_permissions.append({
+                    "channel_id": str(c.id),
+                    "target_id": str(target.id),
+                    "target_type": "role" if isinstance(target, discord.Role) else "member",
                     "allow": allow.value,
                     "deny": deny.value
+                })
+
+        ch_forum_tags = []
+        if isinstance(c, discord.ForumChannel):
+            for t in c.available_tags:
+                ch_forum_tags.append({
+                    "id": str(t.id),
+                    "forum_id": str(c.id),
+                    "name": t.name,
+                    "moderated": 1 if t.moderated else 0,
+                    "emoji_id": str(t.emoji.id) if t.emoji and hasattr(t.emoji, "id") else None,
+                    "emoji_name": t.emoji.name if t.emoji else (str(t.emoji) if t.emoji else None)
                 })
 
         data = {
             "id": str(c.id),
             "name": c.name,
-            "type": str(c.type),
+            "type": int(c.type.value) if hasattr(c.type, "value") else 0,
             "position": c.position,
             "topic": getattr(c, "topic", None),
-            "nsfw": getattr(c, "nsfw", False),
-            "overwrites": ch_overwrites
+            "nsfw": 1 if getattr(c, "nsfw", False) else 0
         }
         
-        if isinstance(c, discord.ForumChannel):
-            data["available_tags"] = [
-                {"id": str(t.id), "name": t.name, "moderated": t.moderated, "emoji_id": str(t.emoji.id) if t.emoji and hasattr(t.emoji, "id") else None, "emoji_name": t.emoji.name if t.emoji else None}
-                for t in c.available_tags
-            ]
-            
-        return data
+        return data, ch_permissions, ch_forum_tags
 
-    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, after_id: int | None = None):
-        """Fetches and saves message history for a channel, handling incremental sync. Returns the total messages processed."""
+    async def export_channel_messages(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, accumulated_threads=0, accumulated_files=0, after_id: int | None = None):
+        """Fetches and saves message history for a channel to SQLite, handling incremental sync."""
         channel = await self.reader.get_channel(channel_id)
         if not channel:
             logger.error(f"Channel not found: {channel_id}")
-            return 0
+            return accumulated_count, accumulated_threads, accumulated_files
         
         channel_name = channel.name
-        safe_name = channel_name.replace(" ", "-").lower()
-
-        # Detection for thread grouping
         is_thread = isinstance(channel, discord.Thread)
         is_forum = isinstance(channel, discord.ForumChannel)
-        backup_root = self.export_path / "message_backup"
-        
-        if is_thread:
-            parent = await self.reader.get_channel(channel.parent_id)
-            # All threads nest inside their parent channel directory
-            backup_dir = backup_root / str(channel.parent_id) / str(channel_id)
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            avatar_rel_base = "../../users/avatars"
-        elif is_forum:
-            # Forum metadata root: message_backup/{forum_id}/
-            backup_dir = backup_root / str(channel_id)
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            avatar_rel_base = "../users/avatars"
-        else:
-            # Regular channel: message_backup/{channel_id}/
-            backup_dir = backup_root / str(channel_id)
-            backup_dir.mkdir(parents=True, exist_ok=True)
-            avatar_rel_base = "../users/avatars"
 
-        # Shared avatars directory: message_backup/users/avatars/
-        users_dir = backup_root / "users"
-        users_dir.mkdir(exist_ok=True)
-        avatar_dir = users_dir / "avatars"
-        avatar_dir.mkdir(exist_ok=True)
-        
-        # Load existing user_info.json
-        user_info_file = users_dir / "user_info.json"
-        if not self.user_cache and user_info_file.exists():
-            try:
-                with open(user_info_file, "r", encoding="utf-8") as f:
-                    u_list = json.load(f)
-                    self.user_cache = {u["id"]: u for u in u_list}
-            except Exception:
-                self.user_cache = {}
+        # 1. Determine incremental sync point
+        last_id = after_id
+        if not force and last_id is None and self.db:
+            stored_last_id = self.db.get_last_message_id(channel_id)
+            if stored_last_id:
+                last_id = int(stored_last_id)
+                logger.info(f"Incremental sync for {channel_name}: starting after {last_id}")
 
-        # Determine file names based on type
-        if is_thread:
-            json_file = backup_dir / "thread_messages.json"
-            asset_dir = backup_dir / "thread_attachments"
-            # asset_prefix is the relative path from message_backup/ for URL references
-            asset_prefix = f"{channel.parent_id}/{channel_id}/thread_attachments"
-        else:
-            json_file = backup_dir / "messages.json"
-            asset_dir = backup_dir / "attachments"
-            asset_prefix = f"{channel_id}/attachments"
-        
-        if force and asset_dir.exists():
-            import shutil
-            try:
-                shutil.rmtree(asset_dir)
-            except Exception as e:
-                logger.warning(f"Failed to clear asset directory {asset_dir}: {e}")
-        
-        asset_dir.mkdir(exist_ok=True)
-        
-        messages = []
-        last_id = None
-        
-        # Load existing messages for incremental sync (skip if force)
-        if after_id is not None:
-            last_id = after_id
-        elif not force and json_file.exists():
-            try:
-                with open(json_file, "r", encoding="utf-8") as f:
-                    old_data = json.load(f)
-                    messages = old_data.get("messages", [])
-                    if "lastMessageID" in old_data:
-                        last_id = int(old_data["lastMessageID"])
-                    elif messages:
-                        last_id = int(messages[-1]["messageID"])
-            except Exception as e:
-                logger.warning(f"Could not load existing backup for sync in {channel_name}: {e}")
-                messages = []
-
-        count = len(messages)
         new_count = 0
-        thread_count = 0
-        thread_msg_count = 0
+        BATCH_SIZE = 100
+        USER_SAVE_INTERVAL = 500  # Save user cache every N new messages
         
-        BATCH_SIZE = 100  # Process messages in parallel batches
-        UI_LOG_INTERVAL = 10  # Only log message preview every N messages
-        USER_SAVE_INTERVAL = 100  # Save user_info.json every N new messages
-        
-        # 1. Fetch new messages - Handle Forbidden gracefully
+        # Batch accumulator for DB inserts
+        batch_messages = []
+        batch_users = []
+
         try:
             batch_raw = []
             async for msg in self.reader.fetch_message_history(channel_id, after_id=last_id):
                 if not self.is_running: break
                 batch_raw.append(msg)
                 
-                # Process in batches for parallelism
                 if len(batch_raw) >= BATCH_SIZE:
-                    # Format all messages in the batch concurrently
-                    batch_results = await asyncio.gather(
-                        *(self._format_message(m, asset_dir, asset_prefix, avatar_dir, avatar_rel_base) for m in batch_raw)
-                    )
-                    messages.extend(batch_results)
-                    new_count += len(batch_results)
-                    accumulated_count += len(batch_results)
+                    results = await asyncio.gather(*(self._format_message(m) for m in batch_raw))
+                    for m_data, u_data in results:
+                        batch_messages.append(m_data)
+                        if u_data: batch_users.append(u_data)
                     
-                    # Throttled UI update: show preview only for the last message in the batch
-                    if progress_callback and new_count % UI_LOG_INTERVAL < BATCH_SIZE:
+                    new_count += len(batch_messages)
+                    accumulated_count += len(batch_messages)
+                    
+                    for m in batch_messages:
+                        if "attachments" in m:
+                            accumulated_files += len(m["attachments"])
+
+                    # Persist to DB
+                    if self.db:
+                        if batch_users: self.db.save_users(batch_users)
+                        self.db.save_messages_batch(batch_messages)
+                    
+                    if progress_callback:
                         last_msg = batch_raw[-1]
-                        author = getattr(last_msg, "author", None)
-                        author_name = getattr(author, "display_name", "Unknown") if author else "Unknown"
-                        content = last_msg.content or ""
-                        attachments_len = len(last_msg.attachments) if hasattr(last_msg, "attachments") else 0
-                        preview = content[:150] + ("..." if len(content) > 150 else "")
-                        if attachments_len:
-                            preview += f" [dim]({attachments_len} attachments)[/dim]"
-                        if not preview:
-                            preview = "[dim](no content)[/dim]"
-                        await progress_callback(channel_name, accumulated_count, author_name=author_name, message_preview=preview)
-                    elif progress_callback:
-                        await progress_callback(channel_name, accumulated_count)
+                        author_name = getattr(last_msg.author, "display_name", "Unknown")
+                        preview = (last_msg.content or "")[:150]
+                        await progress_callback(channel_name, accumulated_count, author_name=author_name, message_preview=preview, thread_count=accumulated_threads, file_count=accumulated_files)
                     
-                    # Periodic save of user_info.json (every ~100 messages)
-                    if new_count % USER_SAVE_INTERVAL < BATCH_SIZE:
-                        await self._save_json(user_info_file, list(self.user_cache.values()))
-                    
+                    batch_messages.clear()
+                    batch_users.clear()
                     batch_raw.clear()
 
-            # Process remaining messages in the last partial batch
+            # Final partial batch
             if batch_raw and self.is_running:
-                batch_results = await asyncio.gather(
-                    *(self._format_message(m, asset_dir, asset_prefix, avatar_dir, avatar_rel_base) for m in batch_raw)
-                )
-                messages.extend(batch_results)
-                new_count += len(batch_results)
-                accumulated_count += len(batch_results)
+                results = await asyncio.gather(*(self._format_message(m) for m in batch_raw))
+                for m_data, u_data in results:
+                    batch_messages.append(m_data)
+                    if u_data: batch_users.append(u_data)
+                
+                new_count += len(batch_messages)
+                accumulated_count += len(batch_messages)
+                
+                for m in batch_messages:
+                    if "attachments" in m:
+                        accumulated_files += len(m["attachments"])
+                
+                
+                if self.db:
+                    if batch_users: self.db.save_users(batch_users)
+                    self.db.save_messages_batch(batch_messages)
                 
                 if progress_callback:
                     last_msg = batch_raw[-1]
-                    author = getattr(last_msg, "author", None)
-                    author_name = getattr(author, "display_name", "Unknown") if author else "Unknown"
-                    content = last_msg.content or ""
-                    preview = content[:150] + ("..." if len(content) > 150 else "")
-                    if not preview:
-                        preview = "[dim](no content)[/dim]"
-                    await progress_callback(channel_name, accumulated_count, author_name=author_name, message_preview=preview)
+                    author_name = getattr(last_msg.author, "display_name", "Unknown")
+                    await progress_callback(channel_name, accumulated_count, author_name=author_name, thread_count=accumulated_threads, file_count=accumulated_files)
                 
-                # Final user save after last batch
-                await self._save_json(user_info_file, list(self.user_cache.values()))
+                batch_messages.clear()
+                batch_users.clear()
                 batch_raw.clear()
 
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to read messages in {channel_name} ({channel_id})")
-            if not messages: return accumulated_count
         except Exception as e:
             logger.error(f"Error fetching messages for {channel_name}: {e}")
-            if not messages: return accumulated_count
 
-        # If it's a forum or a channel with no new messages, we still want the UI to register that we've started it.
-        if new_count == 0 and progress_callback:
-            await progress_callback(channel_name, accumulated_count)
+        if not is_thread:
+            accumulated_count, accumulated_threads, accumulated_files = await self.export_threads(channel_id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count, accumulated_threads=accumulated_threads, accumulated_files=accumulated_files)
 
-        # 2. Handle Threads and collect counts accurately
-        all_threads = []
-        try:
-            # Active threads: Use active_threads() coroutine for 2.6.4
-            if self.reader.guild:
-                threads = await self.reader.guild.active_threads()
-                all_threads.extend([t for t in threads if t.parent_id == channel_id])
-            
-            # Archived threads: Use the consolidated archived_threads() iterator
-            try:
-                if hasattr(channel, "archived_threads"):
-                    async for thread in channel.archived_threads(limit=None):
-                        all_threads.append(thread)
-            except discord.Forbidden:
-                logger.warning(f"403 Forbidden: Cannot fetch archived threads in {channel_name}")
-            except Exception as e:
-                logger.warning(f"Error fetching archived threads: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to fetch threads for count in {channel_name}: {e}")
+        return accumulated_count, accumulated_threads, accumulated_files
 
-        thread_count = len(all_threads)
-        for t in all_threads:
-            await asyncio.sleep(0) # Yield for safety
-            thread_msg_count += (t.message_count or 0)
-
-        msg_type = "Text"
-        if is_thread:
-            msg_type = "Thread"
-        elif channel.type == discord.ChannelType.news:
-            msg_type = "News"
-        elif is_forum:
-            msg_type = "Forum"
-
-        output_data = {
-            "channelName": channel_name,
-            "channelID": str(channel_id),
-            "channelType": msg_type,
-            "messageCount": len(messages),
-            "threadCount": thread_count,
-            "lastMessageID": str(messages[-1]["messageID"]) if messages else None,
-            "threadMessagesCount": thread_msg_count,
-            "totalAttachmentSizeBytes": sum(m.get("totalFileSizeBytes", 0) for m in messages),
-            "numberOfAttachments": sum(m.get("numberOfFiles", 0) for m in messages),
-            "lastBackup": discord.utils.utcnow().isoformat(),
-            "messages": messages
-        }
-        
-        if is_thread:
-            output_data["parentID"] = str(channel.parent_id)
-        
-        # Merge additional metadata for forums (like tags)
-        if is_forum:
-            fmt_data = await self._format_channel(channel)
-            for k, v in fmt_data.items():
-                if k not in output_data and k not in ["id", "name", "type", "position", "nsfw", "topic"]:
-                    output_data[k] = v
-        
-        # Save channel messages
-        await asyncio.sleep(0) # Yield before writing large JSON
-        await self._save_json(json_file, output_data)
-
-        # If it's a forum, also export its threads into the sub-directory
-        if is_forum:
-            accumulated_count = await self.export_threads(channel_id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count)
-
-        return accumulated_count
-
-    async def _format_message(self, msg, asset_dir, asset_prefix, avatar_dir, avatar_rel_base):
-        """Formats a single message to match the reference format."""
-        attachments = []
-        async def process_attachment(a):
-            # mimic reference asset naming (suffixing hash/id)
-            safe_name = a.filename
-            short_id = str(a.id)[-5:]
-            stored_name = f"{Path(safe_name).stem}-{short_id}{Path(safe_name).suffix}"
-            target = asset_dir / stored_name
-            
-            try:
-                # Check if exists, else download (basic cache)
-                if not target.exists():
-                    # Attachment.save() uses a thread internally to save to disk
-                    await a.save(target)
-                
-                return {
-                    "id": str(a.id),
-                    "url": f"{asset_prefix}/{stored_name}",
-                    "fileName": a.filename,
-                    "fileSizeBytes": a.size
-                }
-            except Exception as e:
-                logger.error(f"Failed to download attachment {a.filename}: {e}")
-                return None
-
-        # Download all attachments for this message concurrently
-        if msg.attachments:
-            results = await asyncio.gather(*(process_attachment(a) for a in msg.attachments))
-            attachments = [r for r in results if r]
-
-        # Author info extraction and deduplication
+    async def _format_message(self, msg):
+        """Formats a single message and its author for DB storage."""
+        # 1. Author handling
         author = msg.author
         user_id = str(author.id)
+        user_data = None
         
         if user_id not in self.user_cache:
-            avatar_url = None
+            # New user discovered
+            avatar_file = None
             if author.avatar:
                 try:
                     av_name = f"{user_id}.png"
-                    av_target = avatar_dir / av_name
+                    av_target = self.users_path / av_name
                     if not av_target.exists():
                         await author.avatar.save(av_target)
-                    avatar_url = f"{avatar_rel_base}/{av_name}"
+                    avatar_file = f"users/{av_name}"
                 except Exception as e:
                     logger.error(f"Failed to save avatar for {author.name}: {e}")
 
             roles = []
             if hasattr(author, "roles"):
-                for r in author.roles:
-                    if r.is_default(): continue
-                    roles.append({
-                        "id": str(r.id),
-                        "name": r.name,
-                        "color": str(r.color),
-                        "position": r.position
-                    })
+                roles = [str(r.id) for r in author.roles if not r.is_default()]
 
-            self.user_cache[user_id] = {
-                "userID": user_id,
+            user_data = {
+                "id": user_id,
                 "username": author.name,
-                "userNickname": getattr(author, "display_name", author.name),
-                "userColor": str(author.color) if hasattr(author, "color") else None,
-                "userIsBot": author.bot,
-                "userRoles": roles,
-                "userAvatar": f"users/avatars/{user_id}.png" if author.avatar else None,
-                "userAvatarUrl": str(author.display_avatar.url) if author.avatar else None
+                "display_name": getattr(author, "display_name", author.name),
+                "avatar_file": avatar_file,
+                "avatar_url": str(author.display_avatar.url) if author.avatar else None,
+                "roles": json.dumps(roles)
             }
+            self.user_cache[user_id] = user_data
 
-        reactions = []
-        for r in msg.reactions:
-            emoji_str = str(r.emoji) if not r.is_custom_emoji() else f"{r.emoji.name}:{r.emoji.id}"
-            reactions.append({
-                "emoji": emoji_str,
-                "count": r.count
-            })
+        # 2. Attachments handling (Content-Addressable Storage)
+        attachments = []
+        if msg.attachments:
+            for att in msg.attachments:
+                att_data = await self._process_media(
+                    media_id=att.id,
+                    url=att.url,
+                    filename=att.filename,
+                    size=att.size,
+                    content_type=att.content_type,
+                    save_method=att.save
+                )
+                if att_data:
+                    attachments.append(att_data)
 
-        # Process Stickers (Download and Metadata)
+        # 2.5 Stickers handling
         stickers = []
-        for s in msg.stickers:
-            sticker_filename = f"sticker_{s.id}"
-            # Extension mapping based on format
-            ext = "png"
-            if str(s.format).endswith("apng"): ext = "apng"
-            elif str(s.format).endswith("lottie"): ext = "json"
-            elif str(s.format).endswith("gif"): ext = "gif"
-            
-            sticker_filename += f".{ext}"
-            sticker_path = asset_dir / sticker_filename
-            
-            try:
-                if not sticker_path.exists():
-                    # Handle Lottie stickers manually since discord.py Refuses to save them
-                    if str(s.format).endswith("lottie"):
-                        # Use the name-mangled internal session from the client
-                        session = self.reader.client.http._HTTPClient__session
-                        async with session.get(s.url) as resp:
-                            if resp.status == 200:
-                                with open(sticker_path, "wb") as f:
-                                    f.write(await resp.read())
-                            else:
-                                raise Exception(f"HTTP {resp.status}")
-                    else:
-                        await s.save(sticker_path)
+        if msg.stickers:
+            for st in msg.stickers:
+                # Determine extension based on format
+                ext = ".png"
+                if hasattr(st, "format"):
+                    try:
+                        from discord import StickerFormatType
+                        if st.format == StickerFormatType.lottie:
+                            ext = ".json"
+                        elif st.format == StickerFormatType.apng:
+                            ext = ".png"
+                        elif st.format == StickerFormatType.gif:
+                            ext = ".gif"
+                    except ImportError:
+                        pass
                 
-                stickers.append({
-                    "id": str(s.id),
-                    "name": s.name,
-                    "format": str(s.format).split(".")[-1],
-                    "localPath": f"{asset_prefix}/{sticker_filename}"
+                st_data = await self._process_media(
+                    media_id=st.id,
+                    url=st.url,
+                    filename=f"{st.name}{ext}",
+                    content_type=f"image/{ext[1:]}" if ext != ".json" else "application/json",
+                    save_method=st.save
+                )
+                if st_data:
+                    st_data["format_type"] = int(st.format.value) if hasattr(st, "format") and hasattr(st.format, "value") else 1
+                    stickers.append(st_data)
+
+        # 3. Embeds
+        embeds = []
+        if msg.embeds:
+            embeds = [emb.to_dict() for emb in msg.embeds]
+
+        # 4. Reactions
+        reactions = []
+        if msg.reactions:
+            for react in msg.reactions:
+                emoji = react.emoji
+                reactions.append({
+                    "emoji_id": emoji.id if hasattr(emoji, "id") else None,
+                    "emoji_name": emoji.name if hasattr(emoji, "name") else str(emoji),
+                    "count": react.count
                 })
-            except Exception as e:
-                logger.error(f"Failed to download sticker {s.name} ({s.id}): {e}")
-                # Fallback to minimal metadata if download fails
-                stickers.append({
-                    "id": str(s.id),
-                    "name": s.name,
-                    "format": str(s.format).split(".")[-1]
-                })
 
-        # Determine message type (Override if it's a thread starter or forward)
-        raw_repr = str(msg.type).lower()
-        
-        if "thread_starter" in raw_repr or msg.thread:
-            msg_type = "ThreadStarter"
-        else:
-            msg_type = raw_repr.split(".")[-1].capitalize()
-        
-        # Check for forwarded flags (newer discord.py feature)
-        try:
-            if hasattr(msg.flags, "forwarded") and msg.flags.forwarded:
-                msg_type = "Forward"
-        except Exception:
-            pass
+        # 5. Message data
+        # Check for reference (reply)
+        message_reference = None
+        if msg.reference and msg.reference.message_id:
+            message_reference = str(msg.reference.message_id)
 
-        msg_content = msg.content
-        if msg_type == "Forward" and not msg_content:
-            try:
-                if hasattr(msg, "message_snapshots") and msg.message_snapshots:
-                    msg_content = msg.message_snapshots[0].content
-            except Exception:
-                pass
-
-        data = {
-            "messageID": str(msg.id),
-            "type": msg_type,
+        m_data = {
+            "id": str(msg.id),
+            "channel_id": str(msg.channel.id),
+            "author_id": user_id,
+            "content": msg.content,
             "timestamp": msg.created_at.isoformat(),
-            "isPinned": msg.pinned,
-            "content": msg_content,
-            "userID": user_id,
+            "type": int(msg.type.value) if hasattr(msg.type, "value") else 0,
+            "message_reference": message_reference,
+            "is_pinned": 1 if msg.pinned else 0,
             "attachments": attachments,
-            "numberOfFiles": len(attachments),
-            "totalFileSizeBytes": sum(a["fileSizeBytes"] for a in attachments),
-            "embeds": [e.to_dict() for e in msg.embeds],
             "stickers": stickers,
-            "reactions": reactions
+            "embeds": embeds,
+            "reactions": reactions,
+            "extra_data": None
         }
 
-        # Thread info for creation/starter messages
-        if msg.thread:
-            data["thread"] = {
-                "id": str(msg.thread.id),
-                "name": msg.thread.name,
-                "messageCount": getattr(msg.thread, "message_count", 0),
-                "archived": msg.thread.archived,
-                "archiveDuration": msg.thread.auto_archive_duration,
-                "locked": msg.thread.locked
-            }
+        return m_data, user_data
 
-        # Add reply reference if exists
-        if msg.reference and msg.reference.message_id:
-            data["reference"] = {
-                "messageId": str(msg.reference.message_id),
-                "channelId": str(msg.reference.channel_id)
-            }
+    async def _process_media(self, media_id, url, filename, size=None, content_type=None, save_method=None):
+        """Downloads and deduplicates any media (attachment or sticker) using SHA-256 (CAS)."""
+        # 1. First check by URL in DB
+        if self.db:
+            existing = self.db.get_media_by_url(str(url))
+            if existing:
+                return {
+                    "id": str(media_id),
+                    "filename": filename,
+                    "size": existing["size"],
+                    "url": str(url),
+                    "content_type": existing["content_type"],
+                    "local_hash": existing["hash"]
+                }
 
-        return data
+        # 2. Temporary download to calculate hash
+        import tempfile
+        import shutil
+        with tempfile.NamedTemporaryFile(delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+            try:
+                if save_method:
+                    await save_method(tmp_path)
+                else:
+                    return None
+                
+                file_hash = self._calculate_sha256(tmp_path)
+                actual_size = tmp_path.stat().st_size
+                
+                # Check if hash already exists in pool
+                if self.db:
+                    in_pool = self.db.get_media_by_hash(file_hash)
+                    if in_pool:
+                        tmp_path.unlink()
+                        return {
+                            "id": str(media_id),
+                            "filename": filename,
+                            "size": actual_size,
+                            "url": str(url),
+                            "content_type": content_type or in_pool["content_type"],
+                            "local_hash": file_hash
+                        }
+                
+                # New content: move to pool
+                ext = Path(filename).suffix
+                target_filename = f"{file_hash}{ext}"
+                target_path = self.attachments_path / target_filename
+                
+                shutil.move(str(tmp_path), str(target_path))
+                
+                if self.db:
+                    self.db.add_media_to_pool(file_hash, f"attachments/{target_filename}", actual_size, content_type, str(url))
+                
+                return {
+                    "id": str(media_id),
+                    "filename": filename,
+                    "size": actual_size,
+                    "url": str(url),
+                    "content_type": content_type,
+                    "local_hash": file_hash
+                }
+            except Exception as e:
+                logger.error(f"Failed to process media {filename}: {e}")
+                if tmp_path.exists(): tmp_path.unlink()
+                return None
 
-    async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, after_id: int | None = None):
-        """Exports active and archived threads for a channel. Returns accumulated message count."""
+    async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, accumulated_threads=0, accumulated_files=0, after_id: int | None = None):
+        """Exports active and archived threads for a channel to SQLite."""
         channel = await self.reader.get_channel(channel_id)
-        if not hasattr(channel, "threads") and not hasattr(channel, "public_archived_threads"):
-            return 0
+        if not hasattr(channel, "threads") and not hasattr(channel, "archived_threads"):
+            return accumulated_count, accumulated_threads, accumulated_files
         
         all_threads = []
         try:
@@ -740,108 +639,71 @@ class DiscordExporter:
             logger.error(f"Failed to fetch threads for {channel.name}: {e}")
 
         is_forum = isinstance(channel, discord.ForumChannel)
-        backup_root = self.export_path / "message_backup"
-        forum_json_file = backup_root / str(channel_id) / "messages.json"
-        forum_asset_dir = backup_root / str(channel_id)
-        avatar_dir = backup_root / "users" / "avatars"
 
-        thread_count = 0
-        if all_threads:
-            logger.info(f"Found {len(all_threads)} threads in {channel.name}. Starting backup...")
-            
-        for thread in all_threads:
-            if not self.is_running:
-                logger.info("Thread backup cancelled by user.")
-                break
-            await asyncio.sleep(0) # important yield between threads
-            
-            # First backup the full thread — this creates {thread_id}.json with totalAttachmentSizeBytes
-            accumulated_count = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count, after_id=after_id)
-            thread_count += 1
-
-            # Then populate the forum root JSON with the starter message
-            if is_forum:
-                logger.info(f"Adding starter message for thread: {thread.name} ({thread.id})")
+        if all_threads and self.db:
+            thread_meta = []
+            for t in all_threads:
+                applied_tags = []
+                
+                # If parent is missing, try to link it from our fetched channel object
+                # This ensures discord.py can resolve the applied_tags correctly
                 try:
-                    msg_found = False
-                    # In discord.py 2.x, we get the oldest message by using 'after' with a limit
-                    async for msg in thread.history(limit=1, after=discord.Object(id=thread.id - 1)):
-                        msg_found = True
-                        logger.debug(f"Found starter message {msg.id} for {thread.name}")
-                        
-                        # Save assets in the thread's own directory inside the forum directory
-                        thread_asset_dir = forum_asset_dir / str(thread.id) / "thread_attachments"
-                        thread_asset_dir.mkdir(parents=True, exist_ok=True)
-                        
-                        msg_data = await self._format_message(
-                            msg, 
-                            thread_asset_dir, 
-                            f"{channel_id}/{thread.id}/thread_attachments",  # Full relative path from message_backup/
-                            avatar_dir, 
-                            "../../users/avatars"  # Two levels up from {forum_id}/{thread_id}/
-                        )
-                        # Override type and add title for forum starter messages
-                        msg_data["type"] = "ThreadStarter"
-                        msg_data["title"] = thread.name
-                        
-                        # Store applied tag IDs (as strings) — names are resolvable via the forum's available_tags
-                        msg_data["tags"] = [str(tid) for tid in getattr(thread, "_applied_tags", [])]
-                        
-                        # Enrich totalFileSizeBytes with the child thread's totalAttachmentSizeBytes
-                        # (the thread JSON has already been written above)
-                        thread_json = backup_root / str(channel_id) / str(thread.id) / "thread_messages.json"
-                        if thread_json.exists():
-                            try:
-                                with open(thread_json, "r", encoding="utf-8") as f:
-                                    thread_data = json.load(f)
-                                child_size = thread_data.get("totalAttachmentSizeBytes", 0)
-                                msg_data["totalFileSizeBytes"] = msg_data.get("totalFileSizeBytes", 0) + child_size
-                                
-                                child_count = thread_data.get("numberOfAttachments", 0)
-                                msg_data["numberOfFiles"] = msg_data.get("numberOfFiles", 0) + child_count
-                                
-                                logger.debug(f"Enriched files for {thread.name}: +{child_size} bytes, +{child_count} files from child thread")
-                            except Exception as e:
-                                logger.error(f"Failed to read thread JSON for size enrichment: {e}")
-                        
-                        if forum_json_file.exists():
-                            with open(forum_json_file, "r", encoding="utf-8") as f:
-                                try:
-                                    forum_data = json.load(f)
-                                except Exception as e:
-                                    logger.error(f"Failed to load forum JSON: {e}")
-                                    forum_data = {}
-                            
-                            if "messages" not in forum_data:
-                                forum_data["messages"] = []
-                            
-                            # Avoid duplicates — update if already exists (e.g. sync run)
-                            existing = next((m for m in forum_data["messages"] if m["messageID"] == msg_data["messageID"]), None)
-                            if existing:
-                                existing.update(msg_data)
-                                logger.debug(f"Updated starter message for {thread.name} in forum JSON")
-                            else:
-                                forum_data["messages"].append(msg_data)
-                            
-                            forum_data["messageCount"] = len(forum_data["messages"])
-                            # Recalculate forum totalAttachmentSizeBytes from enriched starter messages
-                            forum_data["totalAttachmentSizeBytes"] = sum(
-                                m.get("totalFileSizeBytes", 0) for m in forum_data["messages"]
-                            )
-                            # Recalculate forum numberOfAttachments from enriched starter messages
-                            forum_data["numberOfAttachments"] = sum(
-                                m.get("numberOfFiles", 0) for m in forum_data["messages"]
-                            )
-                            forum_data["messages"].sort(key=lambda x: x["timestamp"])
-                            
-                            await asyncio.sleep(0) # Yield before writing
-                            await self._save_json(forum_json_file, forum_data)
-                            logger.info(f"Appended starter message for {thread.name} to {forum_json_file.name}")
-                        else:
-                            logger.warning(f"Forum JSON file does not exist: {forum_json_file}")
+                    if t.parent is None:
+                        # Internal hack: link parent if missing to help resolve tags
+                        t._parent = channel
+                except Exception:
+                    pass
+
+                if hasattr(t, "applied_tags"):
+                    # Attempt 1: Standard attribute
+                    applied_tags = [str(tag.id) for tag in t.applied_tags]
                     
-                    if not msg_found:
-                        logger.warning(f"No starter message found for thread: {thread.name}")
+                    # Attempt 2: If still empty and it's a forum thread, it might not be loaded
+                    if not applied_tags and is_forum:
+                        try:
+                            # We can try to fetch the thread specifically to get tags
+                            # But we only do this if we really have to
+                            # (Discord sometimes doesn't include tags in bulk guild.active_threads)
+                            fetched_t = await self.reader.client.fetch_channel(t.id)
+                            if hasattr(fetched_t, "applied_tags"):
+                                applied_tags = [str(tag.id) for tag in fetched_t.applied_tags]
+                        except Exception:
+                            pass
+
+                thread_meta.append({
+                    "id": str(t.id),
+                    "name": t.name,
+                    "type": int(t.type.value) if hasattr(t.type, "value") else 11, # Default to public_thread
+                    "parent_id": str(t.parent_id) if t.parent_id else str(channel.id),
+                    "message_count": getattr(t, "message_count", 0),
+                    "member_count": getattr(t, "member_count", 0),
+                    "archived": 1 if t.archived else 0,
+                    "archive_timestamp": t.archive_timestamp.isoformat() if t.archive_timestamp else None,
+                    "auto_archive_duration": t.auto_archive_duration,
+                    "locked": 1 if getattr(t, "locked", False) else 0,
+                    "applied_tags": json.dumps(applied_tags)
+                })
+            self.db.save_threads(thread_meta)
+
+        for thread in all_threads:
+            if not self.is_running: break
+            await asyncio.sleep(0)
+            
+            accumulated_threads += 1
+            if progress_callback:
+                await progress_callback(channel.name, accumulated_count, thread_count=accumulated_threads, file_count=accumulated_files)
+            
+            # Backup thread messages
+            accumulated_count, accumulated_threads, accumulated_files = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count, accumulated_threads=accumulated_threads, accumulated_files=accumulated_files, after_id=after_id)
+
+            # For forums, ensure the starter message exists in the DB
+            if is_forum:
+                # starter_message is handled by export_channel_messages since it's just a message in that thread
+                # However we may want to mark it or store forum-specific tags
+                try:
+                    # Just yield for concurrency
+                    await asyncio.sleep(0)
                 except Exception as e:
-                    logger.error(f"Error adding starter message for {thread.name}: {e}")
-        return accumulated_count
+                    logger.error(f"Error processing forum thread {thread.name}: {e}")
+                    
+        return accumulated_count, accumulated_threads, accumulated_files

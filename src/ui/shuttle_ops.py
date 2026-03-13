@@ -183,7 +183,6 @@ class OperationPane(Container):
             self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
 
     def _get_backup_info(self) -> str | None:
-        import json
         if not self.config or not self.config.discord_server_id:
             return None
             
@@ -191,14 +190,16 @@ class OperationPane(Container):
         if not target_dir.exists():
             return None
             
-        profile_file = target_dir / "server_profile" / "profile.json"
-        if not profile_file.exists():
+        db_file = target_dir / "backup.db"
+        if not db_file.exists():
             return None
         try:
             from datetime import datetime
-            with open(profile_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                ts_str = data.get("last_backup")
+            from src.core.backup_database import BackupDatabase
+            db = BackupDatabase(db_file)
+            profile = db.get_guild_profile()
+            if profile:
+                ts_str = profile.get("last_backup")
                 if ts_str:
                     dt = datetime.fromisoformat(ts_str)
                     return dt.strftime("%d-%b-%Y %H:%M")
@@ -1767,10 +1768,12 @@ class OperationPane(Container):
 
             any_found = False
             backed_up_ids = set()
-            for chan in eligible_channels:
-                if (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists():
-                    any_found = True
-                    backed_up_ids.add(chan.id)
+            if self.exporter.db:
+                channel_stats = self.exporter.db.get_stats_by_channel()
+                for chan in eligible_channels:
+                    if chan.id in channel_stats:
+                        any_found = True
+                        backed_up_ids.add(chan.id)
 
             self.app.pop_screen()
 
@@ -1867,6 +1870,8 @@ class OperationPane(Container):
             modal_prog.write(f"[yellow]Starting backup for {total_chans} channels...[/yellow]")
 
             accumulated_msgs = 0
+            accumulated_threads = 0
+            accumulated_files = 0
 
             for i, chan in enumerate(selected_channels):
                 if not self.exporter.is_running:
@@ -1874,7 +1879,7 @@ class OperationPane(Container):
                     break
                 await asyncio.sleep(0.01) # Yield to UI thread to keep it responsive
                 
-                backup_exists = (self.exporter.export_path / "message_backup" / str(chan.id) / "messages.json").exists()
+                backup_exists = chan.id in backed_up_ids
                 is_sync = backup_exists and not force_overwrite
 
                 label = "Syncing Backup" if is_sync else "Backing up"
@@ -1884,20 +1889,17 @@ class OperationPane(Container):
                 logger.info(f"{label} for channel: #{chan.name} ({chan.id})")
 
                 _msg_log_counter = 0
-                async def update_msg_count(name, count, author_name=None, message_preview=None):
+                async def update_msg_count(name, count, author_name=None, message_preview=None, thread_count=0, file_count=0):
                     nonlocal _msg_log_counter
-                    modal_prog.update_stats(messages=str(count))
+                    modal_prog.update_stats(messages=str(count), threads=str(thread_count), files=str(file_count))
                     _msg_log_counter += 1
                     if author_name and message_preview and _msg_log_counter % 10 == 0:
                         modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
-                accumulated_msgs = await self.exporter.export_channel_messages(
+                accumulated_msgs, accumulated_threads, accumulated_files = await self.exporter.export_channel_messages(
                     chan.id, progress_callback=update_msg_count, force=force_overwrite,
-                    accumulated_count=accumulated_msgs, after_id=after_id
-                )
-                accumulated_msgs = await self.exporter.export_threads(
-                    chan.id, progress_callback=update_msg_count, force=force_overwrite,
-                    accumulated_count=accumulated_msgs
+                    accumulated_count=accumulated_msgs, accumulated_threads=accumulated_threads, accumulated_files=accumulated_files,
+                    after_id=after_id
                 )
 
                 modal_prog.write(f"[green]Completed: {chan.name}[/green]")
@@ -1981,9 +1983,14 @@ class OperationPane(Container):
                 ]
             ]
 
+            # Get channels that have messages in the database
+            backed_up_channel_ids = set()
+            if self.exporter.db:
+                backed_up_channel_ids = set(self.exporter.db.get_stats_by_channel().keys())
+            
             selected_channels = [
                 c for c in eligible_channels
-                if (self.exporter.export_path / "message_backup" / str(c.id) / "messages.json").exists()
+                if c.id in backed_up_channel_ids
             ]
 
             if not selected_channels:
@@ -1999,6 +2006,8 @@ class OperationPane(Container):
                 modal_prog.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
                 
                 accumulated_msgs = 0
+                accumulated_threads = 0
+                accumulated_files = 0
                 
                 for i, chan in enumerate(selected_channels):
                     if not self.exporter.is_running:
@@ -2012,20 +2021,16 @@ class OperationPane(Container):
                     logger.info(f"Syncing backup for channel: #{chan.name} ({chan.id})")
 
                     _msg_log_counter = 0
-                    async def update_msg_count(name, count, author_name=None, message_preview=None):
+                    async def update_msg_count(name, count, author_name=None, message_preview=None, thread_count=0, file_count=0):
                         nonlocal _msg_log_counter
-                        modal_prog.update_stats(messages=str(count))
+                        modal_prog.update_stats(messages=str(count), threads=str(thread_count), files=str(file_count))
                         _msg_log_counter += 1
                         if author_name and message_preview and _msg_log_counter % 10 == 0:
                             modal_prog.write(f"[bold]{author_name}:[/bold] {message_preview}")
 
-                    accumulated_msgs = await self.exporter.export_channel_messages(
+                    accumulated_msgs, accumulated_threads, accumulated_files = await self.exporter.export_channel_messages(
                         chan.id, progress_callback=update_msg_count, force=False,
-                        accumulated_count=accumulated_msgs
-                    )
-                    accumulated_msgs = await self.exporter.export_threads(
-                        chan.id, progress_callback=update_msg_count, force=False,
-                        accumulated_count=accumulated_msgs
+                        accumulated_count=accumulated_msgs, accumulated_threads=accumulated_threads, accumulated_files=accumulated_files
                     )
                     modal_prog.write(f"[green]Synced: {chan.name}[/green]")
                 

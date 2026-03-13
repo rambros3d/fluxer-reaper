@@ -279,9 +279,14 @@ class DiscordReader:
                 try:
                     # In a forum, the starter message ID is the thread ID
                     starter = await thread.fetch_message(thread.id)
-                    # Bind the thread so migrate_messages handles it properly
-                    if not hasattr(starter, 'thread') or starter.thread is None:
-                        starter.thread = thread
+                    # Bind the thread if possible so downstream code has context
+                    try:
+                        if not hasattr(starter, 'thread') or starter.thread is None:
+                            starter.thread = thread
+                    except (AttributeError, TypeError):
+                        # Some versions of discord.py don't allow setting the thread property
+                        # or it might already be populated as a read-only property
+                        pass
                     yield starter
                 except Exception as e:
                     logger.debug(f"Could not fetch starter message for forum thread {thread.id}: {e}")

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import AsyncGenerator, Dict, Any, List, Optional
+from src.core.backup_database import BackupDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -22,17 +23,64 @@ logger = logging.getLogger(__name__)
 
 class ChannelType(IntEnum):
     text = 0
+    private = 1
     voice = 2
+    group = 3
     category = 4
     news = 5
+    news_thread = 10
     public_thread = 11
+    private_thread = 12
+    stage_voice = 13
+    directory = 14
     forum = 15
+    media = 16
 
+
+class StickerFormatType(IntEnum):
+    png = 1
+    apng = 2
+    lottie = 3
+    gif = 4
 
 class MessageType(IntEnum):
     default = 0
+    recipient_add = 1
+    recipient_remove = 2
+    call = 3
+    channel_name_change = 4
+    channel_icon_change = 5
+    channel_pinned_message = 6
+    user_join = 7
+    guild_boost = 8
+    guild_boost_tier_1 = 9
+    guild_boost_tier_2 = 10
+    guild_boost_tier_3 = 11
+    channel_follow_add = 12
+    guild_discovery_disqualified = 14
+    guild_discovery_requalified = 15
+    guild_discovery_grace_period_initial_warning = 16
+    guild_discovery_grace_period_final_warning = 17
+    thread_created = 18
     reply = 19
+    chat_input_command = 20
     thread_starter_message = 21
+    guild_invite_reminder = 22
+    context_menu_command = 23
+    auto_moderation_action = 24
+    role_subscription_purchase = 25
+    interaction_premium_upsell = 26
+    stage_start = 27
+    stage_end = 28
+    stage_speaker = 29
+    stage_topic = 31
+    guild_application_premium_subscription = 32
+    guild_incident_alert_mode_enabled = 36
+    guild_incident_alert_mode_disabled = 37
+    guild_incident_report_raid = 38
+    guild_incident_report_false_alarm = 39
+    purchase_notification = 44
+    poll_result = 46
 
 
 # ---------------------------------------------------------------------------
@@ -200,14 +248,18 @@ class BackupRole:
     __slots__ = ("id", "name", "color", "position", "permissions", "hoist", "managed", "mentionable")
 
     def __init__(self, data: dict):
+        if not isinstance(data, dict):
+            self.id = 0
+            self.name = "Unknown"
+            return
         self.id = int(data["id"])
         self.name = data["name"]
-        self.color = BackupColor.from_hex(data.get("color", "#000000"))
+        self.color = BackupColor(int(data.get("color", 0)))
         self.position = data.get("position", 0)
         self.permissions = BackupPermissions(int(data.get("permissions", 0)))
-        self.hoist = data.get("hoist", False)
-        self.managed = data.get("managed", False)
-        self.mentionable = data.get("mentionable", True)
+        self.hoist = bool(data.get("hoist", False))
+        self.managed = False
+        self.mentionable = bool(data.get("mentionable", True))
 
     @property
     def mention(self) -> str:
@@ -224,14 +276,21 @@ class BackupRole:
         return f"BackupRole(id={self.id}, name='{self.name}')"
 
 
-def _parse_overwrites(raw_list: list) -> dict:
+def _parse_overwrites(raw_list: list | Any) -> dict:
     """Parse overwrites JSON list into {BackupOverwriteTarget: BackupPermissionOverwrite} dict."""
     result = {}
+    if not isinstance(raw_list, list):
+        return result
     for entry in raw_list:
-        target = BackupOverwriteTarget(int(entry["id"]))
-        ow = BackupPermissionOverwrite(allow=int(entry.get("allow", 0)),
-                                        deny=int(entry.get("deny", 0)))
-        result[target] = ow
+        if not isinstance(entry, dict):
+            continue
+        try:
+            target = BackupOverwriteTarget(int(entry["id"]))
+            ow = BackupPermissionOverwrite(allow=int(entry.get("allow", 0)),
+                                            deny=int(entry.get("deny", 0)))
+            result[target] = ow
+        except (KeyError, ValueError, TypeError):
+            continue
     return result
 
 
@@ -248,7 +307,10 @@ class BackupCategory:
         self.name = data["name"]
         self.position = data.get("position", 0)
         self.type = ChannelType.category
-        self.overwrites = _parse_overwrites(data.get("overwrites", []))
+        
+        # Overwrites are now passed as a list of dicts from get_all_channels
+        raw_ow = data.get("overwrites", [])
+        self.overwrites = _parse_overwrites(raw_ow)
 
     def __repr__(self) -> str:
         return f"BackupCategory(id={self.id}, name='{self.name}')"
@@ -267,19 +329,30 @@ class BackupChannel:
         "forum": ChannelType.forum,
         "thread": ChannelType.public_thread,
     }
-
     def __init__(self, data: dict, category_id: int | None = None, guild: "BackupGuild|None" = None):
         self.id = int(data["id"])
         self.name = data["name"]
-        self.type = self._TYPE_MAP.get(data.get("type", "text"), ChannelType.text)
+        try:
+            self.type = ChannelType(int(data.get("type", 0)))
+        except ValueError:
+            self.type = ChannelType.text
         self.position = data.get("position", 0)
         self.topic = data.get("topic")
-        self.nsfw = data.get("nsfw", False)
-        self.category_id = category_id
-        self.parent_id = category_id
-        self.available_tags = data.get("available_tags", [])
+        self.nsfw = bool(data.get("nsfw", False))
+        cid = data.get("category_id")
+        self.category_id = int(cid) if cid and cid != "None" else category_id
+        self.parent_id = self.category_id
         self.guild = guild
-        self.overwrites = _parse_overwrites(data.get("overwrites", []))
+        
+        # Overwrites are now passed as a list of dicts from get_all_channels
+        raw_ow = data.get("overwrites", [])
+        self.overwrites = _parse_overwrites(raw_ow)
+        
+        # Forum tags are now structural
+        self.available_tags = []
+        raw_tags = data.get("available_tags", [])
+        for t_data in raw_tags:
+            self.available_tags.append(BackupTag(t_data))
 
     @property
     def mention(self) -> str:
@@ -310,15 +383,20 @@ class BackupMember:
                  "_avatar_url")
 
     def __init__(self, data: dict, role_objects: list | None = None,
-                 avatar_base: Path | None = None):
-        self.id = int(data["userID"])
+                 backup_path: Path | None = None):
+        if not isinstance(data, dict):
+            # Fallback for unexpected data format
+            self.id = 0
+            self.name = "Unknown"
+            return
+        self.id = int(data["id"])
         self.name = data.get("username", "Unknown")
-        self.display_name = data.get("userNickname") or self.name
+        self.display_name = data.get("display_name") or self.name
         self.global_name = self.display_name
-        self.bot = data.get("userIsBot", False)
+        self.bot = False 
         self.system = False
         self.discriminator = "0000"
-        self.color = BackupColor.from_hex(data.get("userColor") or "#000000")
+        self.color = BackupColor(0)
         self.roles = sorted(role_objects or [], key=lambda r: r.position, reverse=True)
         self.guild_permissions = BackupPermissions(0)
         
@@ -327,15 +405,16 @@ class BackupMember:
         self.status = type("Status", (), {"value": "offline"})()
         self.activity = None
 
-        # CDN URL from Discord (saved during backup)
-        self._avatar_url = data.get("userAvatarUrl")
+        self._avatar_url = data.get("avatar_url")
 
-        # Local file asset (for reading bytes)
-        avatar_rel = data.get("userAvatar")
-        if avatar_rel and avatar_base:
-            self.avatar = BackupAsset(avatar_base / avatar_rel)
+        avatar_rel = data.get("avatar_file")
+        if avatar_rel and backup_path:
+            self.avatar = BackupAsset(backup_path / avatar_rel)
         else:
             self.avatar = BackupAsset(None)
+        
+        if self.avatar:
+            self.avatar.url = self._avatar_url
 
     @property
     def mention(self) -> str:
@@ -361,15 +440,27 @@ class BackupMember:
 class BackupAttachment:
     """Minimal stand-in for discord.Attachment."""
 
-    __slots__ = ("id", "filename", "size", "url", "proxy_url", "_backup_root")
+    __slots__ = ("id", "filename", "size", "url", "proxy_url", "_backup_root", "local_hash")
 
-    def __init__(self, data: dict, backup_root: Path | None = None):
+    def __init__(self, data: dict, backup_root: Path | None = None, media_pool: dict | None = None):
+        if not isinstance(data, dict):
+            self.id = 0
+            self.filename = "unknown"
+            return
         self.id = int(data["id"])
-        self.filename = data.get("fileName", "unknown")
-        self.size = data.get("fileSizeBytes", 0)
+        self.filename = data.get("filename", "unknown")
+        self.size = data.get("size", 0)
         self.url = data.get("url", "")
         self.proxy_url = self.url
         self._backup_root = backup_root
+        self.local_hash = data.get("local_hash")
+        
+        # Resolve local path via media pool if possible
+        if media_pool and self.local_hash in media_pool:
+            self.url = media_pool[self.local_hash]["local_path"]
+        elif self.local_hash:
+            # Fallback conjecture if pool didn't have it (e.g. ad-hoc load)
+            pass
 
     async def read(self) -> bytes:
         if self._backup_root:
@@ -392,12 +483,17 @@ class BackupEmoji:
     __slots__ = ("id", "name", "animated", "url", "_file_path")
 
     def __init__(self, data: dict, media_dir: Path | None = None):
+        if not isinstance(data, dict):
+            self.id = 0
+            self.name = "Unknown"
+            return
         self.id = int(data["id"])
         self.name = data["name"]
-        self.animated = data.get("animated", False)
+        self.animated = data.get("mime_type") == "image/gif"
         filename = data.get("filename", "")
         self._file_path = media_dir / filename if media_dir and filename else None
-        self.url = str(self._file_path) if self._file_path else None
+        # Use the local path if available, else original URL
+        self.url = str(self._file_path) if self._file_path else data.get("url", "")
 
     async def read(self) -> bytes:
         if self._file_path and self._file_path.exists():
@@ -411,20 +507,45 @@ class BackupEmoji:
 class BackupSticker:
     """Minimal stand-in for discord.GuildSticker."""
 
-    __slots__ = ("id", "name", "url", "format", "_backup_root")
+    __slots__ = ("id", "name", "url", "format", "_backup_root", "_file_path")
 
-    def __init__(self, data: dict, backup_root: Path | None = None):
-        self.id = int(data["messageID"]) if "messageID" in data else int(data.get("id", 0))
+    def __init__(self, data: dict, backup_root: Path | None = None, media_pool: dict | None = None):
+        if not isinstance(data, dict):
+            self.id = 0
+            self.name = "Sticker"
+            return
+        self.id = int(data.get("id") or data.get("sticker_id", 0))
         self.name = data.get("name", "Sticker")
-        self.url = data.get("localPath", "")
+        
+        # Determine format
+        fmt = data.get("format_type", 1) 
+        try:
+            self.format = StickerFormatType(fmt)
+        except ValueError:
+            self.format = StickerFormatType.png
+
         self._backup_root = backup_root
-        self.format = data.get("format", "png")
+        
+        # 1. Check if it's a CAS-based sticker (from message_stickers table)
+        local_hash = data.get("local_hash")
+        if local_hash and backup_root:
+            ext = ".png"
+            if self.format == StickerFormatType.lottie: ext = ".json"
+            elif self.format == StickerFormatType.apng: ext = ".png"
+            elif self.format == StickerFormatType.gif: ext = ".gif"
+            
+            self._file_path = backup_root / "attachments" / f"{local_hash}{ext}"
+        # 2. Check if it's a server asset sticker (legacy or manual save)
+        elif data.get("filename") and backup_root:
+            self._file_path = backup_root / "server_assets" / data["filename"]
+        else:
+            self._file_path = None
+
+        self.url = str(self._file_path) if self._file_path and self._file_path.exists() else data.get("url", "")
 
     async def read(self) -> bytes:
-        if self._backup_root and self.url:
-            full = self._backup_root / self.url
-            if full.exists():
-                return full.read_bytes()
+        if self._file_path and self._file_path.exists():
+            return self._file_path.read_bytes()
         return b""
 
     def __repr__(self) -> str:
@@ -469,6 +590,21 @@ class BackupReaction:
         return self.emoji.id is not None
 
 
+class BackupTag:
+    """Minimal stand-in for discord.ForumTag."""
+    __slots__ = ("id", "name", "moderated", "emoji")
+    def __init__(self, data: dict):
+        self.id = int(data["id"])
+        self.name = data["name"]
+        self.moderated = bool(data.get("moderated", False))
+        emoji_id = data.get("emoji_id")
+        emoji_name = data.get("emoji_name")
+        self.emoji = BackupPartialEmoji(name=emoji_name, id=int(emoji_id) if emoji_id else None) if emoji_name else None
+
+    def __repr__(self) -> str:
+        return f"BackupTag(id={self.id}, name='{self.name}')"
+
+
 class BackupMessageReference:
     """Minimal stand-in for discord.MessageReference."""
 
@@ -483,16 +619,34 @@ class BackupThread:
     """Minimal stand-in for discord.Thread metadata attached to a starter message."""
 
     __slots__ = ("id", "name", "message_count", "archived",
-                 "auto_archive_duration", "locked", "parent_id")
+                 "auto_archive_duration", "locked", "parent_id", "applied_tags", "type")
 
     def __init__(self, data: dict, parent_id: int | None = None):
+        if not isinstance(data, dict):
+            self.id = 0
+            self.name = ""
+            return
         self.id = int(data["id"])
         self.name = data.get("name", "")
+        try:
+            self.type = ChannelType(int(data.get("type", 11)))
+        except ValueError:
+            self.type = ChannelType.public_thread
         self.message_count = data.get("message_count", 0)
         self.archived = data.get("archived", False)
         self.auto_archive_duration = data.get("auto_archive_duration", 1440)
         self.locked = data.get("locked", False)
-        self.parent_id = parent_id
+        pid = data.get("parent_id")
+        self.parent_id = int(pid) if pid and pid != "None" else parent_id
+        
+        # Parse applied tags (JSON IDs)
+        self.applied_tags = []
+        raw_tags = data.get("applied_tags")
+        if raw_tags:
+            try:
+                tag_ids = json.loads(raw_tags) if isinstance(raw_tags, str) else raw_tags
+                self.applied_tags = [int(tid) for tid in tag_ids]
+            except Exception: pass
 
 
 class BackupMessage:
@@ -511,28 +665,31 @@ class BackupMessage:
                  "mentions", "role_mentions", "channel_mentions", "mention_everyone",
                  "tts", "nonce", "webhook_id", "application_id", "activity",
                  "application", "interaction", "components", "jump_url")
-
     def __init__(self, data: dict, *,
                  author: BackupMember | None = None,
                  guild: "BackupGuild | None" = None,
-                 channel: BackupChannel | None = None,
-                 backup_root: Path | None = None):
-        self.id = int(data["messageID"])
-        self.type = self._TYPE_MAP.get(data.get("type", "Default"), MessageType.default)
-        self.pinned = data.get("isPinned", False)
+                 channel: Optional[Any] = None,
+                 backup_root: Path | None = None,
+                 media_pool: dict | None = None):
+        self.id = int(data["id"])
+        try:
+            self.type = MessageType(int(data.get("type", 0)))
+        except ValueError:
+            self.type = MessageType.default
+        self.pinned = bool(data.get("is_pinned", False))
         self.content = data.get("content", "")
         self.author = author
         self.guild = guild
         self.channel = channel
-        self.channel_id = channel.id if channel else (int(data.get("channelID")) if data.get("channelID") else None)
-
-        # Mentions (if not in backup, default to empty)
+        cid = data.get("channel_id")
+        self.channel_id = int(cid) if cid and cid != "None" else (channel.id if channel else None)
+ 
+        # Mentions
         self.mentions = []
         self.role_mentions = []
         self.channel_mentions = []
-        self.mention_everyone = data.get("mentionEveryone", False)
-
-        # Standard discord.Message properties
+        self.mention_everyone = False
+ 
         self.tts = False
         self.nonce = None
         self.webhook_id = None
@@ -542,48 +699,102 @@ class BackupMessage:
         self.interaction = None
         self.components = []
         self.jump_url = f"https://discord.com/channels/{guild.id if guild else 0}/{self.channel_id}/{self.id}"
-
+ 
         # Timestamp
         ts = data.get("timestamp")
         if ts:
             try:
-                self.created_at = datetime.fromisoformat(ts)
+                self.created_at = datetime.fromisoformat(ts).replace(tzinfo=timezone.utc)
             except (ValueError, TypeError):
                 self.created_at = datetime.now(timezone.utc)
         else:
             self.created_at = datetime.now(timezone.utc)
-
-        # Attachments
-        self.attachments = [
-            BackupAttachment(a, backup_root=backup_root)
-            for a in data.get("attachments", [])
-        ]
-
-        # Embeds — store raw dicts (discord.py Embed.from_dict compatible)
-        self.embeds = data.get("embeds", [])
-
+ 
+        # Attachments (parsed from DB or passed in)
+        self.attachments = []
+        raw_atts = data.get("attachments", [])
+        if isinstance(raw_atts, str):
+            try:
+                raw_atts = json.loads(raw_atts)
+            except Exception:
+                raw_atts = []
+        
+        for a in raw_atts:
+            if isinstance(a, dict):
+                self.attachments.append(BackupAttachment(a, backup_root=backup_root, media_pool=media_pool))
+ 
+        # Embeds
+        self.embeds = []
+        for e in raw_embeds:
+            if isinstance(e, dict):
+                self.embeds.append(BackupEmbed(e))
+        
         # Stickers
-        self.stickers = [
-            BackupSticker(s, backup_root=backup_root)
-            for s in data.get("stickers", [])
-        ]
+        self.stickers = []
+        raw_stickers = data.get("stickers", [])
+        for s in raw_stickers:
+            if isinstance(s, dict):
+                self.stickers.append(BackupSticker(s, backup_root=backup_root, media_pool=media_pool))
 
+class BackupEmbed:
+    """Minimal stand-in for discord.Embed."""
+    __slots__ = ("title", "description", "url", "color", "timestamp",
+                 "thumbnail", "image", "author", "footer", "fields")
+
+    def __init__(self, data: dict):
+        self.title = data.get("title")
+        self.description = data.get("description")
+        self.url = data.get("url")
+        self.color = data.get("color")
+        self.timestamp = data.get("timestamp")
+        
+        self.thumbnail = type("Thumbnail", (), {"url": data["thumbnail"]["url"]})() if data.get("thumbnail") else None
+        self.image = type("Image", (), {"url": data["image"]["url"]})() if data.get("image") else None
+        
+        author = data.get("author")
+        self.author = type("Author", (), {
+            "name": author.get("name"),
+            "url": author.get("url"),
+            "icon_url": author.get("icon_url")
+        })() if author else None
+        
+        footer = data.get("footer")
+        self.footer = type("Footer", (), {
+            "text": footer.get("text"),
+            "icon_url": footer.get("icon_url")
+        })() if footer else None
+        
+        self.fields = [BackupEmbedField(f) for f in data.get("fields", [])]
+
+class BackupEmbedField:
+    """Minimal stand-in for embed fields."""
+    __slots__ = ("name", "value", "inline")
+    def __init__(self, data: dict):
+        self.name = data.get("name")
+        self.value = data.get("value")
+        self.inline = bool(data.get("inline", False))
+        
+        # Legacy extra_data support removed as requested
+        
+        self.stickers = [] 
+        
         # Reactions
-        self.reactions = [BackupReaction(r) for r in data.get("reactions", [])]
-
-        # Reference (replies)
-        ref = data.get("reference")
-        self.reference = BackupMessageReference(ref) if ref else None
-
-        # Thread info
-        thread_data = data.get("thread")
-        self.thread = BackupThread(thread_data, parent_id=self.channel_id) if thread_data else None
-
-        # Flags placeholder
-        self.flags = type("Flags", (), {
-            "forwarded": data.get("type") == "Forward",
-            "value": 0  # Bitmask value
-        })()
+        self.reactions = []
+        raw_reactions = data.get("reactions", [])
+        if isinstance(raw_reactions, list):
+            self.reactions = raw_reactions
+        elif isinstance(raw_reactions, str):
+            try:
+                self.reactions = json.loads(raw_reactions)
+            except Exception: pass
+ 
+        # Reference (replies/forwards)
+        self.reference = None
+        if data.get("message_reference"):
+            self.reference = type("Ref", (), {"message_id": int(data["message_reference"]), "channel_id": self.channel_id})()
+ 
+        self.thread = None
+        self.flags = type("Flags", (), {"value": 0})()
 
     def __repr__(self) -> str:
         return f"BackupMessage(id={self.id}, author={self.author})"
@@ -599,11 +810,15 @@ class BackupGuild:
         self.name = data["name"]
         self._reader = reader
 
-        icon_rel = data.get("icon")
-        self.icon = BackupAsset(backup_path / icon_rel) if icon_rel else BackupAsset(None)
+        icon_file = data.get("icon_file")
+        self.icon = BackupAsset(backup_path / icon_file) if icon_file else BackupAsset(None)
+        if self.icon:
+            self.icon.url = data.get("icon_url")
 
-        banner_rel = data.get("banner")
-        self.banner = BackupAsset(backup_path / banner_rel) if banner_rel else BackupAsset(None)
+        banner_file = data.get("banner_file")
+        self.banner = BackupAsset(backup_path / banner_file) if banner_file else BackupAsset(None)
+        if self.banner:
+            self.banner.url = data.get("banner_url")
 
     @property
     def roles(self) -> List[BackupRole]:
@@ -695,8 +910,10 @@ class BackupReader:
     def __init__(self, backup_path: str | Path):
         self.backup_path = Path(backup_path)
         self.guild: BackupGuild | None = None
+        self.db: Optional[BackupDatabase] = None
 
-        self._thread_info: Dict[int, Dict[str, Any]] = {}  # channel_id -> metadata (like name, parentID)
+        # Cache for performance
+        self._media_pool: Dict[str, Dict[str, Any]] = {}
 
         # Lazy loading flags
         self._roles_loaded = False
@@ -707,6 +924,7 @@ class BackupReader:
         # Internal storage
         self._categories: List[BackupCategory] = []
         self._channels: List[BackupChannel] = []
+        self._threads: List[BackupThread] = []
         self._roles: List[BackupRole] = []
         self._emojis: List[BackupEmoji] = []
         self._stickers: List[BackupSticker] = []
@@ -716,27 +934,26 @@ class BackupReader:
     # ── startup ──────────────────────────────────────────────────────────
 
     async def start(self):
-        """Initializes the backup path and loads the server profile."""
+        """Initializes the backup path and the SQLite database."""
         bp = self.backup_path
-
-        # 1. Server profile -> BackupGuild
-        profile_file = bp / "server_profile" / "profile.json"
-        if profile_file.exists():
-            profile = json.loads(profile_file.read_text(encoding="utf-8"))
-            self.guild = BackupGuild(profile, bp, reader=self)
-            logger.info(f"[Backup] Initialized server: {self.guild.name} ({self.guild.id})")
+        db_path = bp / "backup.db"
+        
+        if db_path.exists():
+            self.db = BackupDatabase(db_path)
+            profile = self.db.get_guild_profile()
+            if profile:
+                self.guild = BackupGuild(profile, bp, reader=self)
+                logger.info(f"[Backup] Initialized database: {self.guild.name} ({self.guild.id})")
         else:
-            logger.warning(f"[Backup] server_profile/profile.json not found in {bp}")
+            logger.warning(f"[Backup] backup.db not found in {bp}")
             self.guild = None
 
     @property
     def roles(self) -> List[BackupRole]:
-        if not self._roles_loaded:
-            roles_file = self.backup_path / "server_profile" / "roles.json"
-            if roles_file.exists():
-                logger.info(f"[Backup] Lazy-loading roles...")
-                roles_data = json.loads(roles_file.read_text(encoding="utf-8"))
-                self._roles = [BackupRole(r) for r in roles_data]
+        if not self._roles_loaded and self.db:
+            logger.info(f"[Backup] Loading roles from DB...")
+            rows = self.db.get_all_roles()
+            self._roles = [BackupRole(r) for r in rows]
             self._roles_loaded = True
         return self._roles
 
@@ -746,25 +963,46 @@ class BackupReader:
         return self._categories
 
     @property
+    def threads(self) -> List[BackupThread]:
+        self._ensure_structure_loaded()
+        return self._threads
+
+    @property
     def channels(self) -> List[BackupChannel]:
         self._ensure_structure_loaded()
         return self._channels
 
     def _ensure_structure_loaded(self):
-        if self._structure_loaded:
+        if self._structure_loaded or not self.db:
             return
-        struct_file = self.backup_path / "server_profile" / "structure.json"
-        if struct_file.exists():
-            logger.info(f"[Backup] Lazy-loading server structure...")
-            structure = json.loads(struct_file.read_text(encoding="utf-8"))
-            for cat_data in structure:
-                cat = BackupCategory(cat_data)
-                if cat.id != 0:
-                    self._categories.append(cat)
-                for ch_data in cat_data.get("channels", []):
-                    ch_cat_id = cat.id if cat.id != 0 else None
-                    channel = BackupChannel(ch_data, category_id=ch_cat_id, guild=self.guild)
-                    self._channels.append(channel)
+        
+        logger.info(f"[Backup] Loading server structure from DB...")
+        rows = self.db.get_all_channels()
+        
+        for data in rows:
+            if data["type"] == 4: # Category
+                self._categories.append(BackupCategory(data))
+            else:
+                self._channels.append(BackupChannel(data, guild=self.guild))
+        
+        # Load threads
+        thread_rows = self.db.get_all_threads()
+        for tdata in thread_rows:
+            thread = BackupThread(tdata)
+            self._threads.append(thread)
+            
+            # Resolve tag IDs to BackupTag objects using parent forum's available_tags
+            if thread.applied_tags and thread.parent_id:
+                parent = next((c for c in self._channels if c.id == thread.parent_id), None)
+                if parent and hasattr(parent, "available_tags"):
+                    resolved = []
+                    for tid in thread.applied_tags:
+                        # tid is int because of BackupThread.__init__
+                        tag = next((tag for tag in parent.available_tags if tag.id == tid), None)
+                        if tag:
+                            resolved.append(tag)
+                    thread.applied_tags = resolved
+
         self._structure_loaded = True
 
     @property
@@ -778,15 +1016,18 @@ class BackupReader:
         return self._stickers
 
     def _ensure_assets_loaded(self):
-        if self._assets_loaded:
+        if self._assets_loaded or not self.db:
             return
-        assets_file = self.backup_path / "server_profile" / "assets.json"
-        media_dir = self.backup_path / "server_profile" / "assets"
-        if assets_file.exists():
-            logger.info(f"[Backup] Lazy-loading assets...")
-            assets = json.loads(assets_file.read_text(encoding="utf-8"))
-            self._emojis = [BackupEmoji(e, media_dir) for e in assets.get("emojis", [])]
-            self._stickers = [BackupSticker(s, media_dir) for s in assets.get("stickers", [])]
+        
+        logger.info(f"[Backup] Loading assets from DB...")
+        media_dir = self.backup_path / "server_assets"
+        
+        emoji_rows = self.db.get_server_assets("emoji")
+        self._emojis = [BackupEmoji(e, media_dir) for e in emoji_rows if isinstance(e, dict)]
+        
+        sticker_rows = self.db.get_server_assets("sticker")
+        self._stickers = [BackupSticker(s, self.backup_path) for s in sticker_rows if isinstance(s, dict)]
+        
         self._assets_loaded = True
 
     @property
@@ -795,29 +1036,36 @@ class BackupReader:
         return self._members
 
     def _ensure_members_loaded(self):
-        if self._members_loaded:
+        if self._members_loaded or not self.db:
             return
-        user_info_file = self.backup_path / "message_backup" / "users" / "user_info.json"
-        if user_info_file.exists():
-            logger.info(f"[Backup] Lazy-loading members...")
-            try:
-                users = json.loads(user_info_file.read_text(encoding="utf-8"))
-                backup_root = self.backup_path / "message_backup"
-                for u in users:
-                    user_role_ids = {int(r["id"]) for r in u.get("userRoles", [])}
-                    # Note: this triggers roles lazy load
-                    role_objs = [r for r in self.roles if r.id in user_role_ids]
-                    member = BackupMember(u, role_objects=role_objs, avatar_base=backup_root)
-                    self._members.append(member)
-                    self._member_map[member.id] = member
-            except Exception as e:
-                logger.warning(f"[Backup] Failed to lazy-load user_info.json: {e}")
+        
+        logger.info(f"[Backup] Loading members from DB...")
+        rows = self.db.get_all_users()
+        
+        bp = self.backup_path
+        for u in rows:
+            if u.get("roles") and isinstance(u["roles"], str):
+                try:
+                    u["roles"] = json.loads(u["roles"])
+                except Exception:
+                    u["roles"] = []
+            
+            user_role_ids = set()
+            for rid in (u.get("roles") or []):
+                try:
+                    user_role_ids.add(int(rid))
+                except (ValueError, TypeError):
+                    continue
+            role_objs = [r for r in self.roles if r.id in user_role_ids]
+            member = BackupMember(u, role_objects=role_objs, backup_path=bp)
+            self._members.append(member)
+            self._member_map[member.id] = member
         self._members_loaded = True
 
     # ── validation ───────────────────────────────────────────────────────
 
     async def validate(self) -> Dict[str, Any]:
-        """Validates backup directory integrity."""
+        """Validates backup database integrity."""
         results = {
             "token": False,
             "server": False,
@@ -828,18 +1076,18 @@ class BackupReader:
         }
 
         bp = self.backup_path
-        if not bp.exists() or not bp.is_dir():
-            return results
-
-        profile = bp / "server_profile" / "profile.json"
-        structure = bp / "server_profile" / "structure.json"
-        if profile.exists() and structure.exists():
+        db_path = bp / "backup.db"
+        
+        if db_path.exists():
             try:
-                data = json.loads(profile.read_text(encoding="utf-8"))
-                results["token"] = True
-                results["server"] = True
-                results["bot_name"] = "LOCAL BACKUP"
-                results["server_name"] = data.get("name", "Unknown")
+                # Use sub-connection to validate
+                db = BackupDatabase(db_path)
+                profile = db.get_guild_profile()
+                if profile:
+                    results["token"] = True
+                    results["server"] = True
+                    results["bot_name"] = "LOCAL BACKUP"
+                    results["server_name"] = profile.get("name", "Unknown")
             except Exception:
                 pass
 
@@ -853,8 +1101,8 @@ class BackupReader:
         return {
             "name": self.guild.name,
             "id": str(self.guild.id),
-            "icon_url": self.guild.icon.url if self.guild.icon else None,
-            "banner_url": self.guild.banner.url if self.guild.banner else None,
+            "icon_url": str(self.guild.icon.url) if self.guild.icon else None,
+            "banner_url": str(self.guild.banner.url) if self.guild.banner else None,
         }
 
     async def download_asset(self, asset: BackupAsset) -> bytes:
@@ -863,135 +1111,121 @@ class BackupReader:
     # ── categories & channels ────────────────────────────────────────────
 
     async def get_categories(self) -> List[BackupCategory]:
-        return list(self._categories)
+        return list(self.categories)
 
     async def get_channels(self, category_id: int | None = None) -> List[BackupChannel]:
-        channels = [c for c in self._channels if c.type != ChannelType.category]
+        channels = [c for c in self.channels if c.type != ChannelType.category]
         if category_id is not None:
             channels = [c for c in channels if c.category_id == category_id]
         return channels
 
     async def get_backed_up_channel_ids(self) -> List[int]:
-        """Returns a list of channel IDs that have corresponding backup directories."""
-        backup_dir = self.backup_path / "message_backup"
-        if not backup_dir.exists():
-            return []
-        
-        ids = []
-        for d in backup_dir.iterdir():
-            if not d.is_dir():
-                continue
-            if d.name == "users":
-                continue
-            # A backed-up channel has a messages.json inside its directory
-            if (d / "messages.json").exists():
-                try:
-                    ids.append(int(d.name))
-                except ValueError:
-                    pass
-        return ids
+        """Returns a list of channel IDs that have messages in the database."""
+        if not self.db: return []
+        import sqlite3
+        conn = sqlite3.connect(self.db.db_path)
+        rows = conn.execute("SELECT DISTINCT channel_id FROM messages").fetchall()
+        conn.close()
+        return [int(r[0]) for r in rows]
 
-    async def get_channel(self, channel_id: int) -> BackupChannel | None:
-        for c in self._channels:
+    async def get_channel(self, channel_id: int) -> BackupChannel | BackupThread | None:
+        for c in self.channels:
             if c.id == channel_id:
                 return c
+        for t in self.threads:
+            if t.id == channel_id:
+                return t
         return None
 
     # ── roles, emojis, stickers, members ─────────────────────────────────
 
     async def get_roles(self) -> List[BackupRole]:
-        return [r for r in self._roles if not r.is_default()]
+        return [r for r in self.roles if not r.is_default()]
 
     async def get_emojis(self) -> List[BackupEmoji]:
-        return list(self._emojis)
+        return list(self.emojis)
 
     async def get_stickers(self) -> List[BackupSticker]:
-        return list(self._stickers)
+        return list(self.stickers)
 
     async def get_members(self) -> List[BackupMember]:
-        return list(self._members)
+        return list(self.members)
 
     # ── messages ─────────────────────────────────────────────────────────
 
-    def _resolve_author(self, user_id_str: str) -> BackupMember:
+    def _ensure_media_pool_loaded(self):
+        if not self._media_pool and self.db:
+            self._media_pool = self.db.get_all_media()
+
+    def _resolve_author(self, user_id: int) -> BackupMember:
         """Returns BackupMember for a userID, creating a stub if missing."""
-        uid = int(user_id_str)
-        if uid in self._member_map:
-            return self._member_map[uid]
+        if user_id in self._member_map:
+            return self._member_map[user_id]
+        
+        # Try to fetch from DB
+        user_data = self.db.get_user(str(user_id)) if self.db else None
+        if user_data:
+            user_role_ids = {int(rid) for rid in (user_data.get("roles") or [])}
+            role_objs = [r for r in self.roles if r.id in user_role_ids]
+            member = BackupMember(user_data, role_objects=role_objs, backup_path=self.backup_path)
+            self._members.append(member)
+            self._member_map[user_id] = member
+            return member
+
+        # Stub
         stub = BackupMember({
-            "userID": user_id_str,
-            "username": f"User#{user_id_str[-4:]}",
-            "userIsBot": False,
+            "id": str(user_id),
+            "username": f"User#{str(user_id)[-4:]}",
         })
-        self._member_map[uid] = stub
+        self._member_map[user_id] = stub
         return stub
 
-    def _load_channel_messages_data(self, channel_id: int) -> list[dict]:
-        """Loads the raw messages array from a channel JSON file."""
-        bp = self.backup_path / "message_backup"
+    def _hydrate_message(self, msg_data: dict) -> BackupMessage:
+        user_id = int(msg_data.get("author_id", 0))
+        author = self._resolve_author(user_id)
         
-        # Primary: message_backup/{channel_id}/messages.json
-        json_file = bp / str(channel_id) / "messages.json"
-        if not json_file.exists():
-            # Fallback: search for thread_messages.json inside any parent channel
-            for candidate in bp.glob(f"*/{channel_id}/thread_messages.json"):
-                if candidate.exists():
-                    json_file = candidate
-                    break
-            else:
-                return []
-
-        try:
-            data = json.loads(json_file.read_text(encoding="utf-8"))
-            
-            # Cache thread info if this is a thread
-            if "parentID" in data:
-                self._thread_info[channel_id] = {
-                    "name": data.get("channelName", "Unknown Thread"),
-                    "parent_id": int(data["parentID"])
-                }
-            
-            return data.get("messages", [])
-        except Exception as e:
-            logger.error(f"[Backup] Failed to load messages for channel {channel_id}: {e}")
-            return []
-
-    def _hydrate_message(self, msg_data: dict, channel_id: int) -> BackupMessage:
-        author = self._resolve_author(msg_data.get("userID", "0"))
-        backup_root = self.backup_path / "message_backup"
+        self._ensure_media_pool_loaded()
         
-        # Resolve channel object
-        channel = next((c for c in self._channels if c.id == channel_id), None)
-        
-        # If not found in channels, check if it's a known thread
-        if not channel and channel_id in self._thread_info:
-            info = self._thread_info[channel_id]
-            # Create a stub BackupChannel for the thread
-            channel = BackupChannel({
-                "id": str(channel_id),
-                "name": info["name"],
-                "type": "thread"
-            }, category_id=info["parent_id"], guild=self.guild)
+        channel_id = int(msg_data["channel_id"])
+        channel = next((c for c in self.channels if c.id == channel_id), None)
         
         return BackupMessage(
             msg_data,
             author=author,
             guild=self.guild,
             channel=channel,
-            backup_root=backup_root,
+            backup_root=self.backup_path,
+            media_pool=self._media_pool
         )
 
     async def get_message(self, channel_id: int, message_id: int) -> BackupMessage | None:
-        messages = self._load_channel_messages_data(channel_id)
-        for m in messages:
-            if int(m["messageID"]) == message_id:
-                return self._hydrate_message(m, channel_id)
+        """Fetch a specific message from SQLite."""
+        if not self.db: return None
+        import sqlite3
+        conn = sqlite3.connect(self.db.db_path)
+        conn.row_factory = sqlite3.Row
+        row = conn.execute("SELECT * FROM messages WHERE id = ?", (str(message_id),)).fetchone()
+        if row:
+            data = dict(row)
+            # Fetch attachments
+            atts = conn.execute("SELECT * FROM attachments WHERE message_id = ?", (str(message_id),)).fetchall()
+            data["attachments"] = [dict(a) for a in atts]
+            
+            # Fetch stickers
+            sts = conn.execute("SELECT * FROM message_stickers WHERE message_id = ?", (str(message_id),)).fetchall()
+            data["stickers"] = [dict(s) for s in sts]
+            
+            conn.close()
+            return self._hydrate_message(data)
+        conn.close()
         return None
 
     async def get_first_message(self, channel_id: int) -> BackupMessage | None:
-        messages = self._load_channel_messages_data(channel_id)
-        if messages:
-            return self._hydrate_message(messages[0], channel_id)
+        """Fetch the first message in a channel from SQLite."""
+        if not self.db: return None
+        msgs = self.db.get_messages_paged(str(channel_id), limit=1)
+        if msgs:
+            return self._hydrate_message(msgs[0])
         return None
 
     async def fetch_message_history(
@@ -1001,23 +1235,37 @@ class BackupReader:
         after_id: int = None,
         inclusive: bool = False
     ) -> AsyncGenerator["BackupMessage", None]:
-        """Yields BackupMessages from the backup, respecting after_id and limit."""
-        messages = self._load_channel_messages_data(channel_id)
+        """Yields BackupMessages from SQLite, respecting after_id and limit."""
+        if not self.db: return
+        
+        offset = 0
+        batch_size = 100
         count = 0
-
-        for m in messages:
-            msg_id = int(m["messageID"])
-            if after_id:
-                if inclusive and msg_id < after_id:
-                    continue
-                if not inclusive and msg_id <= after_id:
-                    continue
-
-            yield self._hydrate_message(m, channel_id)
-            count += 1
-
-            if limit and count >= limit:
-                return
+        
+        while True:
+            actual_limit = batch_size
+            if limit:
+                rem = limit - count
+                if rem <= 0: break
+                actual_limit = min(batch_size, rem)
+            
+            msgs = self.db.get_messages_paged(
+                str(channel_id), 
+                limit=actual_limit, 
+                offset=offset, 
+                after_id=str(after_id) if after_id else None
+            )
+            
+            if not msgs:
+                break
+                
+            for m in msgs:
+                yield self._hydrate_message(m)
+                count += 1
+                
+            offset += len(msgs)
+            if len(msgs) < batch_size:
+                break
 
     # ── download helpers ─────────────────────────────────────────────────
 
