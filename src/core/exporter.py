@@ -639,6 +639,7 @@ class DiscordExporter:
             logger.error(f"Failed to fetch threads for {channel.name}: {e}")
 
         is_forum = isinstance(channel, discord.ForumChannel)
+        logger.debug(f"Exporting threads for channel '{channel.name}' ({channel.id}) [Type: {type(channel)}] [Is Forum: {is_forum}]")
 
         if all_threads and self.db:
             thread_meta = []
@@ -658,17 +659,31 @@ class DiscordExporter:
                     # Attempt 1: Standard attribute
                     applied_tags = [str(tag.id) for tag in t.applied_tags]
                     
-                    # Attempt 2: If still empty and it's a forum thread, it might not be loaded
+                    # Attempt 2: Internal list of IDs if available (sometimes populated when property is empty)
+                    if not applied_tags and hasattr(t, "_applied_tags"):
+                        raw_ids = getattr(t, "_applied_tags", [])
+                        if raw_ids:
+                            logger.info(f"Thread '{t.name}' ({t.id}) found raw tags in _applied_tags: {raw_ids}")
+                            applied_tags = [str(tid) for tid in raw_ids]
+
+                    # Attempt 3: If still empty and it's a forum thread, try to fetch it specifically
                     if not applied_tags and is_forum:
                         try:
                             # We can try to fetch the thread specifically to get tags
-                            # But we only do this if we really have to
                             # (Discord sometimes doesn't include tags in bulk guild.active_threads)
                             fetched_t = await self.reader.client.fetch_channel(t.id)
+                            # Check both property and internal list on fetched object
                             if hasattr(fetched_t, "applied_tags"):
                                 applied_tags = [str(tag.id) for tag in fetched_t.applied_tags]
-                        except Exception:
+                            if not applied_tags and hasattr(fetched_t, "_applied_tags"):
+                                raw_ids = getattr(fetched_t, "_applied_tags", [])
+                                applied_tags = [str(tid) for tid in raw_ids]
+                        except Exception as e:
+                            logger.debug(f"Failed to fetch thread {t.id} for tags: {e}")
                             pass
+                
+                if not applied_tags and is_forum:
+                    logger.warning(f"Thread '{t.name}' ({t.id}) is in forum '{channel.name}' but NO tags found (tried all methods)")
 
                 thread_meta.append({
                     "id": str(t.id),

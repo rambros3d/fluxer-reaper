@@ -142,6 +142,7 @@ class BackupStatsScreen(Screen[None]):
         height: auto;
         border: solid $accent;
         background: $boost;
+        color: $text;
     }
     
     #bs_actions {
@@ -225,7 +226,8 @@ class BackupStatsScreen(Screen[None]):
         self.stats_tree.show_root = False
         
         # Add a header row to the tree root, purely for visual columns
-        header_text = self._format_tree_row("NAME", "MESSAGES", "THREADS", "FILES", "SIZE")
+        # Using depth=4 for header to compensate for root node toggle position delta
+        header_text = self._format_tree_row("NAME", "MESSAGES", "THREADS", "FILES", "SIZE", depth=-1)
         header_text.stylize("bold")
         self.stats_tree.root.set_label(header_text)
         self.stats_tree.show_root = True
@@ -247,9 +249,16 @@ class BackupStatsScreen(Screen[None]):
             return f"{size_bytes / (1024 * 1024):.2f} MB"
         return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
-    def _format_tree_row(self, name: str, msgs, threads, files, size) -> Text:
+    def _format_tree_row(self, name: str, msgs, threads, files, size, depth=0) -> Text:
         """Pads and aligns columns for the tree view to simulate a table."""
-        col_name = str(name)[:30].ljust(35)
+        # Textual Tree indents child nodes. Standard indent is 4 characters.
+        # To maintain vertical alignment of values, we subtract the indentation from the name column width.
+        indent_compensation = depth * 2
+        
+        # Name column: base width is 24.
+        name_col_width = max(6, 24 - indent_compensation)
+        col_name = str(name)[:name_col_width].ljust(name_col_width)
+        
         col_msg = str(msgs).rjust(12)
         col_thd = str(threads).rjust(12)
         col_file = str(files).rjust(12)
@@ -331,8 +340,13 @@ class BackupStatsScreen(Screen[None]):
             self.query_one("#bs_val_size", Label).update(f"{self._format_size(total_size)}")
             self.query_one("#bs_val_coverage", Label).update(f"{backed_up_channels} / {total_channels}")
 
-            # 5. Build Tree
-            for cat_id, info in cat_map.items():
+            # 5. Build Tree - Sort categories to show Uncategorized first, then by name
+            sorted_items = sorted(
+                cat_map.items(), 
+                key=lambda x: (0 if x[0] is None else 1, x[1]["cat"].name if x[0] is not None else "")
+            )
+            
+            for cat_id, info in sorted_items:
                 cat = info["cat"]
                 chans = info["chans"]
                 if not chans: continue
@@ -364,13 +378,13 @@ class BackupStatsScreen(Screen[None]):
                     c_files += stats["attachment_count"]
                     c_size += stats["total_size"]
                 
-                cat_lbl = self._format_tree_row(cat_name, c_msgs, c_thds, c_files, self._format_size(c_size))
+                cat_lbl = self._format_tree_row(cat_name, c_msgs, c_thds, c_files, self._format_size(c_size), depth=1)
                 cat_lbl.stylize("bold yellow")
                 node = self.stats_tree.root.add(cat_lbl, expand=True)
                 
                 for ch_data in chan_nodes_data:
                     size_str = self._format_size(ch_data['size']) if ch_data['is_backed_up'] else "NA"
-                    ch_lbl = self._format_tree_row(f"  {ch_data['name']}", ch_data['msgs'], ch_data['threads'], ch_data['files'], size_str)
+                    ch_lbl = self._format_tree_row(ch_data['name'], ch_data['msgs'], ch_data['threads'], ch_data['files'], size_str, depth=2)
                     
                     if ch_data['is_backed_up']:
                         ch_lbl.stylize("bold white")

@@ -3,9 +3,21 @@ import logging
 import json
 import threading
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 
 logger = logging.getLogger(__name__)
+
+def parse_snowflake(value: Any) -> Optional[int]:
+    """Safely parses a Discord ID (Snowflake) from any input, handling 'None' strings."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() == "none" or s == "NULL":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
 
 class BackupDatabase:
     """Manages the SQLite database for local Discord backups."""
@@ -524,9 +536,8 @@ class BackupDatabase:
             
             stats = {}
             for r in msg_rows:
-                cid_raw = r["channel_id"]
-                if cid_raw is None or cid_raw == "None": continue
-                cid = int(cid_raw)
+                cid = parse_snowflake(r["channel_id"])
+                if cid is None: continue
                 stats[cid] = {
                     "message_count": r["msg_count"],
                     "thread_count": 0,
@@ -535,17 +546,15 @@ class BackupDatabase:
                 }
 
             for r in thread_rows:
-                cid_raw = r["parent_id"]
-                if cid_raw is None or cid_raw == "None": continue
-                cid = int(cid_raw)
+                cid = parse_snowflake(r["parent_id"])
+                if cid is None: continue
                 if cid not in stats:
                     stats[cid] = {"message_count": 0, "thread_count": 0, "attachment_count": 0, "total_size": 0}
                 stats[cid]["thread_count"] = r["thread_count"]
             
             for r in att_rows:
-                cid_raw = r["channel_id"]
-                if cid_raw is None or cid_raw == "None": continue
-                cid = int(cid_raw)
+                cid = parse_snowflake(r["channel_id"])
+                if cid is None: continue
                 if cid not in stats:
                     stats[cid] = {"message_count": 0, "thread_count": 0, "attachment_count": 0, "total_size": 0}
                 stats[cid]["attachment_count"] = r["att_count"]

@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
 from typing import AsyncGenerator, Dict, Any, List, Optional
-from src.core.backup_database import BackupDatabase
+from src.core.backup_database import BackupDatabase, parse_snowflake
 
 logger = logging.getLogger(__name__)
 
@@ -252,11 +252,11 @@ class BackupRole:
             self.id = 0
             self.name = "Unknown"
             return
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data["name"]
-        self.color = BackupColor(int(data.get("color", 0)))
+        self.color = BackupColor(parse_snowflake(data.get("color", 0)) or 0)
         self.position = data.get("position", 0)
-        self.permissions = BackupPermissions(int(data.get("permissions", 0)))
+        self.permissions = BackupPermissions(parse_snowflake(data.get("permissions", 0)) or 0)
         self.hoist = bool(data.get("hoist", False))
         self.managed = False
         self.mentionable = bool(data.get("mentionable", True))
@@ -285,9 +285,9 @@ def _parse_overwrites(raw_list: list | Any) -> dict:
         if not isinstance(entry, dict):
             continue
         try:
-            target = BackupOverwriteTarget(int(entry["id"]))
-            ow = BackupPermissionOverwrite(allow=int(entry.get("allow", 0)),
-                                            deny=int(entry.get("deny", 0)))
+            target = BackupOverwriteTarget(parse_snowflake(entry["id"]))
+            ow = BackupPermissionOverwrite(allow=parse_snowflake(entry.get("allow", 0)) or 0,
+                                            deny=parse_snowflake(entry.get("deny", 0)) or 0)
             result[target] = ow
         except (KeyError, ValueError, TypeError):
             continue
@@ -301,7 +301,7 @@ class BackupCategory:
 
     def __init__(self, data: dict):
         try:
-            self.id = int(data["id"])
+            self.id = parse_snowflake(data["id"])
         except (ValueError, TypeError):
             self.id = 0  # 'uncategorized' sentinel
         self.name = data["name"]
@@ -330,17 +330,17 @@ class BackupChannel:
         "thread": ChannelType.public_thread,
     }
     def __init__(self, data: dict, category_id: int | None = None, guild: "BackupGuild|None" = None):
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data["name"]
         try:
-            self.type = ChannelType(int(data.get("type", 0)))
+            self.type = ChannelType(parse_snowflake(data.get("type", 0)) or 0)
         except ValueError:
             self.type = ChannelType.text
         self.position = data.get("position", 0)
         self.topic = data.get("topic")
         self.nsfw = bool(data.get("nsfw", False))
         cid = data.get("category_id")
-        self.category_id = int(cid) if cid and cid != "None" else category_id
+        self.category_id = parse_snowflake(cid) if cid else category_id
         self.parent_id = self.category_id
         self.guild = guild
         
@@ -389,7 +389,7 @@ class BackupMember:
             self.id = 0
             self.name = "Unknown"
             return
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data.get("username", "Unknown")
         self.display_name = data.get("display_name") or self.name
         self.global_name = self.display_name
@@ -447,7 +447,7 @@ class BackupAttachment:
             self.id = 0
             self.filename = "unknown"
             return
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.filename = data.get("filename", "unknown")
         self.size = data.get("size", 0)
         self.url = data.get("url", "")
@@ -487,7 +487,7 @@ class BackupEmoji:
             self.id = 0
             self.name = "Unknown"
             return
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data["name"]
         self.animated = data.get("mime_type") == "image/gif"
         filename = data.get("filename", "")
@@ -514,7 +514,7 @@ class BackupSticker:
             self.id = 0
             self.name = "Sticker"
             return
-        self.id = int(data.get("id") or data.get("sticker_id", 0))
+        self.id = parse_snowflake(data.get("id") or data.get("sticker_id", 0)) or 0
         self.name = data.get("name", "Sticker")
         
         # Determine format
@@ -580,7 +580,7 @@ class BackupReaction:
         if ":" in emoji_raw and not emoji_raw.startswith("<"):
             parts = emoji_raw.split(":", 1)
             try:
-                self.emoji = BackupPartialEmoji(name=parts[0], id=int(parts[1]))
+                self.emoji = BackupPartialEmoji(name=parts[0], id=parse_snowflake(parts[1]))
             except (ValueError, IndexError):
                 self.emoji = BackupPartialEmoji(name=emoji_raw)
         else:
@@ -594,12 +594,12 @@ class BackupTag:
     """Minimal stand-in for discord.ForumTag."""
     __slots__ = ("id", "name", "moderated", "emoji")
     def __init__(self, data: dict):
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data["name"]
         self.moderated = bool(data.get("moderated", False))
         emoji_id = data.get("emoji_id")
         emoji_name = data.get("emoji_name")
-        self.emoji = BackupPartialEmoji(name=emoji_name, id=int(emoji_id) if emoji_id else None) if emoji_name else None
+        self.emoji = BackupPartialEmoji(name=emoji_name, id=parse_snowflake(emoji_id)) if emoji_name else None
 
     def __repr__(self) -> str:
         return f"BackupTag(id={self.id}, name='{self.name}')"
@@ -611,8 +611,8 @@ class BackupMessageReference:
     __slots__ = ("message_id", "channel_id")
 
     def __init__(self, data: dict):
-        self.message_id = int(data["messageId"])
-        self.channel_id = int(data["channelId"])
+        self.message_id = parse_snowflake(data["messageId"])
+        self.channel_id = parse_snowflake(data["channelId"])
 
 
 class BackupThread:
@@ -626,10 +626,13 @@ class BackupThread:
             self.id = 0
             self.name = ""
             return
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data.get("name", "")
         try:
-            self.type = ChannelType(int(data.get("type", 11)))
+            if data.get("type") is not None:
+                self.type = ChannelType(parse_snowflake(data.get("type", 11)) or 11)
+            else:
+                self.type = ChannelType.public_thread
         except ValueError:
             self.type = ChannelType.public_thread
         self.message_count = data.get("message_count", 0)
@@ -637,7 +640,7 @@ class BackupThread:
         self.auto_archive_duration = data.get("auto_archive_duration", 1440)
         self.locked = data.get("locked", False)
         pid = data.get("parent_id")
-        self.parent_id = int(pid) if pid and pid != "None" else parent_id
+        self.parent_id = parse_snowflake(pid) if pid else parent_id
         
         # Parse applied tags (JSON IDs)
         self.applied_tags = []
@@ -645,7 +648,7 @@ class BackupThread:
         if raw_tags:
             try:
                 tag_ids = json.loads(raw_tags) if isinstance(raw_tags, str) else raw_tags
-                self.applied_tags = [int(tid) for tid in tag_ids]
+                self.applied_tags = [parse_snowflake(tid) for tid in tag_ids if parse_snowflake(tid)]
             except Exception: pass
 
 
@@ -671,9 +674,12 @@ class BackupMessage:
                  channel: Optional[Any] = None,
                  backup_root: Path | None = None,
                  media_pool: dict | None = None):
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         try:
-            self.type = MessageType(int(data.get("type", 0)))
+            if data.get("type") is not None:
+                self.type = MessageType(parse_snowflake(data.get("type", 0)) or 0)
+            else:
+                self.type = MessageType.default
         except ValueError:
             self.type = MessageType.default
         self.pinned = bool(data.get("is_pinned", False))
@@ -682,9 +688,9 @@ class BackupMessage:
         self.guild = guild
         self.channel = channel
         cid = data.get("channel_id")
-        self.channel_id = int(cid) if cid and cid != "None" else (channel.id if channel else None)
+        self.channel_id = parse_snowflake(cid) if cid else (channel.id if channel else None)
  
-        # Mentions
+        # Mentions (simplified)
         self.mentions = []
         self.role_mentions = []
         self.channel_mentions = []
@@ -710,7 +716,7 @@ class BackupMessage:
         else:
             self.created_at = datetime.now(timezone.utc)
  
-        # Attachments (parsed from DB or passed in)
+        # Attachments
         self.attachments = []
         raw_atts = data.get("attachments", [])
         if isinstance(raw_atts, str):
@@ -725,6 +731,13 @@ class BackupMessage:
  
         # Embeds
         self.embeds = []
+        raw_embeds = data.get("embeds", [])
+        if isinstance(raw_embeds, str):
+            try:
+                raw_embeds = json.loads(raw_embeds)
+            except Exception:
+                raw_embeds = []
+        
         for e in raw_embeds:
             if isinstance(e, dict):
                 self.embeds.append(BackupEmbed(e))
@@ -732,9 +745,37 @@ class BackupMessage:
         # Stickers
         self.stickers = []
         raw_stickers = data.get("stickers", [])
+        if isinstance(raw_stickers, str):
+            try:
+                raw_stickers = json.loads(raw_stickers)
+            except Exception:
+                raw_stickers = []
         for s in raw_stickers:
             if isinstance(s, dict):
                 self.stickers.append(BackupSticker(s, backup_root=backup_root, media_pool=media_pool))
+
+        # Reactions
+        self.reactions = []
+        raw_reactions = data.get("reactions", [])
+        if isinstance(raw_reactions, str):
+            try:
+                self.reactions = json.loads(raw_reactions)
+            except Exception:
+                self.reactions = []
+        elif isinstance(raw_reactions, list):
+            self.reactions = raw_reactions
+  
+        # Reference (replies/forwards)
+        self.reference = None
+        if data.get("message_reference"):
+            self.reference = type("Ref", (), {"message_id": parse_snowflake(data["message_reference"]), "channel_id": self.channel_id})()
+  
+        self.thread = None
+        self.flags = type("Flags", (), {"value": 0})()
+
+    def __repr__(self) -> str:
+        return f"BackupMessage(id={self.id}, author={self.author})"
+
 
 class BackupEmbed:
     """Minimal stand-in for discord.Embed."""
@@ -748,8 +789,8 @@ class BackupEmbed:
         self.color = data.get("color")
         self.timestamp = data.get("timestamp")
         
-        self.thumbnail = type("Thumbnail", (), {"url": data["thumbnail"]["url"]})() if data.get("thumbnail") else None
-        self.image = type("Image", (), {"url": data["image"]["url"]})() if data.get("image") else None
+        self.thumbnail = type("Thumbnail", (), {"url": data["thumbnail"]["url"]})() if data.get("thumbnail") and "url" in data["thumbnail"] else None
+        self.image = type("Image", (), {"url": data["image"]["url"]})() if data.get("image") and "url" in data["image"] else None
         
         author = data.get("author")
         self.author = type("Author", (), {
@@ -766,6 +807,7 @@ class BackupEmbed:
         
         self.fields = [BackupEmbedField(f) for f in data.get("fields", [])]
 
+
 class BackupEmbedField:
     """Minimal stand-in for embed fields."""
     __slots__ = ("name", "value", "inline")
@@ -773,31 +815,6 @@ class BackupEmbedField:
         self.name = data.get("name")
         self.value = data.get("value")
         self.inline = bool(data.get("inline", False))
-        
-        # Legacy extra_data support removed as requested
-        
-        self.stickers = [] 
-        
-        # Reactions
-        self.reactions = []
-        raw_reactions = data.get("reactions", [])
-        if isinstance(raw_reactions, list):
-            self.reactions = raw_reactions
-        elif isinstance(raw_reactions, str):
-            try:
-                self.reactions = json.loads(raw_reactions)
-            except Exception: pass
- 
-        # Reference (replies/forwards)
-        self.reference = None
-        if data.get("message_reference"):
-            self.reference = type("Ref", (), {"message_id": int(data["message_reference"]), "channel_id": self.channel_id})()
- 
-        self.thread = None
-        self.flags = type("Flags", (), {"value": 0})()
-
-    def __repr__(self) -> str:
-        return f"BackupMessage(id={self.id}, author={self.author})"
 
 
 class BackupGuild:
@@ -806,7 +823,7 @@ class BackupGuild:
     __slots__ = ("id", "name", "icon", "banner", "_reader")
 
     def __init__(self, data: dict, backup_path: Path, reader: "BackupReader" = None):
-        self.id = int(data["id"])
+        self.id = parse_snowflake(data["id"])
         self.name = data["name"]
         self._reader = reader
 
@@ -846,17 +863,17 @@ class BackupGuild:
 
     def get_member(self, user_id: int) -> "BackupMember | None":
         if self._reader:
-            return self._reader._member_map.get(int(user_id))
+            return self._reader._member_map.get(parse_snowflake(user_id))
         return None
 
     def get_role(self, role_id: int) -> "BackupRole | None":
         if self._reader:
-            return next((r for r in self._reader._roles if r.id == int(role_id)), None)
+            return next((r for r in self._reader._roles if r.id == parse_snowflake(role_id)), None)
         return None
 
     def get_channel(self, channel_id: int) -> "BackupChannel | None":
         if self._reader:
-            return next((c for c in self._reader._channels if c.id == int(channel_id)), None)
+            return next((c for c in self._reader._channels if c.id == parse_snowflake(channel_id)), None)
         return None
 
     def __repr__(self) -> str:
@@ -1053,7 +1070,9 @@ class BackupReader:
             user_role_ids = set()
             for rid in (u.get("roles") or []):
                 try:
-                    user_role_ids.add(int(rid))
+                    rid_parsed = parse_snowflake(rid)
+                    if rid_parsed:
+                        user_role_ids.add(rid_parsed)
                 except (ValueError, TypeError):
                     continue
             role_objs = [r for r in self.roles if r.id in user_role_ids]
@@ -1126,7 +1145,7 @@ class BackupReader:
         conn = sqlite3.connect(self.db.db_path)
         rows = conn.execute("SELECT DISTINCT channel_id FROM messages").fetchall()
         conn.close()
-        return [int(r[0]) for r in rows]
+        return [parse_snowflake(r[0]) for r in rows if parse_snowflake(r[0])]
 
     async def get_channel(self, channel_id: int) -> BackupChannel | BackupThread | None:
         for c in self.channels:
@@ -1165,7 +1184,7 @@ class BackupReader:
         # Try to fetch from DB
         user_data = self.db.get_user(str(user_id)) if self.db else None
         if user_data:
-            user_role_ids = {int(rid) for rid in (user_data.get("roles") or [])}
+            user_role_ids = {parse_snowflake(rid) for rid in (user_data.get("roles") or []) if parse_snowflake(rid)}
             role_objs = [r for r in self.roles if r.id in user_role_ids]
             member = BackupMember(user_data, role_objects=role_objs, backup_path=self.backup_path)
             self._members.append(member)
@@ -1181,12 +1200,12 @@ class BackupReader:
         return stub
 
     def _hydrate_message(self, msg_data: dict) -> BackupMessage:
-        user_id = int(msg_data.get("author_id", 0))
+        user_id = parse_snowflake(msg_data.get("author_id", 0)) or 0
         author = self._resolve_author(user_id)
         
         self._ensure_media_pool_loaded()
         
-        channel_id = int(msg_data["channel_id"])
+        channel_id = parse_snowflake(msg_data["channel_id"])
         channel = next((c for c in self.channels if c.id == channel_id), None)
         
         return BackupMessage(
