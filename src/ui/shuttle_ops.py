@@ -158,6 +158,9 @@ class OperationPane(Container):
     def on_show(self) -> None:
         """Re-validate when the pane regains visibility."""
         if self.view_mode == "backup" or self.config.tool_mode == "backup_transfer":
+            if self.view_mode == "shuttle":
+                # Re-run path discovery in case a new backup was just made
+                self._rebuild_engine()
             self.run_validate()
 
     def reload_config(self) -> None:

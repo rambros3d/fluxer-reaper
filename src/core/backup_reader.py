@@ -81,6 +81,7 @@ class MessageType(IntEnum):
     guild_incident_report_false_alarm = 39
     purchase_notification = 44
     poll_result = 46
+    forward = 100
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +660,7 @@ class BackupMessage:
         "Default": MessageType.default,
         "Reply": MessageType.reply,
         "ThreadStarter": MessageType.thread_starter_message,
-        "Forward": MessageType.default,
+        "Forward": 100,
     }
 
     __slots__ = ("id", "type", "created_at", "pinned", "content", "author",
@@ -667,7 +668,7 @@ class BackupMessage:
                  "reference", "thread", "channel_id", "flags", "guild", "channel",
                  "mentions", "role_mentions", "channel_mentions", "mention_everyone",
                  "tts", "nonce", "webhook_id", "application_id", "activity",
-                 "application", "interaction", "components", "jump_url")
+                 "application", "interaction", "components", "jump_url", "message_snapshots")
     def __init__(self, data: dict, *,
                  author: BackupMember | None = None,
                  guild: "BackupGuild | None" = None,
@@ -771,7 +772,10 @@ class BackupMessage:
             self.reference = type("Ref", (), {"message_id": parse_snowflake(data["message_reference"]), "channel_id": self.channel_id})()
   
         self.thread = None
-        self.flags = type("Flags", (), {"value": 0})()
+        self.flags = type("Flags", (), {"value": 0, "forwarded": self.type == MessageType.forward})()
+
+        # snapshots not used in latest refined structure as content is in main message
+        self.message_snapshots = []
 
     def __repr__(self) -> str:
         return f"BackupMessage(id={self.id}, author={self.author})"
@@ -836,6 +840,13 @@ class BackupGuild:
         self.banner = BackupAsset(backup_path / banner_file) if banner_file else BackupAsset(None)
         if self.banner:
             self.banner.url = data.get("banner_url")
+
+    @property
+    def active_threads(self) -> List[BackupThread]:
+        """Returns all threads that are not archived."""
+        if self._reader:
+            return [t for t in self._reader._threads if not t.archived]
+        return []
 
     @property
     def roles(self) -> List[BackupRole]:
@@ -904,6 +915,7 @@ class BackupReader:
     MESSAGE_TYPE_DEFAULT = MessageType.default
     MESSAGE_TYPE_REPLY = MessageType.reply
     MESSAGE_TYPE_THREAD_STARTER = MessageType.thread_starter_message
+    MESSAGE_TYPE_FORWARD = MessageType.forward   # Custom Reaper constant
 
     Forbidden = BackupForbidden
 
@@ -942,6 +954,7 @@ class BackupReader:
         self._categories: List[BackupCategory] = []
         self._channels: List[BackupChannel] = []
         self._threads: List[BackupThread] = []
+        self._thread_map: Dict[int, BackupThread] = {} # Starter Message ID -> Thread
         self._roles: List[BackupRole] = []
         self._emojis: List[BackupEmoji] = []
         self._stickers: List[BackupSticker] = []
@@ -1007,6 +1020,8 @@ class BackupReader:
         for tdata in thread_rows:
             thread = BackupThread(tdata)
             self._threads.append(thread)
+            if thread.id:
+                self._thread_map[thread.id] = thread
             
             # Resolve tag IDs to BackupTag objects using parent forum's available_tags
             if thread.applied_tags and thread.parent_id:
@@ -1208,7 +1223,7 @@ class BackupReader:
         channel_id = parse_snowflake(msg_data["channel_id"])
         channel = next((c for c in self.channels if c.id == channel_id), None)
         
-        return BackupMessage(
+        bm = BackupMessage(
             msg_data,
             author=author,
             guild=self.guild,
@@ -1216,6 +1231,12 @@ class BackupReader:
             backup_root=self.backup_path,
             media_pool=self._media_pool
         )
+        
+        # Link thread if this is a starter message
+        if bm.id in self._thread_map:
+            bm.thread = self._thread_map[bm.id]
+        
+        return bm
 
     async def get_message(self, channel_id: int, message_id: int) -> BackupMessage | None:
         """Fetch a specific message from SQLite."""

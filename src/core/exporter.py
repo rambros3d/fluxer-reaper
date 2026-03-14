@@ -524,18 +524,47 @@ class DiscordExporter:
                 })
 
         # 5. Message data
-        # Check for reference (reply)
+        # Check for reference (reply/origin of forward)
         message_reference = None
         if msg.reference and msg.reference.message_id:
             message_reference = str(msg.reference.message_id)
+
+        # 5.5 Forwarded snapshots
+        content = msg.content or ""
+        msg_type = int(msg.type.value) if hasattr(msg.type, "value") else 0
+        
+        # Detect if this message is forwarded (discord.py 2.5+)
+        is_forwarded = getattr(msg.flags, 'forwarded', False)
+        if is_forwarded and hasattr(msg, 'message_snapshots') and msg.message_snapshots:
+            msg_type = 100 # Custom Forward type
+            snapshot = msg.message_snapshots[0]
+            if snapshot.content:
+                content = snapshot.content
+            
+            # Process snapshot attachments into main attachments list
+            for s_att in snapshot.attachments:
+                att_res = await self._process_media(
+                    media_id=s_att.id,
+                    url=s_att.url,
+                    filename=s_att.filename,
+                    size=s_att.size,
+                    content_type=s_att.content_type,
+                    save_method=s_att.save
+                )
+                if att_res: attachments.append(att_res)
+            
+            # Process snapshot embeds (simplified)
+            for s_emb in snapshot.embeds:
+                # We reuse the main embeds list
+                embeds.append(s_emb.to_dict())
 
         m_data = {
             "id": str(msg.id),
             "channel_id": str(msg.channel.id),
             "author_id": user_id,
-            "content": msg.content,
+            "content": content,
             "timestamp": msg.created_at.isoformat(),
-            "type": int(msg.type.value) if hasattr(msg.type, "value") else 0,
+            "type": msg_type,
             "message_reference": message_reference,
             "is_pinned": 1 if msg.pinned else 0,
             "attachments": attachments,
