@@ -149,6 +149,16 @@ class MigrationState:
         if self._ensure_db():
             self.db.update_thread_tracking(str(target_channel_id), str(thread_id), last_msg_id=str(message_id))
 
+    def update_thread_completed(self, target_channel_id: str, thread_id: str, completed: bool = True):
+        if self._ensure_db():
+            self.db.update_thread_tracking(str(target_channel_id), str(thread_id), completed=1 if completed else 0)
+
+    def is_thread_completed(self, target_channel_id: str, thread_id: str) -> bool:
+        if self._ensure_db():
+            tracking = self.db.get_thread_tracking(str(target_channel_id), str(thread_id))
+            return bool(tracking.get("completed", 0))
+        return False
+
     def get_thread_message_id(self, target_channel_id: str, thread_id: str, discord_id: str) -> str | None:
         if self._ensure_db():
             return self.db.get_target_thread_message_id(str(target_channel_id), str(thread_id), str(discord_id))
@@ -165,6 +175,11 @@ class MigrationState:
     def get_last_message_id(self, target_channel_id: str) -> str | None:
         if self._ensure_db():
             return self.db.get_channel_tracking(str(target_channel_id)).get("last_msg_id")
+        return None
+
+    def get_thread_last_message_id(self, target_channel_id: str, thread_id: str) -> str | None:
+        if self._ensure_db():
+            return self.db.get_thread_tracking(str(target_channel_id), str(thread_id)).get("last_msg_id")
         return None
 
     def find_message_mapping(self, discord_id: str) -> tuple[str, str] | tuple[None, None]:
@@ -203,6 +218,10 @@ class MigrationState:
             conn.execute("DELETE FROM channel_tracking")
             conn.execute("DELETE FROM thread_tracking")
             conn.commit()
+
+    def clear_channel_data(self, target_channel_id: str):
+        if self._ensure_db():
+            self.db.clear_channel_data(str(target_channel_id))
 
     def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
         """

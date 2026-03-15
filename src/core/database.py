@@ -72,9 +72,16 @@ class MigrationDatabase:
                 last_msg_ts TEXT,
                 msg_count INTEGER DEFAULT 0,
                 file_count INTEGER DEFAULT 0,
+                completed INTEGER DEFAULT 0,
                 PRIMARY KEY (channel_id, thread_id)
             )
         """)
+        
+        # Add completed column if it doesn't exist (backward compatibility for existing resumption DBs)
+        try:
+            cursor.execute("ALTER TABLE thread_tracking ADD COLUMN completed INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass # Already exists
 
         # Table for entity mappings (channels, roles, etc.)
         cursor.execute("""
@@ -208,7 +215,7 @@ class MigrationDatabase:
         ).fetchone()
         return row["target_msg_id"] if row else None
 
-    def update_thread_tracking(self, channel_id: str, thread_id: str, last_msg_id: str = None, last_msg_ts: str = None, msg_inc: int = 0, file_inc: int = 0):
+    def update_thread_tracking(self, channel_id: str, thread_id: str, last_msg_id: str = None, last_msg_ts: str = None, msg_inc: int = 0, file_inc: int = 0, completed: int = None):
         conn = self._get_conn()
         conn.execute("INSERT OR IGNORE INTO thread_tracking (channel_id, thread_id) VALUES (?, ?)", (channel_id, thread_id))
         
@@ -216,6 +223,8 @@ class MigrationDatabase:
             conn.execute("UPDATE thread_tracking SET last_msg_id = ? WHERE channel_id = ? AND thread_id = ?", (last_msg_id, channel_id, thread_id))
         if last_msg_ts:
             conn.execute("UPDATE thread_tracking SET last_msg_ts = ? WHERE channel_id = ? AND thread_id = ?", (last_msg_ts, channel_id, thread_id))
+        if completed is not None:
+            conn.execute("UPDATE thread_tracking SET completed = ? WHERE channel_id = ? AND thread_id = ?", (completed, channel_id, thread_id))
         
         if msg_inc != 0 or file_inc != 0:
             conn.execute(
@@ -230,6 +239,16 @@ class MigrationDatabase:
         if row:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
+
+    def clear_channel_data(self, channel_id: str):
+        """Purge all mappings and tracking data for a specific channel and its threads."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM message_mappings WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM thread_mappings WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM channel_tracking WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM thread_tracking WHERE channel_id = ?", (channel_id,))
+        conn.commit()
+        logger.info(f"Cleared all tracking and mapping data for channel: {channel_id}")
 
     def close(self):
         if hasattr(self._local, "conn"):

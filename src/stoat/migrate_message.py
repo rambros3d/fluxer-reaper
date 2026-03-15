@@ -156,7 +156,14 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             if thread.id not in processed_threads:
                 processed_threads.add(thread.id)
                 stats["threads"] += 1
-                thread_stats = await analyze_migration(context, thread.id, processed_threads=processed_threads)
+                
+                # Fetch last migrated message ID for this thread
+                target_channel_id = context.state.get_target_channel_id(str(source_channel_id))
+                thread_after_id = None
+                if target_channel_id:
+                    thread_after_id = context.state.get_thread_last_message_id(target_channel_id, str(thread.id))
+                
+                thread_stats = await analyze_migration(context, thread.id, after_message_id=int(thread_after_id) if thread_after_id else None, processed_threads=processed_threads)
                 stats["messages"] += thread_stats["messages"]
                 stats["attachments"] += thread_stats["attachments"]
                 stats["threads"] += thread_stats["threads"]
@@ -189,7 +196,14 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             if t.id not in processed_threads:
                 processed_threads.add(t.id)
                 stats["threads"] += 1
-                thread_stats = await analyze_migration(context, t.id, processed_threads=processed_threads)
+                
+                # Fetch last migrated message ID for this thread
+                target_channel_id = context.state.get_target_channel_id(str(source_channel_id))
+                thread_after_id = None
+                if target_channel_id:
+                    thread_after_id = context.state.get_thread_last_message_id(target_channel_id, str(t.id))
+
+                thread_stats = await analyze_migration(context, t.id, after_message_id=int(thread_after_id) if thread_after_id else None, processed_threads=processed_threads)
                 stats["messages"] += thread_stats["messages"]
                 stats["attachments"] += thread_stats["attachments"]
                 stats["threads"] += thread_stats["threads"]
@@ -226,8 +240,57 @@ async def migrate_messages(
         
     if processed_threads is None:
         processed_threads = set()
-        
+
+    async def _process_missed_threads():
+        """Helper to scan for threads not yet processed in the current scan."""
+        if not context.is_running:
+            return
+        logger.info(f"Checking for missed or pending threads in channel {source_channel_id}...")
+        all_threads = await get_channel_threads(context.discord_reader, source_channel_id)
+        for t in all_threads:
+            if not context.is_running:
+                break
+            if t.id not in processed_threads:
+                processed_threads.add(t.id)
+                
+                # Skip if thread was already fully migrated in a previous run
+                if context.state.is_thread_completed(target_channel_id, str(t.id)):
+                    logger.debug(f"Skipping already completed thread '{t.name}' (ID: {t.id})")
+                    continue
+
+                logger.info(f"Checking missed thread '{t.name}' (ID: {t.id})")
+                
+                # Fetch last migrated message ID for this thread
+                thread_after_id = context.state.get_thread_last_message_id(target_channel_id, str(t.id))
+                if thread_after_id:
+                    logger.info(f"Resuming missed/pending thread '{t.name}' from after message ID: {thread_after_id}")
+
+                stats["threads"] += 1
+                thread_stats = await migrate_messages(
+                    context=context,
+                    source_channel_id=t.id,
+                    target_channel_id=target_channel_id,
+                    after_message_id=int(thread_after_id) if thread_after_id else None,
+                    thread_id=str(t.id),
+                    parent_target_id=None,
+                    thread_name=t.name,
+                    processed_threads=processed_threads
+                )
+                stats["messages"] += thread_stats["messages"]
+                stats["attachments"] += thread_stats["attachments"]
+                stats["threads"] += thread_stats["threads"]
+                
+                if context.is_running:
+                    await context.stoat_writer.send_marker(
+                        channel_id=target_channel_id,
+                        content=f"> <<< END OF THREAD >>>"
+                    )
+
     try:
+        # If resuming (after_message_id is set) and at top level, check for pending threads FIRST
+        # to preserve chronological order (finish old unfinished business first)
+        if not thread_id and after_message_id is not None:
+            await _process_missed_threads()
         async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
             if not context.is_running:
                 logger.warning("Migration interrupted by user (is_running=False)")
@@ -256,11 +319,17 @@ async def migrate_messages(
                         # Track thread entry
                         stats["threads"] += 1
                         
+                        # Fetch last migrated message ID for this thread
+                        thread_after_id = context.state.get_thread_last_message_id(target_channel_id, str(thread.id))
+                        if thread_after_id:
+                            logger.info(f"Resuming thread '{thread.name}' from after message ID: {thread_after_id}")
+
                         # Migrate thread messages recursively
                         thread_stats = await migrate_messages(
                             context=context,
                             source_channel_id=thread.id,
                             target_channel_id=target_channel_id,
+                            after_message_id=int(thread_after_id) if thread_after_id else None,
                             thread_id=str(thread.id),
                             parent_target_id=None,
                             thread_name=thread.name,
@@ -271,10 +340,11 @@ async def migrate_messages(
                         stats["threads"] += thread_stats["threads"]
     
                         # Send End Marker
-                        await context.stoat_writer.send_marker(
-                            channel_id=target_channel_id,
-                            content=f"> <<< END OF THREAD >>>"
-                        )
+                        if context.is_running:
+                            await context.stoat_writer.send_marker(
+                                channel_id=target_channel_id,
+                                content=f"> <<< END OF THREAD >>>"
+                            )
                     
                 if progress_callback:
                     await progress_callback(stats)
@@ -478,12 +548,18 @@ async def migrate_messages(
                         processed_threads.add(thread.id)
                         # Track thread entry
                         stats["threads"] += 1
-    
+                        
+                        # Fetch last migrated message ID for this thread
+                        thread_after_id = context.state.get_thread_last_message_id(target_channel_id, str(thread.id))
+                        if thread_after_id:
+                            logger.info(f"Resuming thread '{thread.name}' from after message ID: {thread_after_id}")
+
                         # Migrate thread messages recursively
                         thread_stats = await migrate_messages(
                             context=context,
                             source_channel_id=thread.id,
                             target_channel_id=target_channel_id,
+                            after_message_id=int(thread_after_id) if thread_after_id else None,
                             thread_id=str(thread.id),
                             parent_target_id=stoat_msg_id,
                             thread_name=thread.name,
@@ -494,10 +570,11 @@ async def migrate_messages(
                         stats["threads"] += thread_stats["threads"]
                         
                         # Send End Marker
-                        await context.stoat_writer.send_marker(
-                            channel_id=target_channel_id,
-                            content=f"> <<< END OF THREAD >>>"
-                        )
+                        if context.is_running:
+                            await context.stoat_writer.send_marker(
+                                channel_id=target_channel_id,
+                                content=f"> <<< END OF THREAD >>>"
+                            )
                 
                 # Update Link Tracking
                 if not stats["first_message_url"]:
@@ -514,33 +591,11 @@ async def migrate_messages(
                 import traceback
                 logger.error(traceback.format_exc())
         
-        # After scanning messages, explicitly check for any missed threads (e.g. archived or skipped in scan)
-        # Only do this at the top level
-        if not thread_id and (after_message_id is not None or inclusive or stats["messages"] > 0):
-            all_threads = await get_channel_threads(context.discord_reader, source_channel_id)
-            for t in all_threads:
-                if t.id not in processed_threads:
-                    processed_threads.add(t.id)
-                    logger.info(f"Migrating missed thread '{t.name}' (ID: {t.id})")
-                    
-                    stats["threads"] += 1
-                    thread_stats = await migrate_messages(
-                        context=context,
-                        source_channel_id=t.id,
-                        target_channel_id=target_channel_id,
-                        thread_id=str(t.id),
-                        parent_target_id=None,
-                        thread_name=t.name,
-                        processed_threads=processed_threads
-                    )
-                    stats["messages"] += thread_stats["messages"]
-                    stats["attachments"] += thread_stats["attachments"]
-                    stats["threads"] += thread_stats["threads"]
-                    
-                    await context.stoat_writer.send_marker(
-                        channel_id=target_channel_id,
-                        content=f"> <<< END OF THREAD >>>"
-                    )
+        # Mark thread as completed if we finished the loop without being interrupted
+        if thread_id and context.is_running:
+            context.state.update_thread_completed(target_channel_id, thread_id, completed=True)
+            logger.info(f"Thread '{thread_name}' (ID: {thread_id}) marked as completed.")
+            
 
     except (KeyboardInterrupt, asyncio.CancelledError):
         context.is_running = False

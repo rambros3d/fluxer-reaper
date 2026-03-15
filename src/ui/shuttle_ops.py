@@ -1167,6 +1167,8 @@ class OperationPane(Container):
                 else:
                     logger.info("Proceeding with 'Start from First' (clean sink).")
                     after_id = None
+                    # Clear previous tracking data for this channel
+                    self.engine.state.clear_channel_data(target_channel.get("id"))
                 
                 is_inclusive = (choice == "btn_start_id")
                 
