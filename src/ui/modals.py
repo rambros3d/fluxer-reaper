@@ -403,6 +403,15 @@ class ProgressScreen(Screen[None]):
             back_btn.display = show_back
         except Exception:
             pass
+            
+        try:
+            menu_btn = self.query_one("#btn_main_menu", Button)
+            if status == "complete":
+                menu_btn.variant = "success"
+            else:
+                menu_btn.variant = "warning"
+        except Exception:
+            pass
 
     def show_info(self, migration_status: str, items_status: str):
         try:
