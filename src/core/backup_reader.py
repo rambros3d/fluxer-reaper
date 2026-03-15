@@ -321,7 +321,8 @@ class BackupChannel:
     """Minimal stand-in for discord.TextChannel / ForumChannel / VoiceChannel."""
 
     __slots__ = ("id", "name", "type", "position", "topic", "nsfw",
-                 "category_id", "available_tags", "parent_id", "guild", "overwrites")
+                 "category_id", "available_tags", "parent_id", "guild", "overwrites",
+                 "bitrate", "slowmode_delay")
 
     _TYPE_MAP = {
         "text": ChannelType.text,
@@ -340,6 +341,8 @@ class BackupChannel:
         self.position = data.get("position", 0)
         self.topic = data.get("topic")
         self.nsfw = bool(data.get("nsfw", False))
+        self.bitrate = data.get("bitrate")
+        self.slowmode_delay = data.get("slowmode_delay")
         cid = data.get("category_id")
         self.category_id = parse_snowflake(cid) if cid else category_id
         self.parent_id = self.category_id
@@ -683,7 +686,7 @@ class BackupMessage:
         cid = data.get("channel_id")
         self.channel_id = parse_snowflake(cid) if cid else (channel.id if channel else None)
  
-        # Mentions (simplified)
+        # Mentions (resolved on the fly by clean_mentions via guild.get_member)
         self.mentions = []
         self.role_mentions = []
         self.channel_mentions = []
@@ -925,7 +928,11 @@ class BackupGuild:
 
     def get_member(self, user_id: int) -> "BackupMember | None":
         if self._reader:
-            return self._reader._member_map.get(parse_snowflake(user_id))
+            uid = parse_snowflake(user_id)
+            if uid in self._reader._member_map:
+                return self._reader._member_map[uid]
+            # Lazy load from DB
+            return self._reader._resolve_author(uid)
         return None
 
     def get_role(self, role_id: int) -> "BackupRole | None":

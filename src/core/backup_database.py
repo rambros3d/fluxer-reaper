@@ -75,7 +75,9 @@ class BackupDatabase:
                         position INTEGER,
                         category_id TEXT,
                         topic TEXT,
-                        nsfw INTEGER
+                        nsfw INTEGER,
+                        bitrate INTEGER,
+                        slowmode_delay INTEGER
                     )
                 """)
 
@@ -299,8 +301,8 @@ class BackupDatabase:
         with self._lock:
             conn = self._get_conn()
             conn.executemany("""
-                INSERT OR REPLACE INTO channels (id, name, type, position, category_id, topic, nsfw)
-                VALUES (:id, :name, :type, :position, :category_id, :topic, :nsfw)
+                INSERT OR REPLACE INTO channels (id, name, type, position, category_id, topic, nsfw, bitrate, slowmode_delay)
+                VALUES (:id, :name, :type, :position, :category_id, :topic, :nsfw, :bitrate, :slowmode_delay)
             """, channels)
             conn.commit()
             conn.close()
