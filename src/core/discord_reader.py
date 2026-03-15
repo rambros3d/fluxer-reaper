@@ -9,6 +9,11 @@ class DiscordReader:
     MESSAGE_TYPE_DEFAULT = discord.MessageType.default
     MESSAGE_TYPE_REPLY = discord.MessageType.reply
     MESSAGE_TYPE_THREAD_STARTER = discord.MessageType.thread_starter_message
+    MESSAGE_TYPE_CHAT_INPUT_COMMAND = discord.MessageType.chat_input_command
+    MESSAGE_TYPE_CONTEXT_MENU_COMMAND = discord.MessageType.context_menu_command
+    MESSAGE_TYPE_FORWARD = getattr(discord.MessageType, 'forward', 100)
+    MESSAGE_TYPE_POLL_RESULT = getattr(discord.MessageType, 'poll_result', 46)
+    MESSAGE_TYPE_AUTO_MODERATION_ACTION = getattr(discord.MessageType, 'auto_moderation_action', 24)
     
     # Exceptions
     Forbidden = discord.Forbidden
@@ -295,9 +300,28 @@ class DiscordReader:
         """Downloads a Discord emoji into memory."""
         return await emoji.read()
 
+    @staticmethod
+    def get_sticker_extension(sticker) -> str:
+        """Determines the correct file extension for a sticker."""
+        fmt = getattr(sticker, 'format', None)
+        if fmt:
+            # StickerFormatType: png=1, apng=2, lottie=3, gif=4
+            val = getattr(fmt, 'value', fmt)
+            if val == 3: return "json"
+            if val == 4: return "gif"
+            if val == 2: return "png" # APNG is often saved as PNG
+        
+        # Fallback to URL parsing
+        url = str(getattr(sticker, 'url', ""))
+        if ".json" in url: return "json"
+        if ".gif" in url: return "gif"
+        if ".webp" in url: return "webp"
+        return "png"
+
     async def download_sticker(self, sticker: Union[discord.GuildSticker, discord.StickerItem]) -> bytes:
         """Downloads a Discord sticker into memory."""
-        logger.debug(f"Attempting to download sticker: {getattr(sticker, 'name', 'unknown')} (type: {type(sticker)})")
+        name = getattr(sticker, 'name', 'unknown')
+        logger.debug(f"Attempting to download sticker: {name} (ID: {sticker.id}, type: {type(sticker)})")
         
         # 1. Try directly reading
         if hasattr(sticker, 'read'):
@@ -316,22 +340,36 @@ class DiscordReader:
             except Exception as e:
                 logger.debug(f"to_sticker fallback failed: {e}")
 
-        # 3. Try downloading from URL as last resort
+        # 3. Try download via reader's session (Robust fallback)
         url = getattr(sticker, 'url', None)
         if url:
             try:
-                import aiohttp
-                logger.debug(f"Attempting URL download for sticker from {url}")
-                async with aiohttp.ClientSession() as session:
+                # Use the internal session from discord.py if possible (it has proper headers/auth)
+                session = None
+                if self.client and hasattr(self.client, 'http') and hasattr(self.client.http, '_HTTPClient__session'):
+                     session = self.client.http._HTTPClient__session
+                
+                if session:
+                    logger.debug(f"Attempting download for sticker '{name}' using bot's session from {url}")
                     async with session.get(str(url)) as resp:
                         if resp.status == 200:
-                            return await resp.read()
-                        else:
-                            logger.debug(f"URL download failed with status {resp.status}")
+                            data = await resp.read()
+                            if data:
+                                logger.debug(f"Successfully downloaded sticker '{name}' (size: {len(data)})")
+                                return data
+                else:
+                    # Generic fallback session
+                    import aiohttp
+                    logger.debug(f"Attempting download for sticker '{name}' using generic session from {url}")
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(str(url)) as resp:
+                            if resp.status == 200:
+                                data = await resp.read()
+                                if data: return data
             except Exception as e:
-                logger.debug(f"URL download failed for sticker: {e}")
+                logger.debug(f"URL download failed for sticker '{name}': {e}")
         
-        logger.warning(f"Failed to download sticker {getattr(sticker, 'name', 'unknown')} after all attempts")
+        logger.warning(f"Failed to download sticker {name} ({sticker.id}) after all attempts")
         return b""
 
     async def download_attachment(self, attachment: discord.Attachment) -> bytes:

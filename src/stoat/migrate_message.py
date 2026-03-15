@@ -18,6 +18,8 @@ from src.core.utils import resolve_discord_links
 logger = logging.getLogger(__name__)
 
 def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None) -> str:
+    if content is None:
+        return ""
     if not content or not guild:
         return content
         
@@ -164,8 +166,13 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             context.discord_reader.MESSAGE_TYPE_DEFAULT,
             context.discord_reader.MESSAGE_TYPE_REPLY,
             context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-            context.discord_reader.MESSAGE_TYPE_FORWARD
+            context.discord_reader.MESSAGE_TYPE_FORWARD,
+            context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+            context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
         ]:
+            logger.debug(f"Skipping message {msg.id} in analyze: type={msg.type} (not an allowed type)")
             continue
 
         stats["messages"] += 1
@@ -230,11 +237,16 @@ async def migrate_messages(
 
             # Skip system messages like "pinned a message", etc.
             content = "" # Initialize content
+            logger.debug(f"Analyzing message {msg.id}: type={msg.type}, content_len={len(msg.content) if msg.content else 0}, attachments={len(msg.attachments)}, embeds={len(msg.embeds)}")
             if msg.type not in [
                 context.discord_reader.MESSAGE_TYPE_DEFAULT,
                 context.discord_reader.MESSAGE_TYPE_REPLY,
                 context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-                context.discord_reader.MESSAGE_TYPE_FORWARD
+                context.discord_reader.MESSAGE_TYPE_FORWARD,
+                context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+                context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
             ]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
@@ -280,6 +292,7 @@ async def migrate_messages(
                     state=context.state,
                     target_server_id=context.stoat_writer.community_id
                 )
+                logger.debug(f"Message {msg.id} cleaned content length: {len(content) if content else 0}")
                 
             # Process attachments
             files = []
@@ -345,10 +358,14 @@ async def migrate_messages(
                                     try:
                                         logger.debug(f"Converting Lottie sticker {s.name} to GIF...")
                                         lottie_data = json.loads(sticker_data)
-                                        animation = Animation.load(lottie_data)
-                                        output = io.BytesIO()
-                                        export_gif(animation, output)
-                                        sticker_data = output.getvalue()
+                                        
+                                        def _convert_lottie_to_gif(data):
+                                            animation = Animation.load(data)
+                                            output = io.BytesIO()
+                                            export_gif(animation, output)
+                                            return output.getvalue()
+                                            
+                                        sticker_data = await asyncio.to_thread(_convert_lottie_to_gif, lottie_data)
                                         ext = 'gif'
                                         logger.debug(f"Successfully converted Lottie sticker {s.name} to GIF")
                                     except Exception as conv_err:
@@ -361,32 +378,33 @@ async def migrate_messages(
                             # APNG → GIF (via Pillow, with proper frame disposal)
                             elif ext == 'apng':
                                 try:
-                                    logger.debug(f"Converting APNG sticker {s.name} to GIF...")
+                                    logger.debug(f"Converting APNG sticker {s.name} (ID: {s.id}) to GIF for Stoat...")
                                     from PIL import Image
-                                    img = Image.open(io.BytesIO(sticker_data))
-                                    gif_buf = io.BytesIO()
-                                    if getattr(img, 'n_frames', 1) > 1:
-                                        # Extract each frame onto a clean background to avoid overlap
-                                        frames = []
-                                        durations = []
-                                        for frame_idx in range(img.n_frames):
-                                            img.seek(frame_idx)
-                                            # Create fresh background and composite the frame
-                                            canvas = Image.new('RGBA', img.size, (0, 0, 0, 0))
-                                            frame = img.convert('RGBA')
-                                            canvas.paste(frame, (0, 0), frame)
-                                            # Convert to palette mode for GIF
-                                            frames.append(canvas.convert('RGBA'))
-                                            durations.append(img.info.get('duration', 100))
-                                        # Save with disposal=2 (clear frame before next)
-                                        frames[0].save(
-                                            gif_buf, format='GIF', save_all=True,
-                                            append_images=frames[1:], loop=0,
-                                            duration=durations, disposal=2, transparency=0
-                                        )
-                                    else:
-                                        img.save(gif_buf, format='GIF')
-                                    sticker_data = gif_buf.getvalue()
+                                    
+                                    def _convert_apng_to_gif(data):
+                                        img = Image.open(io.BytesIO(data))
+                                        gif_buf = io.BytesIO()
+                                        if getattr(img, 'n_frames', 1) > 1:
+                                            frames = []
+                                            durations = []
+                                            # Create a RGBA canvas for disposal handling
+                                            canvas = Image.new('RGBA', img.size, (0,0,0,0))
+                                            for i in range(img.n_frames):
+                                                img.seek(i)
+                                                frame = img.convert('RGBA')
+                                                canvas.paste(frame, (0, 0), frame)
+                                                frames.append(canvas.convert('RGBA'))
+                                                durations.append(img.info.get('duration', 100))
+                                            frames[0].save(
+                                                gif_buf, format='GIF', save_all=True,
+                                                append_images=frames[1:], loop=0,
+                                                duration=durations, disposal=2, transparency=0
+                                            )
+                                        else:
+                                            img.save(gif_buf, format='GIF')
+                                        return gif_buf.getvalue()
+
+                                    sticker_data = await asyncio.to_thread(_convert_apng_to_gif, sticker_data)
                                     ext = 'gif'
                                     logger.debug(f"Successfully converted APNG sticker {s.name} to GIF")
                                 except Exception as conv_err:

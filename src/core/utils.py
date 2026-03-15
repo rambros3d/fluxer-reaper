@@ -58,4 +58,8 @@ def resolve_discord_links(content: str, state: MigrationState, platform: str, ta
             # Fallback for unmigrated channel
             return f"[`discord-channel`](<{full_url}>)"
 
-    return discord_link_re.sub(replace_link, content)
+    logger.debug(f"resolve_discord_links: Processing content (len {len(content)}): {content[:100]!r}")
+    result = discord_link_re.sub(replace_link, content)
+    if result != content:
+        logger.debug(f"resolve_discord_links: Content resolved to (len {len(result)}): {result[:100]!r}")
+    return result

@@ -18,6 +18,8 @@ from src.core.utils import resolve_discord_links
 logger = logging.getLogger(__name__)
 
 def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None) -> str:
+    if content is None:
+        return ""
     if not content or not guild:
         return content
         
@@ -159,12 +161,18 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             context.discord_reader.MESSAGE_TYPE_DEFAULT,
             context.discord_reader.MESSAGE_TYPE_REPLY,
             context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-            context.discord_reader.MESSAGE_TYPE_FORWARD
+            context.discord_reader.MESSAGE_TYPE_FORWARD,
+            context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+            context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
         ]:
+            logger.debug(f"Skipping message {msg.id} in analyze: type={msg.type} (not an allowed type)")
             continue
 
         stats["messages"] += 1
         stats["attachments"] += len(msg.attachments)
+        logger.debug(f"Analyze msg {msg.id}: type={msg.type}, content={msg.content[:50]!r}...")
 
         if progress_callback and stats["messages"] % 10 == 0:
             await progress_callback(stats)
@@ -225,11 +233,16 @@ async def migrate_messages(
 
 
             # Skip system messages like "pinned a message", etc.
+            logger.debug(f"Analyzing message {msg.id}: type={msg.type}, content_len={len(msg.content) if msg.content else 0}, attachments={len(msg.attachments)}, embeds={len(msg.embeds)}")
             if msg.type not in [
                 context.discord_reader.MESSAGE_TYPE_DEFAULT,
                 context.discord_reader.MESSAGE_TYPE_REPLY,
                 context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-                context.discord_reader.MESSAGE_TYPE_FORWARD
+                context.discord_reader.MESSAGE_TYPE_FORWARD,
+                context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+                context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
             ]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
@@ -264,7 +277,6 @@ async def migrate_messages(
                 continue
             else:
                 # Use custom clean_mentions with msg mentions for accuracy
-                # Use custom clean_mentions with msg mentions for accuracy
                 content = clean_mentions(
                     msg.content, 
                     msg.guild, 
@@ -275,6 +287,7 @@ async def migrate_messages(
                     state=context.state,
                     target_server_id=context.fluxer_writer.community_id
                 )
+                logger.debug(f"Message {msg.id} cleaned content length: {len(content) if content else 0}")
                 
             # Process attachments
             files = []
@@ -343,21 +356,31 @@ async def migrate_messages(
                             if ext == 'lottie':
                                 if HAS_LOTTIE:
                                     try:
-                                        logger.debug(f"Converting Lottie sticker {s.name} to WebP...")
+                                        logger.debug(f"Converting Lottie sticker {s.name} (ID: {s.id}) to WebP...")
                                         lottie_data = json.loads(sticker_data)
-                                        animation = Animation.load(lottie_data)
-                                        gif_buf = io.BytesIO()
-                                        export_gif(animation, gif_buf)
-                                        gif_buf.seek(0)
+                                        
+                                        def _convert_lottie(data):
+                                            anim = Animation.load(data)
+                                            buf = io.BytesIO()
+                                            export_gif(anim, buf)
+                                            buf.seek(0)
+                                            return buf
+
+                                        gif_buf = await asyncio.to_thread(_convert_lottie, lottie_data)
+                                        
                                         # GIF → WebP via Pillow
                                         from PIL import Image
-                                        img = Image.open(gif_buf)
-                                        webp_buf = io.BytesIO()
-                                        if getattr(img, 'n_frames', 1) > 1:
-                                            img.save(webp_buf, format='WEBP', save_all=True, loop=0)
-                                        else:
-                                            img.save(webp_buf, format='WEBP')
-                                        sticker_data = webp_buf.getvalue()
+                                        
+                                        def _convert_gif_to_webp(buf):
+                                            img = Image.open(buf)
+                                            w_buf = io.BytesIO()
+                                            if getattr(img, 'n_frames', 1) > 1:
+                                                img.save(w_buf, format='WEBP', save_all=True, loop=0, quality=80)
+                                            else:
+                                                img.save(w_buf, format='WEBP', quality=80)
+                                            return w_buf.getvalue()
+
+                                        sticker_data = await asyncio.to_thread(_convert_gif_to_webp, gif_buf)
                                         ext = 'webp'
                                         logger.debug(f"Successfully converted Lottie sticker {s.name} to WebP")
                                     except Exception as conv_err:
@@ -367,18 +390,21 @@ async def migrate_messages(
                                     logger.warning(f"Lottie library not available, sending sticker {s.name} as raw JSON")
                                     ext = 'json'
                             
-                            # APNG / GIF → WebP (via Pillow)
                             elif ext in ('apng', 'gif'):
                                 try:
-                                    logger.debug(f"Converting {ext.upper()} sticker {s.name} to WebP...")
+                                    logger.debug(f"Converting {ext.upper()} sticker {s.name} (ID: {s.id}) to WebP...")
                                     from PIL import Image
-                                    img = Image.open(io.BytesIO(sticker_data))
-                                    webp_buf = io.BytesIO()
-                                    if getattr(img, 'n_frames', 1) > 1:
-                                        img.save(webp_buf, format='WEBP', save_all=True, loop=0)
-                                    else:
-                                        img.save(webp_buf, format='WEBP')
-                                    sticker_data = webp_buf.getvalue()
+                                    
+                                    def _process_animated_sticker(data):
+                                        img = Image.open(io.BytesIO(data))
+                                        webp_buf = io.BytesIO()
+                                        if getattr(img, 'n_frames', 1) > 1:
+                                            img.save(webp_buf, format='WEBP', save_all=True, loop=0, quality=80)
+                                        else:
+                                            img.save(webp_buf, format='WEBP', quality=80)
+                                        return webp_buf.getvalue()
+
+                                    sticker_data = await asyncio.to_thread(_process_animated_sticker, sticker_data)
                                     ext = 'webp'
                                     logger.debug(f"Successfully converted sticker {s.name} to WebP")
                                 except Exception as conv_err:
@@ -386,9 +412,10 @@ async def migrate_messages(
                                     # Keep original format as fallback
                             
                             filename = f"sticker_{s.name}_{s.id}.{ext}"
+                            sticker_size = len(sticker_data)
                             files.append({"filename": filename, "data": sticker_data})
                             stats["attachments"] += 1
-                            logger.debug(f"Added sticker {s.name} as attachment (extension: {ext})")
+                            logger.debug(f"Added sticker {s.name} as attachment (extension: {ext}, size: {sticker_size} bytes)")
                     except Exception as e:
                         logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {e}")
                 
@@ -414,6 +441,7 @@ async def migrate_messages(
                 if avatar_url and not avatar_url.startswith("http"):
                     avatar_url = None
 
+                logger.debug(f"Fluxer: Calling send_message for Discord ID {msg.id}")
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,
                     author_name=msg.author.display_name,
@@ -425,12 +453,14 @@ async def migrate_messages(
                     is_forwarded=is_forwarded,
                     embeds=msg.embeds
                 )
-                
+
                 if fluxer_msg_id:
                     if thread_id:
                         context.state.set_thread_message_mapping(target_channel_id, thread_id, str(msg.id), fluxer_msg_id)
                     else:
                         context.state.set_message_mapping(target_channel_id, str(msg.id), fluxer_msg_id)
+                else:
+                    logger.warning(f"Fluxer: send_message returned None for Discord ID {msg.id} (message might have been skipped or timed out)")
 
                 if thread_id:
                     context.state.update_thread_last_message_timestamp(target_channel_id, thread_id, str(msg.created_at))
@@ -481,6 +511,7 @@ async def migrate_messages(
                 
                 if progress_callback:
                     await progress_callback(stats)
+                logger.debug(f"Fluxer: Finished processing message Discord ID {msg.id}")
             except Exception as e:
                 logger.error(f"Failed to process message {msg.id}: {e}")
                 import traceback

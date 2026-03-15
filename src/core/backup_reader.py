@@ -606,14 +606,6 @@ class BackupTag:
         return f"BackupTag(id={self.id}, name='{self.name}')"
 
 
-class BackupMessageReference:
-    """Minimal stand-in for discord.MessageReference."""
-
-    __slots__ = ("message_id", "channel_id")
-
-    def __init__(self, data: dict):
-        self.message_id = parse_snowflake(data["messageId"])
-        self.channel_id = parse_snowflake(data["channelId"])
 
 
 class BackupThread:
@@ -769,16 +761,29 @@ class BackupMessage:
         # Reference (replies/forwards)
         self.reference = None
         if data.get("message_reference"):
-            self.reference = type("Ref", (), {"message_id": parse_snowflake(data["message_reference"]), "channel_id": self.channel_id})()
-  
-        self.thread = None
-        self.flags = type("Flags", (), {"value": 0, "forwarded": self.type == MessageType.forward})()
+            self.reference = BackupMessageReference(
+                message_id=parse_snowflake(data["message_reference"]),
+                channel_id=self.channel_id
+            )
 
-        # snapshots not used in latest refined structure as content is in main message
+        self.thread = None
+        self.flags = BackupMessageFlags(forwarded=self.type == MessageType.forward)
         self.message_snapshots = []
 
     def __repr__(self) -> str:
         return f"BackupMessage(id={self.id}, author={self.author})"
+
+class BackupMessageReference:
+    __slots__ = ("message_id", "channel_id")
+    def __init__(self, message_id: int | None = None, channel_id: int | None = None):
+        self.message_id = message_id
+        self.channel_id = channel_id
+
+class BackupMessageFlags:
+    __slots__ = ("value", "forwarded")
+    def __init__(self, value: int = 0, forwarded: bool = False):
+        self.value = value
+        self.forwarded = forwarded
 
 
 class BackupEmbed:
@@ -793,24 +798,70 @@ class BackupEmbed:
         self.color = data.get("color")
         self.timestamp = data.get("timestamp")
         
-        self.thumbnail = type("Thumbnail", (), {"url": data["thumbnail"]["url"]})() if data.get("thumbnail") and "url" in data["thumbnail"] else None
-        self.image = type("Image", (), {"url": data["image"]["url"]})() if data.get("image") and "url" in data["image"] else None
+        self.thumbnail = BackupEmbedThumbnail(data["thumbnail"]["url"]) if data.get("thumbnail") and "url" in data["thumbnail"] else None
+        self.image = BackupEmbedImage(data["image"]["url"]) if data.get("image") and "url" in data["image"] else None
         
         author = data.get("author")
-        self.author = type("Author", (), {
-            "name": author.get("name"),
-            "url": author.get("url"),
-            "icon_url": author.get("icon_url")
-        })() if author else None
+        self.author = BackupEmbedAuthor(
+            name=author.get("name"),
+            url=author.get("url"),
+            icon_url=author.get("icon_url")
+        ) if author else None
         
         footer = data.get("footer")
-        self.footer = type("Footer", (), {
-            "text": footer.get("text"),
-            "icon_url": footer.get("icon_url")
-        })() if footer else None
+        self.footer = BackupEmbedFooter(
+            text=footer.get("text"),
+            icon_url=footer.get("icon_url")
+        ) if footer else None
         
         self.fields = [BackupEmbedField(f) for f in data.get("fields", [])]
 
+    def to_dict(self) -> dict:
+        result = {
+            "type": "rich" # Default for bot-sent embeds
+        }
+        if self.title: result["title"] = self.title
+        if self.description: result["description"] = self.description
+        if self.url: result["url"] = self.url
+        if self.color: result["color"] = self.color
+        if self.timestamp: result["timestamp"] = self.timestamp
+        if self.thumbnail: result["thumbnail"] = {"url": self.thumbnail.url}
+        if self.image: result["image"] = {"url": self.image.url}
+        if self.author:
+            result["author"] = {
+                "name": self.author.name,
+                "url": self.author.url,
+                "icon_url": self.author.icon_url
+            }
+        if self.footer:
+            result["footer"] = {
+                "text": self.footer.text,
+                "icon_url": self.footer.icon_url
+            }
+        if self.fields:
+            result["fields"] = [{"name": f.name, "value": f.value, "inline": f.inline} for f in self.fields]
+        return result
+
+class BackupEmbedThumbnail:
+    __slots__ = ("url",)
+    def __init__(self, url: str): self.url = url
+
+class BackupEmbedImage:
+    __slots__ = ("url",)
+    def __init__(self, url: str): self.url = url
+
+class BackupEmbedAuthor:
+    __slots__ = ("name", "url", "icon_url")
+    def __init__(self, name: str | None = None, url: str | None = None, icon_url: str | None = None):
+        self.name = name
+        self.url = url
+        self.icon_url = icon_url
+
+class BackupEmbedFooter:
+    __slots__ = ("text", "icon_url")
+    def __init__(self, text: str | None = None, icon_url: str | None = None):
+        self.text = text
+        self.icon_url = icon_url
 
 class BackupEmbedField:
     """Minimal stand-in for embed fields."""
@@ -916,7 +967,10 @@ class BackupReader:
     MESSAGE_TYPE_REPLY = MessageType.reply
     MESSAGE_TYPE_THREAD_STARTER = MessageType.thread_starter_message
     MESSAGE_TYPE_FORWARD = MessageType.forward   # Custom Reaper constant
-
+    MESSAGE_TYPE_CHAT_INPUT_COMMAND = MessageType.chat_input_command
+    MESSAGE_TYPE_CONTEXT_MENU_COMMAND = MessageType.context_menu_command
+    MESSAGE_TYPE_POLL_RESULT = MessageType.poll_result
+    MESSAGE_TYPE_AUTO_MODERATION_ACTION = MessageType.auto_moderation_action
     Forbidden = BackupForbidden
 
     CHANNEL_TYPE_TEXT = ChannelType.text

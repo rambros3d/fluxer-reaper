@@ -21,6 +21,7 @@ class DiscordExporter:
         self.base_dir = Path(base_dir) if base_dir else Path(".")
         self.is_running = True
         self.db: Optional[BackupDatabase] = None
+        self.sticker_cache: Dict[int, bytes] = {} # Deduplicate downloads in one session
 
     async def setup(self):
         """Prepares the output directory and fetches server metadata."""
@@ -177,19 +178,16 @@ class DiscordExporter:
         sticker_data = []
         logger.info(f"Exporting {len(stickers)} stickers...")
         for s in stickers:
-            ext = "png"
-            if s.url:
-                if ".json" in str(s.url): ext = "json"
-                elif ".gif" in str(s.url): ext = "gif"
-                elif ".webp" in str(s.url): ext = "webp"
-            
+            ext = self.reader.get_sticker_extension(s)
             filename = f"sticker_{s.id}.{ext}"
             sticker_path = self.assets_path / filename
             try:
                 if not sticker_path.exists():
                     data = await self.reader.download_sticker(s)
-                    with open(sticker_path, "wb") as f:
-                        f.write(data)
+                    if data:
+                        with open(sticker_path, "wb") as f:
+                            f.write(data)
+                
                 mime_type = "image/png"
                 if ext == "json": mime_type = "application/json"
                 elif ext == "gif": mime_type = "image/gif"
@@ -197,14 +195,14 @@ class DiscordExporter:
 
                 sticker_data.append({
                     "id": str(s.id),
-                    "name": s.name,
+                    "name": getattr(s, "name", "unknown"),
                     "type": "sticker",
                     "filename": filename,
                     "url": str(s.url),
                     "mime_type": mime_type
                 })
             except Exception as ex:
-                logger.error(f"Failed to download sticker {s.name}: {ex}")
+                logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {ex}")
 
         # Save to database
         if self.db:
@@ -482,30 +480,29 @@ class DiscordExporter:
         stickers = []
         if msg.stickers:
             for st in msg.stickers:
-                # Determine extension based on format
-                ext = ".png"
-                if hasattr(st, "format"):
-                    try:
-                        from discord import StickerFormatType
-                        if st.format == StickerFormatType.lottie:
-                            ext = ".json"
-                        elif st.format == StickerFormatType.apng:
-                            ext = ".png"
-                        elif st.format == StickerFormatType.gif:
-                            ext = ".gif"
-                    except ImportError:
-                        pass
+                # Deduplicate downloads for the same sticker in one session
+                if st.id in self.sticker_cache:
+                    st_bytes = self.sticker_cache[st.id]
+                else:
+                    st_bytes = await self.reader.download_sticker(st)
+                    if st_bytes:
+                        self.sticker_cache[st.id] = st_bytes
                 
-                st_data = await self._process_media(
-                    media_id=st.id,
-                    url=st.url,
-                    filename=f"{st.name}{ext}",
-                    content_type=f"image/{ext[1:]}" if ext != ".json" else "application/json",
-                    save_method=st.save
-                )
-                if st_data:
-                    st_data["format_type"] = int(st.format.value) if hasattr(st, "format") and hasattr(st.format, "value") else 1
-                    stickers.append(st_data)
+                if st_bytes:
+                    ext = self.reader.get_sticker_extension(st)
+                    st_data = await self._process_media(
+                        media_id=st.id,
+                        url=st.url,
+                        filename=f"{st.name}.{ext}",
+                        content_type=f"image/{ext}" if ext != "json" else "application/json",
+                        data=st_bytes
+                    )
+                    if st_data:
+                        st_data["name"] = st.name
+                        st_data["format_type"] = int(st.format.value) if hasattr(st, "format") and hasattr(st.format, "value") else 1
+                        stickers.append(st_data)
+                else:
+                    logger.warning(f"Could not download message sticker {st.id} in message {msg.id}")
 
         # 3. Embeds
         embeds = []
@@ -576,7 +573,7 @@ class DiscordExporter:
 
         return m_data, user_data
 
-    async def _process_media(self, media_id, url, filename, size=None, content_type=None, save_method=None):
+    async def _process_media(self, media_id, url, filename, size=None, content_type=None, save_method=None, data=None):
         """Downloads and deduplicates any media (attachment or sticker) using SHA-256 (CAS)."""
         # 1. First check by URL in DB
         if self.db:
@@ -594,13 +591,22 @@ class DiscordExporter:
         # 2. Temporary download to calculate hash
         import tempfile
         import shutil
-        with tempfile.NamedTemporaryFile(delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-            try:
-                if save_method:
+        tmp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+                if data:
+                    tmp.write(data)
+                elif save_method:
+                    # Closing handle before save_method just in case it needs to open it's own handle
+                    tmp.close()
                     await save_method(tmp_path)
                 else:
                     return None
+                
+                # Ensure it's closed before hashing
+                try: tmp.close()
+                except: pass
                 
                 file_hash = self._calculate_sha256(tmp_path)
                 actual_size = tmp_path.stat().st_size
@@ -637,10 +643,10 @@ class DiscordExporter:
                     "content_type": content_type,
                     "local_hash": file_hash
                 }
-            except Exception as e:
-                logger.error(f"Failed to process media {filename}: {e}")
-                if tmp_path.exists(): tmp_path.unlink()
-                return None
+        except Exception as e:
+            logger.error(f"Failed to process media {filename}: {e}")
+            if tmp_path and tmp_path.exists(): tmp_path.unlink()
+            return None
 
     async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, accumulated_threads=0, accumulated_files=0, after_id: int | None = None):
         """Exports active and archived threads for a channel to SQLite."""
