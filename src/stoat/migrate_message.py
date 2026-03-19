@@ -550,6 +550,9 @@ async def migrate_messages(
                 if avatar_url and not avatar_url.startswith("http"):
                     avatar_url = None
 
+                # Trigger alias generation/storage in DB without replacing the display name yet
+                context.state.get_user_alias(str(msg.author.id))
+
                 stoat_msg_id = await context.stoat_writer.send_message(
                     channel_id=target_channel_id,
                     author_name=msg.author.display_name,

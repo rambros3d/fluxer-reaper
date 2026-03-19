@@ -37,7 +37,6 @@ config.yaml
 
 # Logs and State
 *.log
-*.json
 
 # Temporary Test Scripts
 tmp/

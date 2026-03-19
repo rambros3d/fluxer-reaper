@@ -1,5 +1,7 @@
 import sqlite3
 import logging
+import json
+import random
 from pathlib import Path
 from typing import Optional, Dict, Any
 import threading
@@ -83,9 +85,9 @@ class MigrationDatabase:
         except sqlite3.OperationalError:
             pass # Already exists
 
-        # Table for entity mappings (channels, roles, etc.)
+        # Table for server entity mappings (channels, roles, categories)
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS entity_mappings (
+            CREATE TABLE IF NOT EXISTS server_mappings (
                 category TEXT,
                 source_id TEXT,
                 target_id TEXT,
@@ -93,11 +95,49 @@ class MigrationDatabase:
             )
         """)
 
+        # Table for asset mappings (emojis, stickers)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS asset_mappings (
+                category TEXT,
+                source_id TEXT,
+                target_id TEXT,
+                PRIMARY KEY (category, source_id)
+            )
+        """)
+
+        # Migrate old entity_mappings if it exists
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='entity_mappings'")
+        if cursor.fetchone():
+            # Copy channels, categories, roles to server_mappings
+            cursor.execute("""
+                INSERT OR IGNORE INTO server_mappings (category, source_id, target_id)
+                SELECT category, source_id, target_id FROM entity_mappings 
+                WHERE category IN ('channel', 'category', 'role')
+            """)
+            
+            # Copy emojis, stickers to asset_mappings
+            cursor.execute("""
+                INSERT OR IGNORE INTO asset_mappings (category, source_id, target_id)
+                SELECT category, source_id, target_id FROM entity_mappings 
+                WHERE category IN ('emoji', 'sticker')
+            """)
+            
+            # Drop old table
+            cursor.execute("DROP TABLE entity_mappings")
+
         # Table for general metadata
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS metadata (
                 key TEXT PRIMARY KEY,
                 value TEXT
+            )
+        """)
+
+        # Table for auto-generated user aliases (user_id -> alias)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS user_alias (
+                user_id TEXT PRIMARY KEY,
+                alias TEXT UNIQUE
             )
         """)
         
@@ -124,46 +164,146 @@ class MigrationDatabase:
         ).fetchone()
         return row["target_msg_id"] if row else None
 
-    # --- New Entity Mapping Methods ---
+    # --- User Alias Methods ---
 
-    def set_entity_mapping(self, category: str, source_id: str, target_id: str):
+    def _generate_alias(self) -> str:
+        """Generates a unique alias in the format {Adjective}{Name} from random_users.json."""
+        json_path = Path(__file__).parent.parent / "random_users.json"
+        with open(json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        
+        names = data.get("names", [])
+        adjectives = data.get("adjectives", [])
+        
+        conn = self._get_conn()
+        
+        # Try random combinations until unique
+        for _ in range(10000):
+            alias = f"{random.choice(adjectives)}{random.choice(names)}"
+            # Check if this alias is already taken
+            row = conn.execute("SELECT user_id FROM user_alias WHERE alias = ?", (alias,)).fetchone()
+            if not row:
+                return alias
+        
+        # Fallback: append a number just in case collision rate is too high
+        import time
+        return f"{random.choice(adjectives)}{random.choice(names)}{int(time.time()) % 10000}"
+
+    def get_or_create_user_alias(self, user_id: str) -> str:
+        """Gets the existing alias for a user or generates and saves a new one."""
+        conn = self._get_conn()
+        
+        # Check for existing alias
+        row = conn.execute("SELECT alias FROM user_alias WHERE user_id = ?", (str(user_id),)).fetchone()
+        if row:
+            return row["alias"]
+        
+        # Generate new, uniquely constrained alias
+        # Using a simplistic retry loop in case of race-conditions, though lock-less SQLite handles this with errors
+        try:
+            new_alias = self._generate_alias()
+            conn.execute(
+                "INSERT INTO user_alias (user_id, alias) VALUES (?, ?)", 
+                (str(user_id), new_alias)
+            )
+            conn.commit()
+            return new_alias
+        except sqlite3.IntegrityError:
+            # Race condition: someone else inserted a conflicting alias or this user ID
+            # Re-read or re-try
+            row = conn.execute("SELECT alias FROM user_alias WHERE user_id = ?", (str(user_id),)).fetchone()
+            if row: return row["alias"]
+            # Otherwise uniquely retry
+            new_alias = self._generate_alias()
+            conn.execute(
+                "INSERT OR REPLACE INTO user_alias (user_id, alias) VALUES (?, ?)", 
+                (str(user_id), new_alias)
+            )
+            conn.commit()
+            return new_alias
+
+    # --- Server Mapping Methods ---
+
+    def set_server_mapping(self, category: str, source_id: str, target_id: str):
         conn = self._get_conn()
         conn.execute(
-            "INSERT OR REPLACE INTO entity_mappings (category, source_id, target_id) VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO server_mappings (category, source_id, target_id) VALUES (?, ?, ?)",
             (category, str(source_id), str(target_id))
         )
         conn.commit()
 
-    def get_entity_mapping(self, category: str, source_id: str) -> Optional[str]:
+    def get_server_mapping(self, category: str, source_id: str) -> Optional[str]:
         conn = self._get_conn()
         row = conn.execute(
-            "SELECT target_id FROM entity_mappings WHERE category = ? AND source_id = ?",
+            "SELECT target_id FROM server_mappings WHERE category = ? AND source_id = ?",
             (category, str(source_id))
         ).fetchone()
         return row["target_id"] if row else None
 
-    def get_all_entity_mappings(self, category: str) -> Dict[str, str]:
+    def get_all_server_mappings(self, category: str) -> Dict[str, str]:
         conn = self._get_conn()
         rows = conn.execute(
-            "SELECT source_id, target_id FROM entity_mappings WHERE category = ?",
+            "SELECT source_id, target_id FROM server_mappings WHERE category = ?",
             (category,)
         ).fetchall()
         return {row["source_id"]: row["target_id"] for row in rows}
 
-    def delete_entity_mapping(self, category: str, source_id: str):
+    def delete_server_mapping(self, category: str, source_id: str):
         conn = self._get_conn()
         conn.execute(
-            "DELETE FROM entity_mappings WHERE category = ? AND source_id = ?",
+            "DELETE FROM server_mappings WHERE category = ? AND source_id = ?",
             (category, str(source_id))
         )
         conn.commit()
 
-    def clear_entities(self, category: str = None):
+    def clear_server_mappings(self, category: str = None):
         conn = self._get_conn()
         if category:
-            conn.execute("DELETE FROM entity_mappings WHERE category = ?", (category,))
+            conn.execute("DELETE FROM server_mappings WHERE category = ?", (category,))
         else:
-            conn.execute("DELETE FROM entity_mappings")
+            conn.execute("DELETE FROM server_mappings")
+        conn.commit()
+
+    # --- Asset Mapping Methods ---
+
+    def set_asset_mapping(self, category: str, source_id: str, target_id: str):
+        conn = self._get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO asset_mappings (category, source_id, target_id) VALUES (?, ?, ?)",
+            (category, str(source_id), str(target_id))
+        )
+        conn.commit()
+
+    def get_asset_mapping(self, category: str, source_id: str) -> Optional[str]:
+        conn = self._get_conn()
+        row = conn.execute(
+            "SELECT target_id FROM asset_mappings WHERE category = ? AND source_id = ?",
+            (category, str(source_id))
+        ).fetchone()
+        return row["target_id"] if row else None
+
+    def get_all_asset_mappings(self, category: str) -> Dict[str, str]:
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT source_id, target_id FROM asset_mappings WHERE category = ?",
+            (category,)
+        ).fetchall()
+        return {row["source_id"]: row["target_id"] for row in rows}
+
+    def delete_asset_mapping(self, category: str, source_id: str):
+        conn = self._get_conn()
+        conn.execute(
+            "DELETE FROM asset_mappings WHERE category = ? AND source_id = ?",
+            (category, str(source_id))
+        )
+        conn.commit()
+
+    def clear_asset_mappings(self, category: str = None):
+        conn = self._get_conn()
+        if category:
+            conn.execute("DELETE FROM asset_mappings WHERE category = ?", (category,))
+        else:
+            conn.execute("DELETE FROM asset_mappings")
         conn.commit()
 
     # --- Metadata Methods ---

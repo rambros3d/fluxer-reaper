@@ -553,6 +553,9 @@ async def migrate_messages(
                 if avatar_url and not avatar_url.startswith("http"):
                     avatar_url = None
 
+                # Trigger alias generation/storage in DB without replacing the display name yet
+                context.state.get_user_alias(str(msg.author.id))
+
                 logger.debug(f"Fluxer: Calling send_message for Discord ID {msg.id}")
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,

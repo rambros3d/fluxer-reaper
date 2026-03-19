@@ -20,88 +20,123 @@ class MigrationState:
             return False
         return True
 
-    # --- Type Specific Getters/Setters (Database Backed) ---
-
-    def set_channel_mapping(self, discord_id: str, target_id: str):
-        if self._ensure_db():
-            self.db.set_entity_mapping("channel", str(discord_id), str(target_id))
-
-    def get_target_channel_id(self, discord_id: str) -> str | None:
-        if self._ensure_db():
-            return self.db.get_entity_mapping("channel", str(discord_id))
+    # --- Type Specific Getters/Setters    # --- Channel Mapping ---
+    def set_channel_mapping(self, discord_id: int | str, target_id: str):
+        """Maps an original text/voice/forum channel ID to a minted server channel ID."""
+        if self.db:
+            self.db.set_server_mapping("channel", str(discord_id), str(target_id))
+            
+    def get_target_channel_id(self, discord_id: int | str) -> str | None:
+        if self.db:
+            return self.db.get_server_mapping("channel", str(discord_id))
         return None
+        
+    def remove_channel_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_server_mapping("channel", str(discord_id))
+
     
     get_fluxer_channel_id = get_target_channel_id
     set_target_channel_mapping = set_channel_mapping
 
-    def set_category_mapping(self, discord_id: str, target_id: str):
-        if self._ensure_db():
-            self.db.set_entity_mapping("category", str(discord_id), str(target_id))
-
-    def get_target_category_id(self, discord_id: str) -> str | None:
-        if self._ensure_db():
-            return self.db.get_entity_mapping("category", str(discord_id))
+    # --- Category Mapping ---
+    def set_category_mapping(self, discord_id: int | str, target_id: str):
+        """Maps an original discord category ID to a Stoat category Group ID."""
+        if self.db:
+            self.db.set_server_mapping("category", str(discord_id), str(target_id))
+            
+    def get_category_mapping(self, discord_id: int | str) -> str | None:
+        """Returns the Stoat Group ID for a previously migrated category."""
+        if self.db:
+            return self.db.get_server_mapping("category", str(discord_id))
         return None
+        
+    def remove_category_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_server_mapping("category", str(discord_id))
     
-    get_fluxer_category_id = get_target_category_id
+    get_fluxer_category_id = get_category_mapping
+    get_target_category_id = get_category_mapping
     set_target_category_mapping = set_category_mapping
 
-    def set_role_mapping(self, discord_id: str, target_id: str):
-        if self._ensure_db():
-            self.db.set_entity_mapping("role", str(discord_id), str(target_id))
+    # --- Role Mapping ---
+    def set_role_mapping(self, discord_id: int | str, target_id: str):
+        """Maps an original discord Role ID to a Stoat Role ID."""
+        if self.db:
+            self.db.set_server_mapping("role", str(discord_id), str(target_id))
 
-    def get_target_role_id(self, discord_id: str) -> str | None:
-        if self._ensure_db():
-            return self.db.get_entity_mapping("role", str(discord_id))
+    def get_role_mapping(self, discord_id: int | str) -> str | None:
+        """Returns the target Role ID for a previously migrated Role."""
+        if self.db:
+            return self.db.get_server_mapping("role", str(discord_id))
         return None
+        
+    def remove_role_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_server_mapping("role", str(discord_id))
     
-    get_fluxer_role_id = get_target_role_id
+    get_fluxer_role_id = get_role_mapping
+    get_target_role_id = get_role_mapping
     set_target_role_mapping = set_role_mapping
 
-    def set_emoji_mapping(self, discord_id: str, target_id: str):
-        if self._ensure_db():
-            self.db.set_entity_mapping("emoji", str(discord_id), str(target_id))
-
-    def get_target_emoji_id(self, discord_id: str) -> str | None:
-        if self._ensure_db():
-            return self.db.get_entity_mapping("emoji", str(discord_id))
+    # --- Emoji Mapping ---
+    def set_emoji_mapping(self, discord_id: int | str, target_id: str):
+        """Maps an original discord Custom Emoji ID to a minted Emoji ID/URL."""
+        if self.db:
+            self.db.set_asset_mapping("emoji", str(discord_id), str(target_id))
+            
+    def get_emoji_mapping(self, discord_id: int | str) -> str | None:
+        if self.db:
+            return self.db.get_asset_mapping("emoji", str(discord_id))
         return None
+
+    def remove_emoji_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_asset_mapping("emoji", str(discord_id))
     
-    get_fluxer_emoji_id = get_target_emoji_id
+    get_fluxer_emoji_id = get_emoji_mapping
+    get_target_emoji_id = get_emoji_mapping
     set_target_emoji_mapping = set_emoji_mapping
 
-    def set_sticker_mapping(self, discord_id: str, target_id: str):
-        if self._ensure_db():
-            self.db.set_entity_mapping("sticker", str(discord_id), str(target_id))
-
-    def get_target_sticker_id(self, discord_id: str) -> str | None:
-        if self._ensure_db():
-            return self.db.get_entity_mapping("sticker", str(discord_id))
+    # --- Sticker Mapping ---
+    def set_sticker_mapping(self, discord_id: int | str, target_id: str):
+        """Maps an original discord Custom Sticker ID to a target URL or ID."""
+        if self.db:
+            self.db.set_asset_mapping("sticker", str(discord_id), str(target_id))
+            
+    def get_sticker_mapping(self, discord_id: int | str) -> str | None:
+        if self.db:
+            return self.db.get_asset_mapping("sticker", str(discord_id))
         return None
+        
+    def remove_sticker_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_asset_mapping("sticker", str(discord_id))
     
-    get_fluxer_sticker_id = get_target_sticker_id
+    get_fluxer_sticker_id = get_sticker_mapping
+    get_target_sticker_id = get_sticker_mapping
     set_target_sticker_mapping = set_sticker_mapping
 
     # --- Properties for backward compatibility ---
     @property
     def channel_map(self) -> Dict[str, str]:
-        return self.db.get_all_entity_mappings("channel") if self.db else {}
-
+        return self.db.get_all_server_mappings("channel") if self.db else {}
+        
     @property
     def category_map(self) -> Dict[str, str]:
-        return self.db.get_all_entity_mappings("category") if self.db else {}
-
+        return self.db.get_all_server_mappings("category") if self.db else {}
+        
     @property
     def role_map(self) -> Dict[str, str]:
-        return self.db.get_all_entity_mappings("role") if self.db else {}
+        return self.db.get_all_server_mappings("role") if self.db else {}
 
     @property
     def emoji_map(self) -> Dict[str, str]:
-        return self.db.get_all_entity_mappings("emoji") if self.db else {}
-
+        return self.db.get_all_asset_mappings("emoji") if self.db else {}
+        
     @property
     def sticker_map(self) -> Dict[str, str]:
-        return self.db.get_all_entity_mappings("sticker") if self.db else {}
+        return self.db.get_all_asset_mappings("sticker") if self.db else {}
 
     @property
     def audit_log_channel(self) -> str | None:
@@ -197,18 +232,18 @@ class MigrationState:
     # --- Danger Zone Clearing ---
 
     def clear_channel_mappings(self):
-        if self._ensure_db():
-            self.db.clear_entities("channel")
-            self.db.clear_entities("category")
+        if self.db:
+            self.db.clear_server_mappings("channel")
+            self.db.clear_server_mappings("category")
 
     def clear_role_mappings(self):
-        if self._ensure_db():
-            self.db.clear_entities("role")
+        if self.db:
+            self.db.clear_server_mappings("role")
 
     def clear_asset_mappings(self):
-        if self._ensure_db():
-            self.db.clear_entities("emoji")
-            self.db.clear_entities("sticker")
+        if self.db:
+            self.db.clear_asset_mappings("emoji")
+            self.db.clear_asset_mappings("sticker")
 
     def clear_message_history(self):
         if self.db:
@@ -261,6 +296,12 @@ class MigrationState:
             self.db.close()
         self.db = MigrationDatabase(db_path)
         logger.info(f"Initialized SQLite database at {db_path}")
+
+    def get_user_alias(self, user_id: str) -> str | None:
+        """Gets or generates a unique alias for a given user ID via the Migration Database."""
+        if self.db:
+            return self.db.get_or_create_user_alias(user_id)
+        return None
 
     # No-op methods kept for compatibility with callers that might try to load/save JSON
     def load(self): pass
