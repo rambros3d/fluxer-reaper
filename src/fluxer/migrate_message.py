@@ -17,7 +17,7 @@ from src.core.utils import resolve_discord_links
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, channel_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None, channel_names=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, channel_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None, channel_names=None, anonymize_users=False) -> str:
     if content is None:
         return ""
     if not content or not guild:
@@ -25,6 +25,9 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         
     def replace_user(match):
         uid = int(match.group(1))
+        if anonymize_users and state:
+            alias = state.get_user_alias(str(uid))
+            return f"`@{alias}`"
         # 1. Try provided guild
         member = guild.get_member(uid)
         if member:
@@ -395,7 +398,8 @@ async def migrate_messages(
                     context.state.channel_map,
                     state=context.state,
                     target_server_id=context.fluxer_writer.community_id,
-                    channel_names=context.channel_names if hasattr(context, 'channel_names') else None
+                    channel_names=context.channel_names if hasattr(context, 'channel_names') else None,
+                    anonymize_users=context.config.anonymize_users
                 )
                 logger.debug(f"Message {msg.id} cleaned content length: {len(content) if content else 0}")
                 
@@ -429,7 +433,8 @@ async def migrate_messages(
                                 context.state.channel_map,
                                 state=context.state,
                                 target_server_id=context.fluxer_writer.community_id,
-                                channel_names=context.channel_names if hasattr(context, 'channel_names') else None
+                                channel_names=context.channel_names if hasattr(context, 'channel_names') else None,
+                                anonymize_users=context.config.anonymize_users
                             )
                     # Add snapshot attachments to the list to process
                     attachments_to_process.extend(snapshot.attachments)
@@ -549,17 +554,22 @@ async def migrate_messages(
                 if thread_name and stats["messages"] == 0:
                     content = f"> <<< THREAD: **{thread_name}** >>>\n{content}"
                 
-                avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar.url else None
-                if avatar_url and not avatar_url.startswith("http"):
-                    avatar_url = None
+                # Get or generate alias
+                alias = context.state.get_user_alias(str(msg.author.id))
 
-                # Trigger alias generation/storage in DB without replacing the display name yet
-                context.state.get_user_alias(str(msg.author.id))
+                if context.config.anonymize_users:
+                    author_name = alias
+                    avatar_url = f"https://api.dicebear.com/9.x/fun-emoji/jpg?seed={alias}"
+                else:
+                    author_name = msg.author.display_name
+                    avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar.url else None
+                    if avatar_url and not avatar_url.startswith("http"):
+                        avatar_url = None
 
                 logger.debug(f"Fluxer: Calling send_message for Discord ID {msg.id}")
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,
-                    author_name=msg.author.display_name,
+                    author_name=author_name,
                     author_avatar_url=avatar_url,
                     content=content,
                     timestamp=int(msg.created_at.timestamp()),

@@ -11,6 +11,7 @@ class AppConfig(BaseModel):
     target_bot_token: Optional[str] = Field(default=None)
     target_server_id: Optional[str] = Field(default=None)
     target_api_url: Optional[str] = Field(default=None)
+    anonymize_users: bool = Field(default=False)
     log_level: str = Field(default="DEBUG")
 
     # ── backward‑compat shims (read‑only) ────────────────────────────────

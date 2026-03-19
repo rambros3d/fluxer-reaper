@@ -9,7 +9,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center
 from textual.widgets import (
     Header, Footer, Button, Label, Input, ListItem,
-    ListView, Rule, RadioButton, RadioSet, Select, Static, Markdown
+    ListView, Rule, RadioButton, RadioSet, Select, Static, Markdown, Switch
 )
 from textual.screen import Screen, ModalScreen
 
@@ -252,6 +252,8 @@ class ConfigScreen(Screen):
     .fetch_row Input { width: 1fr; }
     .fetch_row Button { width: auto; margin-left: 1; }
     #inp_discord_server { margin-bottom: 1; }
+    .switch_row { height: auto; align: left middle; margin-top: 1; margin-bottom: 1; }
+    #lbl_anonymize { margin-right: 2; margin-top: 0; }
     """
 
     BINDINGS = [("escape", "go_back", "Back")]
@@ -347,6 +349,13 @@ class ConfigScreen(Screen):
                             id="inp_target_api",
                             placeholder="Leave this Empty for official instance",
                             tooltip="Enter the custom API url\nfor self hosted instances"
+                        )
+                        
+                        yield Horizontal(
+                            Label("Anonymize Users:", id="lbl_anonymize"),
+                            Switch(value=self.config.anonymize_users, id="inp_anonymize_users", tooltip="Anonymize user Names and Avatars during migration"),
+                            id="anonymize_row",
+                            classes="switch_row"
                         )
 
                 yield Rule(id="footer_rule")
@@ -514,6 +523,8 @@ class ConfigScreen(Screen):
             
             target_api = self.query_one("#inp_target_api", Input).value.strip()
             self.config.target_api_url = target_api or None
+            
+            self.config.anonymize_users = self.query_one("#inp_anonymize_users", Switch).value
         else:
             self.config.target_platform = "none"
 
