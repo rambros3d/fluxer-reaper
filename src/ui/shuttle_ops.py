@@ -339,6 +339,25 @@ class OperationPane(Container):
 
     @work(exclusive=True)
     async def run_validate(self) -> None:
+        try:
+            plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
+            self.query_one("#op_lbl_t_header", Label).update(plat)
+            self.query_one("#op_lbl_d_server", Label).update("Server: [yellow]Validating...[/yellow]")
+            self.query_one("#op_lbl_d_bot", Label).update("Source: [yellow]Validating...[/yellow]" if self.view_mode == "backup" else "Bot: [yellow]Validating...[/yellow]")
+            self.query_one("#op_lbl_d_status", Label).update("Status: [yellow]Validating...[/yellow]")
+            self.query_one("#op_lbl_t_comm", Label).update("Community: [yellow]Validating...[/yellow]")
+            self.query_one("#op_lbl_t_bot", Label).update("Bot: [yellow]Validating...[/yellow]")
+            self.query_one("#op_lbl_t_status", Label).update("Status: [yellow]Validating...[/yellow]")
+            # Disable all operation buttons while validation is in progress
+            if self.view_mode == "shuttle":
+                for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
+                    self.query_one(bid, Button).disabled = True
+            elif self.view_mode == "backup":
+                for bid in ("#op_backup_msgs", "#op_backup_sync"):
+                    self.query_one(bid, Button).disabled = True
+        except Exception:
+            pass
+
         self.validation_results = {
             "discord_token": False, "discord_bot_name": None,
             "discord_server": False, "discord_server_name": None,

@@ -14,10 +14,9 @@ class MigrationDatabase:
     Replaces the memory-bloated and O(N^2) JSON persistence for messages.
     """
     
-    _local = threading.local()
-
     def __init__(self, db_path: Path):
         self.db_path = db_path
+        self._local = threading.local()
         self._init_db()
 
     def _get_conn(self) -> sqlite3.Connection:

@@ -134,7 +134,7 @@ class ConfigSelectionScreen(Screen):
         yield Header(show_clock=True)
         with Center():
             with Container(id="config_sel_container"):
-                yield Label(f"{get_app_version()} — Select Configuration", id="config_sel_title")
+                yield Label(f"Reaper Configs", id="config_sel_title")
                 with VerticalScroll(id="config_list_container"):
                     yield ListView(id="config_list")
                 with Horizontal(id="config_sel_actions"):
@@ -449,14 +449,34 @@ class ConfigScreen(Screen):
             coro = StoatWriter.fetch_guilds(token, api_url)
         else: return
 
+        # Use the platform-specific saved ID so we don't cross-contaminate
+        if platform == "fluxer":
+            saved_id = self.config.fluxer_server_id
+        elif platform == "stoat":
+            saved_id = self.config.stoat_server_id
+        else:
+            saved_id = None
+
         await self._fetch_and_populate(
             coro,
             "#btn_fetch_target_servers",
             "#inp_target_server",
             f"No {platform} servers found.",
-            self.config.target_server_id,
+            saved_id,
             initial
         )
+
+        # Guard: if the user switched platforms while the fetch was in-flight,
+        # discard the stale results so they don't contaminate the wrong platform.
+        try:
+            if self._get_selected_platform() != platform:
+                select = self.query_one("#inp_target_server", Select)
+                select.set_options([])
+                select.value = Select.BLANK
+                select.prompt = "Validate Bot Token"
+                self.query_one("#btn_fetch_target_servers", Button).variant = "primary"
+        except Exception:
+            pass
 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -498,6 +518,30 @@ class ConfigScreen(Screen):
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         if event.radio_set.id == "mode_radio":
             self._toggle_target_section()
+        elif event.radio_set.id == "plat_radio":
+            plat = self._get_selected_platform()
+            try:
+                inp_token = self.query_one("#inp_target_token", Input)
+                inp_api = self.query_one("#inp_target_api", Input)
+                
+                if plat == "fluxer":
+                    inp_token.value = self.config.fluxer_bot_token or ""
+                    api_val = self.config.fluxer_api_url
+                    inp_api.value = api_val if (api_val and api_val != "default") else ""
+                elif plat == "stoat":
+                    inp_token.value = self.config.stoat_bot_token or ""
+                    api_val = self.config.stoat_api_url
+                    inp_api.value = api_val if (api_val and api_val != "default") else ""
+                    
+                select = self.query_one("#inp_target_server", Select)
+                select.set_options([])
+                select.value = Select.BLANK
+                select.prompt = "Validate Bot Token"
+                self.query_one("#btn_fetch_target_servers", Button).variant = "primary"
+                
+                if inp_token.value:
+                    self.run_worker(self._do_fetch_target_servers(initial=True))
+            except Exception: pass
 
     # ── save / start ─────────────────────────────────────────────────────
 
@@ -514,15 +558,26 @@ class ConfigScreen(Screen):
 
         # 3. Target Section
         if self.config.tool_mode != "backup_only":
-            self.config.target_platform = self._get_selected_platform()
-            self.config.target_bot_token = self.query_one("#inp_target_token", Input).value.strip() or None
+            plat = self._get_selected_platform()
+            self.config.target_platform = plat
+            token_val = self.query_one("#inp_target_token", Input).value.strip() or None
             
             t_select = self.query_one("#inp_target_server", Select)
-            if t_select.value not in (Select.BLANK, Select.NULL):
-                self.config.target_server_id = str(t_select.value)
             
             target_api = self.query_one("#inp_target_api", Input).value.strip()
-            self.config.target_api_url = target_api or None
+            api_val = target_api or None
+            
+            if plat == "fluxer":
+                self.config.fluxer_bot_token = token_val
+                # Only update server_id if user actually selected something
+                if t_select.value not in (Select.BLANK, Select.NULL):
+                    self.config.fluxer_server_id = str(t_select.value)
+                self.config.fluxer_api_url = api_val
+            elif plat == "stoat":
+                self.config.stoat_bot_token = token_val
+                if t_select.value not in (Select.BLANK, Select.NULL):
+                    self.config.stoat_server_id = str(t_select.value)
+                self.config.stoat_api_url = api_val
             
             self.config.anonymize_users = self.query_one("#inp_anonymize_users", Switch).value
         else:
