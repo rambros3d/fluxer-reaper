@@ -316,7 +316,7 @@ class StoatWriter:
             # Build content with timestamp prefix
             prefix = f"###### <t:{timestamp}:D>\n"
             if is_forwarded:
-                prefix += "##### ⤷*forwarded*\n"
+                prefix += "##### ⮫*forwarded*\n"
             
             display_content = content
             if is_forwarded and content:

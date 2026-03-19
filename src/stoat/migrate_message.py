@@ -46,11 +46,7 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         
     def replace_role(match):
         rid = int(match.group(1))
-        # 0. Try native mapping first
-        if state:
-            target_role_id = state.get_target_role_id(str(rid))
-            if target_role_id:
-                return f"<@&{target_role_id}>"
+        # Stoat does not support migrating Discord Role mentions natively, always use the name as fallback
 
         # 1. Try provided guild cache/list
         role = guild.get_role(rid) or next((r for r in guild.roles if r.id == rid), None)
@@ -393,7 +389,7 @@ async def migrate_messages(
                 # Use custom clean_mentions with msg mentions for accuracy
                 content = clean_mentions(
                     msg.content, 
-                    msg.guild, 
+                    context.discord_reader.guild, 
                     msg.mentions, 
                     msg.role_mentions, 
                     msg.channel_mentions,
@@ -421,10 +417,10 @@ async def migrate_messages(
                     snapshot = msg.message_snapshots[0]
                     if not content:
                         content = snapshot.content
-                        if hasattr(msg, 'guild') and msg.guild:
+                        if context.discord_reader.guild:
                             content = clean_mentions(
                                 content, 
-                                msg.guild, 
+                                context.discord_reader.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
                                 snapshot.channel_mentions if hasattr(snapshot, 'channel_mentions') else None,

@@ -390,7 +390,7 @@ async def migrate_messages(
                 # Use custom clean_mentions with msg mentions for accuracy
                 content = clean_mentions(
                     msg.content, 
-                    msg.guild, 
+                    context.discord_reader.guild, 
                     msg.mentions, 
                     msg.role_mentions, 
                     msg.channel_mentions,
@@ -422,10 +422,10 @@ async def migrate_messages(
                     snapshot = msg.message_snapshots[0]
                     if not content: # Only update content if it wasn't already set (e.g., by thread_starter_message)
                         content = snapshot.content
-                        if hasattr(msg, 'guild') and msg.guild:
+                        if context.discord_reader.guild:
                             content = clean_mentions(
                                 content, 
-                                msg.guild, 
+                                context.discord_reader.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
                                 snapshot.channel_mentions if hasattr(snapshot, 'channel_mentions') else None, # Changed this line

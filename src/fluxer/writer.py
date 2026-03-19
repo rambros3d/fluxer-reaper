@@ -285,7 +285,7 @@ class FluxerWriter:
         # -# is Fluxer/Discord's subtext markdown: small, muted grey text
         prefix = f"-# <t:{timestamp}:D>\n"
         if is_forwarded:
-            prefix += "-# ⤷*forwarded*\n"
+            prefix += "-# ⮫*forwarded*\n"
             
         display_content = content
         if is_forwarded and content:
@@ -345,7 +345,7 @@ class FluxerWriter:
                 # We add the author name to the prefix since bot name won't match
                 bot_prefix = f"-# <t:{timestamp}:D>\n"
                 if is_forwarded:
-                    bot_prefix += "-# ⤷*forwarded*\n"
+                    bot_prefix += "-# ⮫*forwarded*\n"
                 bot_prefix += f"-# · {author_name}\n"
                 
                 final_bot_content = bot_prefix + display_content if display_content else bot_prefix
