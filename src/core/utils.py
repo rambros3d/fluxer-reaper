@@ -24,7 +24,8 @@ def resolve_discord_links(content: str, state: MigrationState, platform: str, ta
         start_idx = match.start()
         if start_idx > 2:
             prev_chars = content[max(0, start_idx-3):start_idx]
-            if prev_chars.endswith("](") or prev_chars.endswith("]<"):
+            if prev_chars.endswith("](") or prev_chars.endswith("](<"):
+                logger.debug(f"resolve_discord_links: Skipping already-wrapped link: {full_url[:60]}")
                 return full_url
 
         guild_id = match.group(1)
@@ -32,10 +33,12 @@ def resolve_discord_links(content: str, state: MigrationState, platform: str, ta
         message_id = match.group(3)
 
         target_cid = state.get_target_channel_id(channel_id) or state.get_target_category_id(channel_id)
+        logger.debug(f"resolve_discord_links: guild={guild_id} channel={channel_id} msg={message_id} target_cid={target_cid}")
         
         if message_id:
             # Message link resolution
             t_cid, t_mid = state.find_message_mapping(message_id)
+            logger.debug(f"resolve_discord_links: find_message_mapping({message_id}) -> t_cid={t_cid}, t_mid={t_mid}")
             if t_mid:
                 # Use found channel ID if available, otherwise fallback to channel_id mapping
                 final_cid = t_cid or target_cid
@@ -55,8 +58,9 @@ def resolve_discord_links(content: str, state: MigrationState, platform: str, ta
                 else: # Fluxer
                     return f"https://fluxer.app/channels/{target_server_id}/{target_cid}"
             
-            # Fallback for unmigrated channel
+            # Fallback for unmapped channel
             return f"[`discord-channel`](<{full_url}>)"
+
 
     logger.debug(f"resolve_discord_links: Processing content (len {len(content)}): {content[:100]!r}")
     result = discord_link_re.sub(replace_link, content)

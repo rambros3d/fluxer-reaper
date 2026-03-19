@@ -101,6 +101,10 @@ class MigrationDatabase:
             )
         """)
         
+        # Indexes for fast lookup by source message ID
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_message_mappings_source ON message_mappings (source_msg_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_thread_mappings_source ON thread_mappings (source_msg_id)")
+        
         conn.commit()
         conn.close()
 

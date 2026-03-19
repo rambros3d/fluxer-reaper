@@ -17,7 +17,7 @@ from src.core.utils import resolve_discord_links
 
 logger = logging.getLogger(__name__)
 
-def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None) -> str:
+def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, channel_mentions=None, emoji_map=None, channel_map=None, state=None, target_server_id=None, channel_names=None) -> str:
     if content is None:
         return ""
     if not content or not guild:
@@ -39,10 +39,16 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
             user = guild.client.get_user(uid)
             if user:
                 return f"`@{user.name}`"
-        return match.group(0)
+        return f"`@Unknown User`"
         
     def replace_role(match):
         rid = int(match.group(1))
+        # 0. Try native mapping first
+        if state:
+            target_role_id = state.get_target_role_id(str(rid))
+            if target_role_id:
+                return f"<@&{target_role_id}>"
+
         # 1. Try provided guild cache/list
         role = guild.get_role(rid) or next((r for r in guild.roles if r.id == rid), None)
         # 2. Try message's role_mentions
@@ -58,7 +64,7 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         if role and role.name:
             return f"`@{role.name}`"
             
-        return match.group(0)
+        return f"`@Unknown Role`"
         
     def replace_channel(match):
         cid = int(match.group(1))
@@ -67,9 +73,23 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         if channel_map and str(cid) in channel_map:
             return f"<#{channel_map[str(cid)]}>"
             
-        # 2. Fallback to name in backticks
-        channel = guild.get_channel(cid)
-        return f"`#{channel.name}`" if channel else f"<#{cid}>"
+        # 2. Try to resolve channel name from pre-fetched names
+        name = None
+        if channel_names and str(cid) in channel_names:
+            name = channel_names[str(cid)]
+        
+        # 3. Try live lookup (fallback)
+        if not name:
+            channel = guild.get_channel(cid) or guild.get_thread(cid)
+            if not channel and channel_mentions:
+                channel = next((c for c in channel_mentions if c.id == cid), None)
+            if channel:
+                name = channel.name
+
+        if name:
+            return f"`#{name}`"
+            
+        return f"<#{cid}>"
 
     def replace_emoji(match):
         animated = match.group(1) == "a"
@@ -92,9 +112,6 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     # Resolve Discord Links
     if state and target_server_id:
         content = resolve_discord_links(content, state, "fluxer", target_server_id)
-
-    return content
-
 
     return content
 
@@ -233,8 +250,28 @@ async def migrate_messages(
     
     logger.info(f"Starting message migration: Discord #{source_channel_id} -> Fluxer #{target_channel_id}")
     if after_message_id:
-        logger.info(f"Resuming migration from after message ID: {after_message_id}")
+        logger.info(f"Starting migration of {source_channel_id} (inclusive={inclusive})...")
+    
+    # Pre-fetch channel and thread names for better mention resolution
+    if not hasattr(context, 'channel_names'):
+        context.channel_names = {}
+        try:
+            logger.debug(f"Pre-fetching channel and thread names for guild {context.discord_reader.guild.id}...")
+            # fetch_channels usually includes all non-thread channels
+            all_channels = await context.discord_reader.guild.fetch_channels()
+            for c in all_channels:
+                context.channel_names[str(c.id)] = c.name
+            
+            # active_threads helps find threads that might be mentioned
+            threads = await context.discord_reader.guild.active_threads()
+            for t in threads:
+                context.channel_names[str(t.id)] = t.name
+            
+            logger.debug(f"Pre-fetched {len(context.channel_names)} names.")
+        except Exception as e:
+            logger.debug(f"Failed to pre-fetch channel names: {e}")
 
+    # Process missed threads first if resuming
     if processed_threads is None:
         processed_threads = set()
 
@@ -353,10 +390,12 @@ async def migrate_messages(
                     msg.guild, 
                     msg.mentions, 
                     msg.role_mentions, 
+                    msg.channel_mentions,
                     context.state.emoji_map,
                     context.state.channel_map,
                     state=context.state,
-                    target_server_id=context.fluxer_writer.community_id
+                    target_server_id=context.fluxer_writer.community_id,
+                    channel_names=context.channel_names if hasattr(context, 'channel_names') else None
                 )
                 logger.debug(f"Message {msg.id} cleaned content length: {len(content) if content else 0}")
                 
@@ -385,10 +424,12 @@ async def migrate_messages(
                                 msg.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
+                                snapshot.channel_mentions if hasattr(snapshot, 'channel_mentions') else None, # Changed this line
                                 context.state.emoji_map,
                                 context.state.channel_map,
                                 state=context.state,
-                                target_server_id=context.fluxer_writer.community_id
+                                target_server_id=context.fluxer_writer.community_id,
+                                channel_names=context.channel_names if hasattr(context, 'channel_names') else None
                             )
                     # Add snapshot attachments to the list to process
                     attachments_to_process.extend(snapshot.attachments)
