@@ -67,3 +67,25 @@ def resolve_discord_links(content: str, state: MigrationState, platform: str, ta
     if result != content:
         logger.debug(f"resolve_discord_links: Content resolved to (len {len(result)}): {result[:100]!r}")
     return result
+
+import subprocess
+
+def get_app_version() -> str:
+    """Gets the dynamic app version from baked file or git."""
+    try:
+        from src.core._baked_version import __version__
+        return f"Reaper-{__version__}"
+    except ImportError:
+        pass
+        
+    try:
+        version = subprocess.check_output(
+            ["git", "describe", "--tags", "--always"], 
+            stderr=subprocess.DEVNULL,
+            universal_newlines=True
+        ).strip()
+        if not version:
+            return "Reaper-Unknown"
+        return f"Reaper-{version}"
+    except Exception:
+        return "Reaper-Unknown-git"

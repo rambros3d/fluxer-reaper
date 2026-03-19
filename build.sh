@@ -37,7 +37,13 @@ echo "Cleaning previous build artifacts..."
 rm -rf build/ dist/
 
 echo "Starting PyInstaller build..."
+GIT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "Unknown")
+echo "__version__ = \"$GIT_VERSION\"" > src/core/_baked_version.py
+
 pyinstaller --clean disco-reaper.spec
+
+echo "Cleaning up baked version file..."
+rm -f src/core/_baked_version.py
 
 echo "Generating Launch-Reaper.sh launcher..."
 cat << 'EOF' > dist/Launch-Reaper.sh

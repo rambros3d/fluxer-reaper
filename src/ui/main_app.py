@@ -17,6 +17,7 @@ from src.core.configuration import (
     get_available_configs, create_new_config, load_config, save_config,
 )
 from src.ui.widgets import RamDisplay, Footnote
+from src.core.utils import get_app_version
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -94,7 +95,7 @@ class ConfigSelectionScreen(Screen):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Container(id="config_sel_container"):
-            yield Label("Disco Reaper — Select Configuration", id="config_sel_title")
+            yield Label(f"{get_app_version()} — Select Configuration", id="config_sel_title")
             with VerticalScroll(id="config_list_container"):
                 yield ListView(id="config_list")
             with Horizontal(id="config_sel_actions"):
@@ -476,6 +477,7 @@ class ConfigScreen(Screen):
 # ──────────────────────────────────────────────────────────────────────────────
 
 class ReaperApp(App):
+    TITLE = get_app_version()
     SCREENS = {
         "config_selection": ConfigSelectionScreen,
     }
