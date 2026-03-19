@@ -61,9 +61,8 @@ def relaunch_in_terminal():
 
 def main():
     import os
-    # Ensure screenshots directory exists and is configured
+    # Ensure screenshots directory is configured (but not created yet)
     shot_path = os.path.abspath("screenshots")
-    os.makedirs(shot_path, exist_ok=True)
     os.environ["TEXTUAL_SCREENSHOT_LOCATION"] = shot_path
 
     relaunch_in_terminal()
