@@ -6,10 +6,10 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from textual.app import App, ComposeResult
-from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center
 from textual.widgets import (
     Header, Footer, Button, Label, Input, ListItem,
-    ListView, Rule, RadioButton, RadioSet, Select, Static,
+    ListView, Rule, RadioButton, RadioSet, Select, Static, Markdown
 )
 from textual.screen import Screen, ModalScreen
 
@@ -21,9 +21,46 @@ from src.core.utils import get_app_version
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Modal: create a new ReaperFiles-* config folder
+# Modals
 # ──────────────────────────────────────────────────────────────────────────────
 
+class FirstInfoModal(ModalScreen[str]):
+    """Modal to display first-time launch info."""
+    
+    DEFAULT_CSS = """
+    FirstInfoModal { align: center middle; }
+    #first_info_dialog {
+        width: 80%; height: auto; max-height: 80%;
+        border: thick $background 80%; background: $surface; padding: 1 2;
+    }
+    #btn_yeah { width: 100%; margin-top: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        with VerticalScroll(id="first_info_dialog"):
+            try:
+                import sys
+                import os
+                
+                # Handle PyInstaller path resolution
+                if getattr(sys, 'frozen', False):
+                    base_path = sys._MEIPASS
+                else:
+                    base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+                    
+                file_path = os.path.join(base_path, "src", "first-info.md")
+                
+                with open(file_path, "r", encoding="utf-8") as f:
+                    md_text = f.read()
+            except Exception as e:
+                md_text = f"# Welcome to the Reaper\n\nInfo text missing. ({e})"
+            yield Markdown(md_text)
+            yield Button("Get Started", variant="success", id="btn_yeah")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_yeah":
+            self.dismiss("start_new")
+            
 class NewConfigModal(ModalScreen[str]):
     """Modal to enter a name for a new configuration."""
 
@@ -90,33 +127,43 @@ class ConfigSelectionScreen(Screen):
     }
     #config_sel_actions { height: auto; margin-top: 0; }
     #config_sel_actions Button { width: 1fr; margin: 0 1; }
+    #btn_about { margin-top: 2; border: none; }
     """
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        with Container(id="config_sel_container"):
-            yield Label(f"{get_app_version()} — Select Configuration", id="config_sel_title")
-            with VerticalScroll(id="config_list_container"):
-                yield ListView(id="config_list")
-            with Horizontal(id="config_sel_actions"):
-                yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
-                yield Button("Exit", id="btn_exit", variant="error")
+        with Center():
+            with Container(id="config_sel_container"):
+                yield Label(f"{get_app_version()} — Select Configuration", id="config_sel_title")
+                with VerticalScroll(id="config_list_container"):
+                    yield ListView(id="config_list")
+                with Horizontal(id="config_sel_actions"):
+                    yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
+                    yield Button("Exit", id="btn_exit", variant="error")
+        with Center():
+            yield Button("Info", id="btn_about", tooltip="Show app information")
         yield Footer()
         yield Footnote()
         yield RamDisplay()
 
     def on_mount(self) -> None:
-        self.refresh_configs()
+        configs = self.refresh_configs()
+        if not configs:
+            def on_first_info_dismiss(res):
+                if res == "start_new":
+                    self.action_new_config()
+            self.app.push_screen(FirstInfoModal(), on_first_info_dismiss)
 
     def on_screen_resume(self) -> None:
         self.refresh_configs()
 
-    def refresh_configs(self) -> None:
+    def refresh_configs(self) -> list:
         configs = get_available_configs()
         lv = self.query_one("#config_list", ListView)
         lv.clear()
         for c in configs:
             lv.append(ListItem(Label(c), name=c))
+        return configs
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         cfg_name = event.item.name
@@ -124,22 +171,27 @@ class ConfigSelectionScreen(Screen):
         from src.ui.mode_screen import ModeScreen
         self.app.push_screen(ModeScreen(cfg_name, cfg_path))
 
+    def action_new_config(self) -> None:
+        def cb(name: str | None):
+            if name:
+                create_new_config(name)
+                self.refresh_configs()
+                # Immediately open the ConfigScreen for the new config
+                cfg_path = Path(f"ReaperFiles-{name}") / "config.yaml"
+                def on_config_saved(saved: bool = False):
+                    if saved:
+                        self.refresh_configs()
+                        # Navigate into the ModeScreen
+                        from src.ui.mode_screen import ModeScreen
+                        self.app.push_screen(ModeScreen(name, cfg_path))
+                self.app.push_screen(ConfigScreen(name, cfg_path), on_config_saved)
+        self.app.push_screen(NewConfigModal(), cb)
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_new_config":
-            def cb(name: str | None):
-                if name:
-                    create_new_config(name)
-                    self.refresh_configs()
-                    # Immediately open the ConfigScreen for the new config
-                    cfg_path = Path(f"ReaperFiles-{name}") / "config.yaml"
-                    def on_config_saved(saved: bool = False):
-                        if saved:
-                            self.refresh_configs()
-                            # Navigate into the ModeScreen
-                            from src.ui.mode_screen import ModeScreen
-                            self.app.push_screen(ModeScreen(name, cfg_path))
-                    self.app.push_screen(ConfigScreen(name, cfg_path), on_config_saved)
-            self.app.push_screen(NewConfigModal(), cb)
+            self.action_new_config()
+        elif event.button.id == "btn_about":
+            self.app.push_screen(FirstInfoModal())
         elif event.button.id == "btn_exit":
             self.app.exit()
 

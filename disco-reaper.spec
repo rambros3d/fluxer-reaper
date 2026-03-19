@@ -20,7 +20,7 @@ a = Analysis(
     ['disco-reaper.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('src/first-info.md', 'src')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
