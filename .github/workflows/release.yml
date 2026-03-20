@@ -41,11 +41,20 @@ jobs:
           pip install pyinstaller Pillow
 
 
+      - name: Bake Version
+        shell: bash
+        run: |
+          GIT_VERSION=${GITHUB_REF_NAME:-$(git describe --tags --abbrev=0 2>/dev/null || echo "Unknown")}
+          echo "Baking version: $GIT_VERSION"
+          echo "__version__ = \"$GIT_VERSION\"" > src/core/_baked_version.py
+
       - name: Build with PyInstaller
         run: |
-          echo "Listing directory contents:"
-          ls -R || dir /s
           pyinstaller disco-reaper.spec
+
+      - name: Clean up Baked Version
+        shell: bash
+        run: rm -f src/core/_baked_version.py
 
       - name: Prepare Release Asset (Linux/MacOS)
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
