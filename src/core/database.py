@@ -5,6 +5,7 @@ import random
 from pathlib import Path
 from typing import Optional, Dict, Any
 import threading
+import sys
 
 logger = logging.getLogger(__name__)
 
@@ -167,7 +168,18 @@ class MigrationDatabase:
 
     def _generate_alias(self) -> str:
         """Generates a unique alias in the format {Adjective}{Name} from random_users.json."""
-        json_path = Path(__file__).parent.parent / "random_users.json"
+        # Robust path resolution for PyInstaller
+        if hasattr(sys, '_MEIPASS'):
+            # Running as a frozen bundle
+            json_path = Path(sys._MEIPASS) / "src" / "random_users.json"
+        else:
+            # Running in normal python environment (from src/core/)
+            json_path = Path(__file__).parent.parent / "random_users.json"
+            
+        if not json_path.exists():
+             logger.error(f"MigrationDatabase: random_users.json not found at {json_path}")
+             raise FileNotFoundError(f"Missing required resource: {json_path}")
+
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         
