@@ -59,6 +59,35 @@ def relaunch_in_terminal():
             except Exception:
                 continue
 
+def setup_ssl():
+    """Configures SSL certificate paths for frozen environments."""
+    import os
+    import sys
+    
+    # Only strictly necessary for frozen builds on Linux/macOS
+    if not getattr(sys, 'frozen', False):
+        return
+
+    try:
+        import certifi
+        ca_file = certifi.where()
+        os.environ["SSL_CERT_FILE"] = ca_file
+        os.environ["REQUESTS_CA_BUNDLE"] = ca_file
+    except ImportError:
+        # Fallback to common Linux CA bundle paths
+        ca_paths = [
+            "/etc/ssl/certs/ca-certificates.crt",
+            "/etc/pki/tls/certs/ca-bundle.crt",
+            "/etc/ssl/ca-bundle.pem",
+            "/etc/pki/tls/cacert.pem",
+            "/etc/ssl/cert.pem",
+        ]
+        for path in ca_paths:
+            if os.path.exists(path):
+                os.environ["SSL_CERT_FILE"] = path
+                os.environ["REQUESTS_CA_BUNDLE"] = path
+                break
+
 def main():
     import os
     # Ensure screenshots directory is configured (but not created yet)
@@ -66,6 +95,7 @@ def main():
     os.environ["TEXTUAL_SCREENSHOT_LOCATION"] = shot_path
 
     relaunch_in_terminal()
+    setup_ssl()
     setup_logging()
     run_disco_reaper_tui()
 

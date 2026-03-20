@@ -212,6 +212,8 @@ class OperationPane(Container):
     # ── labels ────────────────────────────────────────────────────────────
 
     def _update_info_labels(self):
+        if not self.is_mounted:
+            return
         v = self.validation_results
 
         # Discord
@@ -339,6 +341,8 @@ class OperationPane(Container):
 
     @work(exclusive=True)
     async def run_validate(self) -> None:
+        if not self.is_mounted:
+            return
         try:
             plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
             self.query_one("#op_lbl_t_header", Label).update(plat)

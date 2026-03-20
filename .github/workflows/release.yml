@@ -6,24 +6,29 @@ on:
       - 'v*'
 
 jobs:
+  check-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          TAG=${GITHUB_REF_NAME}
+          if [[ "$TAG" == *"-linux" ]]; then
+            echo 'matrix={"include":[{"os":"ubuntu-latest","artifact_name":"disco-reaper-linux","asset_name":"disco-reaper-linux.zip","executable_path":"dist/DiscoReaper"}]}' >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == *"-windows" ]]; then
+            echo 'matrix={"include":[{"os":"windows-latest","artifact_name":"disco-reaper-windows","asset_name":"disco-reaper-windows.zip","executable_path":"dist/DiscoReaper.exe"}]}' >> $GITHUB_OUTPUT
+          elif [[ "$TAG" == *"-mac" ]]; then
+            echo 'matrix={"include":[{"os":"macos-latest","artifact_name":"disco-reaper-macos","asset_name":"disco-reaper-macos.zip","executable_path":"dist/DiscoReaper"}]}' >> $GITHUB_OUTPUT
+          else
+            echo 'matrix={"include":[{"os":"ubuntu-latest","artifact_name":"disco-reaper-linux","asset_name":"disco-reaper-linux.zip","executable_path":"dist/DiscoReaper"},{"os":"windows-latest","artifact_name":"disco-reaper-windows","asset_name":"disco-reaper-windows.zip","executable_path":"dist/DiscoReaper.exe"},{"os":"macos-latest","artifact_name":"disco-reaper-macos","asset_name":"disco-reaper-macos.zip","executable_path":"dist/DiscoReaper"}]}' >> $GITHUB_OUTPUT
+          fi
+
   build:
+    needs: check-tag
     runs-on: ${{ matrix.os }}
     strategy:
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        include:
-          - os: ubuntu-latest
-            artifact_name: disco-reaper-linux
-            asset_name: disco-reaper-linux.zip
-            executable_path: dist/DiscoReaper
-          - os: windows-latest
-            artifact_name: disco-reaper-windows
-            asset_name: disco-reaper-windows.zip
-            executable_path: dist/DiscoReaper.exe
-          - os: macos-latest
-            artifact_name: disco-reaper-macos
-            asset_name: disco-reaper-macos.zip
-            executable_path: dist/DiscoReaper
+      matrix: ${{ fromJson(needs.check-tag.outputs.matrix) }}
 
     steps:
       - name: Checkout code
@@ -39,7 +44,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller Pillow
-
 
       - name: Bake Version
         shell: bash
@@ -59,15 +63,32 @@ jobs:
       - name: Prepare Release Asset (Linux/MacOS)
         if: matrix.os == 'ubuntu-latest' || matrix.os == 'macos-latest'
         run: |
-          cp ${{ matrix.executable_path }} DiscoReaper
-          chmod +x DiscoReaper
-          zip ${{ matrix.asset_name }} DiscoReaper
+          mkdir REAPER
+          cp ${{ matrix.executable_path }} REAPER/DiscoReaper
+          chmod +x REAPER/DiscoReaper
+          
+          # Create launcher for Linux/Mac
+          cat << 'EOF' > REAPER/Launch-Reaper.sh
+          #!/bin/bash
+          BASEDIR=$(dirname "$0")
+          cd "$BASEDIR"
+          if [ -f "./DiscoReaper" ]; then
+              ./DiscoReaper
+          else
+              echo "Error: DiscoReaper binary not found."
+              read -p "Press enter to exit..."
+          fi
+          EOF
+          chmod +x REAPER/Launch-Reaper.sh
+          
+          zip -r ${{ matrix.asset_name }} REAPER
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
         run: |
-          copy ${{ matrix.executable_path }} DiscoReaper.exe
-          powershell Compress-Archive -Path "DiscoReaper.exe" -DestinationPath "${{ matrix.asset_name }}"
+          mkdir REAPER
+          copy ${{ matrix.executable_path }} REAPER\DiscoReaper.exe
+          powershell Compress-Archive -Path "REAPER" -DestinationPath "${{ matrix.asset_name }}"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
@@ -89,9 +110,6 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            artifacts/disco-reaper-linux/disco-reaper-linux.zip
-            artifacts/disco-reaper-windows/disco-reaper-windows.zip
-            artifacts/disco-reaper-macos/disco-reaper-macos.zip
+          files: artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
