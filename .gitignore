@@ -44,6 +44,7 @@ test_*.py
 test_release.zip
 test_release/
 DiscoReaper-*
+*.zip
 
 # App data files
 ReaperFiles-*/

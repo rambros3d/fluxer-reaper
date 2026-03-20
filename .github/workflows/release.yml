@@ -85,10 +85,11 @@ jobs:
 
       - name: Prepare Release Asset (Windows)
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
-          mkdir REAPER
-          copy ${{ matrix.executable_path }} REAPER\DiscoReaper.exe
-          powershell Compress-Archive -Path "REAPER" -DestinationPath "${{ matrix.asset_name }}"
+          New-Item -ItemType Directory -Path "REAPER" -Force
+          Copy-Item "${{ matrix.executable_path }}" -Destination "REAPER\DiscoReaper.exe"
+          Compress-Archive -Path "REAPER" -DestinationPath "${{ matrix.asset_name }}" -Force
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
