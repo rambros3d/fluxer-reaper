@@ -3,7 +3,7 @@ import logging
 import re
 import json
 import io
-from typing import Callable, Awaitable, Dict, Any
+from typing import Callable, Awaitable, Dict, Any, List
 
 try:
     from lottie.objects import Animation
