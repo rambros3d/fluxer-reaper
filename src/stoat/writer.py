@@ -108,9 +108,6 @@ class StoatWriter:
         return self._server
 
     async def validate(self) -> dict:
-        if self._validation_cache:
-            return self._validation_cache
-
         results = {
             "token": False,
             "community": False,
@@ -122,7 +119,14 @@ class StoatWriter:
                 "manage_server": False,
                 "manage_permissions": False,
                 "manage_roles": False,
-                "manage_customization": False
+                "manage_customization": False,
+                "manage_messages": False,
+                "manage_webhooks": False,
+                "view_channel": False,
+                "send_messages": False,
+                "send_embeds": False,
+                "upload_files": False,
+                "masquerade": False
             }
         }
         
@@ -162,18 +166,18 @@ class StoatWriter:
                     perms = server.permissions_for(me, safe=False)
                     
                     results["permissions"] = {
-                        "manage_channels": perms.manage_channels,
-                        "manage_server": perms.manage_server,
-                        "manage_permissions": perms.manage_permissions,
-                        "manage_roles": perms.manage_roles,
-                        "manage_customization": perms.manage_customization,
-                        "manage_messages": perms.manage_messages,
-                        "send_messages": perms.send_messages,
-                        "masquerade": perms.use_masquerade,
-                        "upload_files": perms.upload_files,
-                        "react": perms.react,
-                        "mention_everyone": perms.mention_everyone,
-                        "mention_roles": perms.mention_roles
+                        "manage_channels": getattr(perms, "manage_channels", False),
+                        "manage_server": getattr(perms, "manage_server", False),
+                        "manage_permissions": getattr(perms, "manage_permissions", False),
+                        "manage_roles": getattr(perms, "manage_roles", False),
+                        "manage_customization": getattr(perms, "manage_customization", False),
+                        "manage_messages": getattr(perms, "manage_messages", False),
+                        "manage_webhooks": getattr(perms, "manage_webhooks", False),
+                        "view_channel": getattr(perms, "view_channel", False),
+                        "send_messages": getattr(perms, "send_messages", False),
+                        "send_embeds": getattr(perms, "send_embeds", False),
+                        "upload_files": getattr(perms, "upload_files", False),
+                        "masquerade": getattr(perms, "use_masquerade", False)
                     }
                 except stoat.NotFound:
                     results["error_reason"] = "Bot not member of server"
@@ -191,7 +195,6 @@ class StoatWriter:
         except Exception as e:
             results["error_reason"] = f"Stoat validation failed: {str(e)}"
             
-        self._validation_cache = results
         return results
     
     async def get_channels(self) -> List[Dict[str, Any]]:

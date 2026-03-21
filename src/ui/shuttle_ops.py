@@ -14,7 +14,7 @@ from typing import Any, Optional, Union, List, Dict, Callable
 
 from textual.app import ComposeResult
 from textual.containers import Container, Vertical, Horizontal, VerticalScroll
-from textual.widgets import Button, Label, Rule
+from textual.widgets import Button, Label, Rule, LoadingIndicator
 from textual import work
 
 from src.core.configuration import load_config
@@ -86,13 +86,16 @@ class OperationPane(Container):
     DEFAULT_CSS = """
     OperationPane { height: auto; width: 100%; }
     OperationPane #op_info {
-        height: auto; border: tall yellow; padding: 1; margin-bottom: 1; layout: vertical;
+        height: auto; border: tall yellow; padding: 1 1 0 1; margin-bottom: 1; layout: vertical;
     }
     #op_info_split { height: auto; layout: horizontal; width: 100%; margin-bottom: 1; }
     .info_pane { width: 1fr; height: auto; }
     .info_pane Label { width: 100%; }
     .pane_header { text-style: bold; color: $accent; margin-bottom: 1; }
-    .pane_status { text-style: bold; margin-top: 1; }
+    .status_row { height: auto; min-height: 1; width: 100%; margin-top: 1; }
+    .status_row Label { width: 100%; height: auto; }
+    .status_row LoadingIndicator { width: 8; height: 1; margin: 0; min-width: 8; }
+    .pane_status { text-style: bold; }
     #op_info_split Rule { height: 100%; margin: 0 2; color: $accent; }
     #op_lbl_backup { display: none; }
     
@@ -126,7 +129,10 @@ class OperationPane(Container):
                             yield Label("Source: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
                         else:
                             yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
-                        yield Label("Status: [yellow]Validating...[/yellow]", id="op_lbl_d_status", classes="pane_status")
+                            
+                        with Horizontal(classes="status_row"):
+                            yield LoadingIndicator(id="op_d_loader")
+                            yield Label("", id="op_lbl_d_status", classes="pane_status")
                     
                     yield Rule(orientation="vertical", id="op_vrule")
 
@@ -134,7 +140,10 @@ class OperationPane(Container):
                         yield Label("Target", id="op_lbl_t_header", classes="pane_header")
                         yield Label("Community: [yellow]Loading...[/yellow]", id="op_lbl_t_comm")
                         yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_t_bot")
-                        yield Label("Status: [yellow]Validating...[/yellow]", id="op_lbl_t_status", classes="pane_status")
+                        
+                        with Horizontal(classes="status_row"):
+                            yield LoadingIndicator(id="op_t_loader")
+                            yield Label("", id="op_lbl_t_status", classes="pane_status")
                 
                 yield Label("", id="op_lbl_backup")
 
@@ -153,7 +162,8 @@ class OperationPane(Container):
 
     def on_mount(self) -> None:
         self._rebuild_engine()
-        self.run_validate()
+        # Wait for DOM to be stable before first validation
+        self.call_after_refresh(self.run_validate)
 
     def on_show(self) -> None:
         """Re-validate when the pane regains visibility."""
@@ -220,10 +230,12 @@ class OperationPane(Container):
         d_name = v.get("discord_server_name")
         d_bot = v.get("discord_bot_name")
         
-        if v.get("discord_timeout"):
+        if v.get("discord_validating"):
+            s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
+        elif v.get("discord_timeout"):
             s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
         elif v.get("discord_token") and v.get("discord_server"):
-            s_disp = f'[green]"{d_name}"[/green]'
+            s_disp = f'[cyan]"{d_name}"[/cyan]'
             b_disp = f'[green]{d_bot}[/green]'
         elif v.get("discord_token") and not v.get("discord_server"):
             s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", f"[green]{d_bot}[/green]"
@@ -240,13 +252,13 @@ class OperationPane(Container):
         else:
             s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
             
-        self.query_one("#op_lbl_d_server", Label).update(f"Server: {s_disp}")
+        for lbl in self.query("#op_lbl_d_server"): lbl.update(f"Server: {s_disp}")
         if self.view_mode == "backup":
-            self.query_one("#op_lbl_d_bot", Label).update(f"Source: {b_disp}")
+            for lbl in self.query("#op_lbl_d_bot"): lbl.update(f"Source: {b_disp}")
         elif self.config.tool_mode == "backup_transfer":
-            self.query_one("#op_lbl_d_bot", Label).update(f"Source: {b_disp}")
+            for lbl in self.query("#op_lbl_d_bot"): lbl.update(f"Source: {b_disp}")
         else:
-            self.query_one("#op_lbl_d_bot", Label).update(f"Bot: {b_disp}")
+            for lbl in self.query("#op_lbl_d_bot"): lbl.update(f"Bot: {b_disp}")
 
         # Discord Side Status
         d_err = v.get("discord_error")
@@ -255,61 +267,82 @@ class OperationPane(Container):
         
         d_missing = []
         if d_err is None and v.get("discord_token") and v.get("discord_server"):
-            if not di.get("message_content"): d_missing.append("Message Intent")
-            if not dp.get("view_channel"): d_missing.append("View Channel")
-            if not dp.get("read_message_history"): d_missing.append("Msg History")
+            if not di.get("message_content"): d_missing.append("Message Content Intent")
+            if not di.get("members"): d_missing.append("Server Members Intent")
+            
+            if not dp.get("view_channel"): d_missing.append("View Channels")
+            if not dp.get("read_messages"): d_missing.append("Read Messages")
+            if not dp.get("read_message_history"): d_missing.append("Read Message History")
 
-        if v.get("discord_token") and v.get("discord_server") and not d_missing:
-            d_status = "[green]VALID[/green]"
-        elif v.get("discord_token") and not v.get("discord_server"):
-            d_status = "[red]SERVER NOT SET[/red]"
-        elif v.get("discord_timeout"):
-            d_status = "[red]TIMEOUT[/red]"
-        elif d_err:
-            d_status = f"[red]{d_err}[/red]"
-        elif d_missing:
-            d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
+        if v.get("discord_validating"):
+            d_status = ""
+            for ldr in self.query("#op_d_loader"): ldr.display = True
+            for lbl in self.query("#op_lbl_d_status"): lbl.display = False
         else:
-            d_status = "[red]INVALID[/red]"
-        self.query_one("#op_lbl_d_status", Label).update(f"Status: {d_status}")
+            for ldr in self.query("#op_d_loader"): ldr.display = False
+            for lbl in self.query("#op_lbl_d_status"): lbl.display = True
+            
+            if v.get("discord_token") and v.get("discord_server") and not d_missing:
+                d_status = "STATUS: [green]VALID[/green]"
+            elif v.get("discord_token") and not v.get("discord_server"):
+                d_status = "[red]SERVER NOT SET[/red]"
+            elif v.get("discord_timeout"):
+                d_status = "[red]TIMEOUT[/red]"
+            elif d_err:
+                d_status = f"[red]{d_err}[/red]"
+            elif d_missing:
+                d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
+            else:
+                d_status = "[red]INVALID[/red]"
+                
+        if d_status:
+            for lbl in self.query("#op_lbl_d_status"): lbl.update(f"{d_status}")
 
         # Target / Backup Info
         if self.view_mode == "backup":
             backup_text = v.get("backup_info_text", "")
-            self.query_one("#op_lbl_backup", Label).update(backup_text)
-            self.query_one("#op_lbl_backup", Label).display = bool(backup_text)
+            for lbl in self.query("#op_lbl_backup"):
+                lbl.update(backup_text)
+                lbl.display = bool(backup_text)
             
             # Hide target side in backup mode completely
-            self.query_one("#op_vrule").display = False
-            self.query_one("#op_target_pane").display = False
+            for rle in self.query("#op_vrule"): rle.display = False
+            for pne in self.query("#op_target_pane"): pne.display = False
             
             enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
             for bid in ("#op_backup_msgs", "#op_backup_sync"):
                 self.query_one(bid, Button).disabled = not enabled
                 
-            self.query_one("#op_backup_stats", Button).display = self.has_backup
-            self.query_one("#op_backup_stats", Button).disabled = not self.has_backup
-            self.query_one("#op_backup_stats_rule", Rule).display = self.has_backup
+            for btn in self.query("#op_backup_stats"):
+                btn.display = self.has_backup
+                btn.disabled = not self.has_backup
+            for rle in self.query("#op_backup_stats_rule"): rle.display = self.has_backup
         else:
+            # Show target side in shuttle mode
+            for rle in self.query("#op_vrule"): rle.display = True
+            for pne in self.query("#op_target_pane"): pne.display = True
+            
             # Target
             plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
             t_name = v.get("target_community_name")
             t_bot = v.get("target_bot_name")
             
-            self.query_one("#op_lbl_t_header", Label).update(plat)
+            for lbl in self.query("#op_lbl_t_header"): lbl.update(plat)
             
-            if v.get("target_timeout"):
+            if v.get("target_validating"):
+                c_disp, tb_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
+            elif v.get("target_timeout"):
                 c_disp, tb_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
             elif v.get("target_token") and v.get("target_community"):
-                c_disp = f'[green]"{t_name}"[/green]'
+                c_disp = f'[cyan]"{t_name}"[/cyan]'
                 tb_disp = f'[green]{t_bot}[/green]'
             elif v.get("target_token") is False:
                 c_disp, tb_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
             else:
                 c_disp, tb_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
                 
-            self.query_one("#op_lbl_t_comm", Label).update(f"Community: {c_disp}")
-            self.query_one("#op_lbl_t_bot", Label).update(f"Bot: {tb_disp}")
+            for lbl in self.query("#op_lbl_t_comm"): lbl.update(f"Community: {c_disp}")
+            for lbl in self.query("#op_lbl_t_bot"): lbl.update(f"Bot: {tb_disp}")
 
             # Target Side Status
             t_err = v.get("target_error")
@@ -320,18 +353,27 @@ class OperationPane(Container):
                 if tp:
                     t_missing = [k.replace('_', ' ').title() for k, val_p in tp.items() if not val_p]
 
-            if v.get("target_token") and v.get("target_community") and not t_missing:
-                t_status = "[green]VALID[/green]"
-            elif v.get("target_timeout"):
-                t_status = "[red]TIMEOUT[/red]"
-            elif t_err:
-                t_status = f"[red]{t_err}[/red]"
-            elif t_missing:
-                # Show first two for brevity
-                t_status = f"[yellow]MISSING: {', '.join(t_missing[:2])}{'...' if len(t_missing)>2 else ''}[/yellow]"
+            if v.get("target_validating"):
+                t_status = ""
+                for ldr in self.query("#op_t_loader"): ldr.display = True
+                for lbl in self.query("#op_lbl_t_status"): lbl.display = False
             else:
-                t_status = "[red]INVALID[/red]"
-            self.query_one("#op_lbl_t_status", Label).update(f"Status: {t_status}")
+                for ldr in self.query("#op_t_loader"): ldr.display = False
+                for lbl in self.query("#op_lbl_t_status"): lbl.display = True
+            
+                if v.get("target_token") and v.get("target_community") and not t_missing:
+                    t_status = "STATUS: [green]VALID[/green]"
+                elif v.get("target_timeout"):
+                    t_status = "ERROR: [red]TIMEOUT[/red]"
+                elif t_err:
+                    t_status = f"ERROR: [red]{t_err}[/red]"
+                elif t_missing:
+                    t_status = f"[yellow]MISSING: {', '.join(t_missing)} Permission[/yellow]"
+                else:
+                    t_status = "ERROR: [red]INVALID[/red]"
+                    
+            if t_status:
+                for lbl in self.query("#op_lbl_t_status"): lbl.update(f"{t_status}")
 
             # Buttons
             for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
@@ -345,24 +387,26 @@ class OperationPane(Container):
             return
         try:
             plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
-            self.query_one("#op_lbl_t_header", Label).update(plat)
-            self.query_one("#op_lbl_d_server", Label).update("Server: [yellow]Validating...[/yellow]")
-            self.query_one("#op_lbl_d_bot", Label).update("Source: [yellow]Validating...[/yellow]" if self.view_mode == "backup" else "Bot: [yellow]Validating...[/yellow]")
-            self.query_one("#op_lbl_d_status", Label).update("Status: [yellow]Validating...[/yellow]")
-            self.query_one("#op_lbl_t_comm", Label).update("Community: [yellow]Validating...[/yellow]")
-            self.query_one("#op_lbl_t_bot", Label).update("Bot: [yellow]Validating...[/yellow]")
-            self.query_one("#op_lbl_t_status", Label).update("Status: [yellow]Validating...[/yellow]")
+            # Use query().first() or check presence to avoid NoMatches crashes
+            for lbl in self.query("#op_lbl_t_header"): lbl.update(plat)
+            for lbl in self.query("#op_lbl_d_server"): lbl.update("Server: [yellow]Validating...[/yellow]")
+            for lbl in self.query("#op_lbl_d_bot"): lbl.update("Source: [yellow]Validating...[/yellow]" if self.view_mode == "backup" else "Bot: [yellow]Validating...[/yellow]")
+            for lbl in self.query("#op_lbl_t_comm"): lbl.update("Community: [yellow]Validating...[/yellow]")
+            for lbl in self.query("#op_lbl_t_bot"): lbl.update("Bot: [yellow]Validating...[/yellow]")
+            
             # Disable all operation buttons while validation is in progress
             if self.view_mode == "shuttle":
                 for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
-                    self.query_one(bid, Button).disabled = True
+                    for btn in self.query(bid): btn.disabled = True
             elif self.view_mode == "backup":
                 for bid in ("#op_backup_msgs", "#op_backup_sync"):
-                    self.query_one(bid, Button).disabled = True
-        except Exception:
-            pass
+                    for btn in self.query(bid): btn.disabled = True
+        except Exception as e:
+            logger.error(f"Error in run_validate setup: {e}")
 
         self.validation_results = {
+            "discord_validating": False,
+            "target_validating": False,
             "discord_token": False, "discord_bot_name": None,
             "discord_server": False, "discord_server_name": None,
             "discord_intents": {}, "discord_permissions": {},
@@ -392,28 +436,28 @@ class OperationPane(Container):
         t_token_dummy = (self.config.target_bot_token or "") in fillers
         t_server_dummy = (self.config.target_server_id or "") in fillers
 
-        tasks = {}
-        # We always validate Discord token if it's not a dummy, even if server ID is missing
+        # Flag which operations are being validated
+        validating_discord = False
+        validating_target = False
+
         if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-            # Backup validation: only if we have a server ID to search for
-            if not d_server_dummy:
-                tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
+            if not d_server_dummy: validating_discord = True
         else:
-            if not d_token_dummy:
-                tasks["discord"] = asyncio.create_task(self.engine.discord_reader.validate())
+            if not d_token_dummy: validating_discord = True
         
         if self.view_mode == "shuttle" and not t_token_dummy:
-            tasks["target"] = asyncio.create_task(self.engine.writer.validate())
+            validating_target = True
 
-        all_tasks = list(tasks.values())
-        try:
-            done = set()
-            if all_tasks:
-                done, _ = await asyncio.wait(all_tasks, timeout=10.0)
+        self.validation_results["discord_validating"] = validating_discord
+        self.validation_results["target_validating"] = validating_target
+        
+        # Trigger the UI spinners instantly
+        self._update_info_labels()
 
-            dt = tasks.get("discord")
-            if dt and dt in done:
-                res = dt.result()
+        async def check_discord():
+            try:
+                import asyncio
+                res = await asyncio.wait_for(self.engine.discord_reader.validate(), timeout=10.0)
                 self.validation_results["discord_token"] = res.get("token", False)
                 self.validation_results["discord_bot_name"] = res.get("bot_name")
                 self.validation_results["discord_server"] = res.get("server", False)
@@ -421,59 +465,66 @@ class OperationPane(Container):
                 self.validation_results["discord_intents"] = res.get("intents", {})
                 self.validation_results["discord_permissions"] = res.get("permissions", {})
                 self.validation_results["discord_error"] = res.get("error_reason")
-            elif dt and dt not in done:
+            except asyncio.TimeoutError:
                 self.validation_results["discord_timeout"] = True
-                dt.cancel()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.validation_results["discord_error"] = str(e)
+            finally:
+                self.validation_results["discord_validating"] = False
+                self._check_and_update()
 
-            tt = tasks.get("target")
-            if tt and tt in done:
-                res = tt.result()
+        async def check_target():
+            try:
+                import asyncio
+                res = await asyncio.wait_for(self.engine.writer.validate(), timeout=10.0)
                 self.validation_results["target_token"] = res.get("token", False)
                 self.validation_results["target_bot_name"] = res.get("bot_name")
                 self.validation_results["target_community"] = res.get("community", False)
                 self.validation_results["target_community_name"] = res.get("community_name")
                 self.validation_results["target_permissions"] = res.get("permissions", {})
                 self.validation_results["target_error"] = res.get("error_reason")
-            elif tt and tt not in done:
+            except asyncio.TimeoutError:
                 self.validation_results["target_timeout"] = True
-                tt.cancel()
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                self.validation_results["target_error"] = str(e)
+            finally:
+                self.validation_results["target_validating"] = False
+                self._check_and_update()
 
-            discord_ok = self.validation_results.get("discord_token") and self.validation_results.get("discord_server")
-            
-            if self.view_mode == "backup":
-                self.tokens_valid = bool(discord_ok)
+        coros = []
+        if validating_discord: coros.append(check_discord())
+        if validating_target: coros.append(check_target())
+        
+        try:
+            if coros:
+                import asyncio
+                await asyncio.gather(*coros)
+            else:
+                self._check_and_update()
+        except asyncio.CancelledError:
+            pass
+
+    def _check_and_update(self) -> None:
+        """Called safely on the main thread after any validation task finishes."""
+        v = self.validation_results
+        discord_ok = v.get("discord_token") and v.get("discord_server")
+        
+        if self.view_mode == "backup":
+            self.tokens_valid = bool(discord_ok)
+            if self.tokens_valid:
                 info = self._get_backup_info()
                 if info:
                     self.validation_results["backup_info_text"] = f"Last backup: [cyan]{info}[/cyan]"
                     self.has_backup = True
-            else:
-                target_ok = self.validation_results.get("target_token") and self.validation_results.get("target_community")
-                self.tokens_valid = bool(discord_ok and target_ok)
+        else:
+            target_ok = v.get("target_token") and v.get("target_community")
+            self.tokens_valid = bool(discord_ok and target_ok)
 
-            if self.tokens_valid and self.view_mode == "shuttle":
-                srv_id = self.config.target_server_id
-                srv_name = self.validation_results.get("target_community_name", "unknown")
-                if srv_id and srv_name:
-                    safe = re.sub(r"[^a-zA-Z0-9_\-\.]", "_", srv_name)
-                    self.engine.state.set_folder(str(srv_id), safe, base_dir=self._base_dir())
 
-            self.permissions_complete = True
-            if self.tokens_valid:
-                di = self.validation_results.get("discord_intents", {})
-                dp = self.validation_results.get("discord_permissions", {})
-                if not all([di.get("message_content"), dp.get("view_channel"), dp.get("read_message_history")]):
-                    self.permissions_complete = False
-                
-                if self.view_mode == "shuttle":
-                    tp = self.validation_results.get("target_permissions", {})
-                    if tp and not all(tp.values()):
-                        self.permissions_complete = False
-        except Exception:
-            pass
-        finally:
-            for t in all_tasks:
-                if t and not t.done():
-                    t.cancel()
 
         self._update_info_labels()
 

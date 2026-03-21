@@ -107,11 +107,7 @@ class FluxerWriter:
         community_name = None
         error_reason = None
         permissions = {
-            "manage_channels": False,
-            "manage_messages": False,
-            "manage_roles": False,
-            "manage_emojis_stickers": False,
-            "manage_webhooks": False
+            "administrator": False
         }
 
         try:
@@ -139,53 +135,40 @@ class FluxerWriter:
                     "permissions": permissions
                 }
             
-            # Check community
+            # Check community and permissions concurrently
             try:
-                guild_data = await self.client.get_guild(self.community_id)
+                # 1. Fetch data concurrently
+                guild_data, member_data, roles_data = await asyncio.gather(
+                    self.client.get_guild(self.community_id),
+                    self.client.get_guild_member(self.community_id, me_id),
+                    self.client.get_guild_roles(self.community_id)
+                )
+
                 if guild_data:
                     is_community_valid = True
                     community_name = guild_data.get("name")
-
-                    if me_id:
-                        try:
-                            # Fetch member to get roles
-                            member_data = await self.client.get_guild_member(self.community_id, me_id)
-                            member_role_ids = [int(r) for r in member_data.get("roles", [])]
-                            
-                            # Fetch all roles to get their permissions
-                            all_roles_data = await self.client.get_guild_roles(self.community_id)
-                            
-                            # Calculate total permissions
-                            # In Discord/Fluxer, permissions are additive
-                            total_perms = 0
-                            fluxer_guild_id = 0
-                            try:
-                                fluxer_guild_id = int(self.community_id)
-                            except (ValueError, TypeError):
-                                pass
-
-                            for r_data in all_roles_data:
-                                r_id = int(r_data["id"])
-                                # Add @everyone permissions (role ID same as guild ID)
-                                if r_id == fluxer_guild_id or r_id in member_role_ids:
-                                    total_perms |= int(r_data.get("permissions", 0))
-                            
-                            # Bitmask Mapping (Discord standard)
-                            is_admin = bool(total_perms & (1 << 3))
-                            
-                            permissions["manage_channels"] = is_admin or bool(total_perms & (1 << 4))
-                            permissions["manage_messages"] = is_admin or bool(total_perms & (1 << 13))
-                            permissions["manage_roles"] = is_admin or bool(total_perms & (1 << 28))
-                            permissions["manage_webhooks"] = is_admin or bool(total_perms & (1 << 29))
-                            permissions["manage_emojis_stickers"] = is_admin or bool(total_perms & (1 << 30))
-                            
-                        except Exception as e:
-                            logger.error(f"Failed to calculate Fluxer permissions: {e}")
-                            error_reason = f"Permission error: {str(e)}"
+                    owner_id = int(guild_data.get("owner_id", 0))
+                    
+                    # 2. Compute effective permissions
+                    member_role_ids = {int(r) for r in member_data.get("roles", [])}
+                    computed_perms = 0
+                    guild_id_int = int(self.community_id)
+                    
+                    for r_data in roles_data:
+                        r_id = int(r_data["id"])
+                        # Add permissions for @everyone (role ID == guild ID) or roles the bot has
+                        if r_id == guild_id_int or r_id in member_role_ids:
+                            computed_perms |= int(r_data.get("permissions", 0))
+                    
+                    # 3. Check for Administrator bypass (Guild Owner or Administrator bit 1<<3)
+                    is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
+                    
+                    # 4. Map permissions dictionary
+                    permissions["administrator"] = is_admin
                 else:
                     error_reason = "Community not found"
             except Exception as e:
-                error_reason = f"Community Error: {str(e)}"
+                error_reason = f"Community/Permission Error: {str(e)}"
         except Exception as e:
             error_reason = str(e)
             

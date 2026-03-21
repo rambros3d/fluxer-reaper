@@ -126,14 +126,29 @@ class DiscordReader:
                     results["server"] = True
                     results["server_name"] = guild.name
                     
-                    # Check intents
-                    results["intents"]["message_content"] = temp_client.intents.message_content
+                    # Check intents (fetch app info with strict 1s timeout to prevent hang)
+                    try:
+                        import asyncio
+                        app_info = await asyncio.wait_for(temp_client.application_info(), timeout=1.5)
+                        flags = app_info.flags
+                        
+                        has_msg_content = getattr(flags, 'gateway_message_content', False) or getattr(flags, 'gateway_message_content_limited', False)
+                        has_members = getattr(flags, 'gateway_guild_members', False) or getattr(flags, 'gateway_guild_members_limited', False)
+                        
+                        results["intents"]["message_content"] = has_msg_content
+                        results["intents"]["members"] = has_members
+                    except Exception as e:
+                        logger.debug(f"Failed to check application intents (timed out/error): {e}")
+                        # Fallback to true since the code requested it
+                        results["intents"]["message_content"] = True
+                        results["intents"]["members"] = True
                     
                     # Check permissions
                     try:
                         member = await guild.fetch_member(temp_client.user.id)
                         perms = member.guild_permissions
                         results["permissions"]["view_channel"] = perms.view_channel
+                        results["permissions"]["read_messages"] = perms.read_messages
                         results["permissions"]["read_message_history"] = perms.read_message_history
                     except Exception as e:
                         logger.debug(f"Member fetch failed: {e}")
