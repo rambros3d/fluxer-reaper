@@ -1166,25 +1166,43 @@ class BackupReader:
             "server": False,
             "bot_name": None,
             "server_name": None,
-            "intents": {"message_content": True},
-            "permissions": {"view_channel": True, "read_message_history": True},
+            "intents": {
+                "message_content": True,
+                "members": True
+            },
+            "permissions": {
+                "view_channel": True, 
+                "read_messages": True,
+                "read_message_history": True
+            },
+            "error": None
         }
 
         bp = self.backup_path
         db_path = bp / "backup.db"
         
-        if db_path.exists():
-            try:
-                # Use sub-connection to validate
-                db = BackupDatabase(db_path)
-                profile = db.get_guild_profile()
-                if profile:
-                    results["token"] = True
-                    results["server"] = True
-                    results["bot_name"] = "LOCAL BACKUP"
-                    results["server_name"] = profile.get("name", "Unknown")
-            except Exception:
-                pass
+        if not bp.exists():
+            results["error"] = f"Backup folder not found: {bp}"
+            return results
+        
+        if not db_path.exists():
+            results["error"] = f"backup.db not found in {bp}"
+            return results
+            
+        try:
+            # Use sub-connection to validate
+            from src.core.backup_database import BackupDatabase
+            db = BackupDatabase(db_path)
+            profile = db.get_guild_profile()
+            if profile:
+                results["token"] = True
+                results["server"] = True
+                results["bot_name"] = "LOCAL BACKUP"
+                results["server_name"] = profile.get("name", "Unknown")
+            else:
+                results["error"] = "Backup profile (guild_profile table) is empty."
+        except Exception as e:
+            results["error"] = f"Database error: {str(e)}"
 
         return results
 

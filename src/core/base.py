@@ -50,25 +50,36 @@ class MigrationContext:
         
         self.is_running = False
 
-    def _find_backup_path(self, server_id: str, base_dir_str: str) -> Path:
+    def _find_backup_path(self, server_id: str | int | None, base_dir_str: str) -> Path:
         """Searches workspace for a DISCORD_BACKUP-{server_id} directory. Returns the path (does not create)."""
+        if not server_id:
+            return Path(base_dir_str or ".") / "DISCORD_BACKUP-UNKNOWN"
+
+        sid_str = str(server_id).strip()
         base_dir = Path(base_dir_str) if base_dir_str else Path(".")
         
         # 1. Search inside the specific workspace directory first
         if base_dir.exists() and base_dir.is_dir():
             for d in base_dir.iterdir():
-                if d.is_dir() and d.name.endswith(f"-{server_id}") and "DISCORD_BACKUP" in d.name:
-                    logger.info(f"Found backup directory: {d}")
-                    return d
+                if d.is_dir():
+                    dname = d.name.upper()
+                    if "DISCORD_BACKUP" in dname and dname.endswith(f"-{sid_str}"):
+                        logger.info(f"Found backup directory: {d}")
+                        return d
                     
         # 2. Fallback to global search if it wasn't found in the workspace
-        for d in Path(".").rglob(f"DISCORD_BACKUP-{server_id}"):
+        # We use a pattern that matches the name directly to be faster than rglob("*")
+        pattern = f"DISCORD_BACKUP-{sid_str}"
+        for d in Path(".").rglob(pattern):
             if d.is_dir():
                 logger.info(f"Found backup directory globally: {d}")
                 return d
         
+        # 3. Last ditch: some backups might not have the DISCORD_BACKUP prefix in some forks/versions?
+        # Unlikely here, so we stick to the return
+        
         # If not found anywhere, return the expected location inside the workspace
-        new_path = base_dir / f"DISCORD_BACKUP-{server_id}"
+        new_path = base_dir / f"DISCORD_BACKUP-{sid_str}"
         logger.info(f"Using lazy backup path: {new_path}")
         return new_path
 

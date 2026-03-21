@@ -15,7 +15,7 @@ class AppConfig(BaseModel):
     stoat_server_id: Optional[str] = Field(default=None)
     stoat_api_url: Optional[str] = Field(default=None)
     anonymize_users: bool = Field(default=False)
-    log_level: str = Field(default="DEBUG")
+    log_level: str = Field(default="INFO")
 
     # ── backward‑compat shims (read‑only) ────────────────────────────────
     # The rest of the codebase (fluxer/stoat modules) still reads these.
@@ -52,8 +52,8 @@ def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing
             raise FileNotFoundError(f"Configuration file not found: {config_path}")
             
         config = AppConfig()
-        save_config(config, path)
-        print(f"Created default configuration: {config_path}")
+        # DO NOT auto-save here, it might overwrite valid data if path is transiently wrong
+        # print(f"Created default configuration: {config_path}")
         return config
     
     with open(path, "r", encoding="utf-8") as f:

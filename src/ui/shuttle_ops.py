@@ -113,7 +113,10 @@ class OperationPane(Container):
         self.target_platform = self.config.target_platform or "fluxer"
         self.engine: MigrationContext | None = None
         self.exporter: DiscordExporter | None = None
-        self.validation_results: dict = {}
+        self.validation_results: dict = {
+            "discord_validating": True,
+            "target_validating": True,
+        }
         self.tokens_valid = False
         self.permissions_complete = False
         self.has_backup = False
@@ -162,6 +165,7 @@ class OperationPane(Container):
 
     def on_mount(self) -> None:
         self._rebuild_engine()
+        self._update_info_labels()
         # Wait for DOM to be stable before first validation
         self.call_after_refresh(self.run_validate)
 
@@ -221,6 +225,7 @@ class OperationPane(Container):
 
     # ── labels ────────────────────────────────────────────────────────────
 
+        # ── labels ────────────────────────────────────────────────────────────
     def _update_info_labels(self):
         if not self.is_mounted:
             return
@@ -230,7 +235,8 @@ class OperationPane(Container):
         d_name = v.get("discord_server_name")
         d_bot = v.get("discord_bot_name")
         
-        if v.get("discord_validating"):
+        is_val_d = v.get("discord_validating") or v.get("discord_token") is None
+        if is_val_d:
             s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
         elif v.get("discord_timeout"):
             s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
@@ -241,14 +247,15 @@ class OperationPane(Container):
             s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", f"[green]{d_bot}[/green]"
         elif v.get("discord_token") is False:
             if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-                # Check if it's missing because no server was selected
-                fillers = ["DISCORD_SERVER_ID", "000000000000000000", "", None]
-                if self.config.discord_server_id in fillers:
+                if not self.config.discord_server_id:
                     s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", "[red]SERVER NOT SELECTED[/red]"
                 else:
                     s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
             else:
-                s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
+                if not self.config.discord_bot_token:
+                    s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
+                else:
+                    s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
         else:
             s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
             
@@ -274,7 +281,7 @@ class OperationPane(Container):
             if not dp.get("read_messages"): d_missing.append("Read Messages")
             if not dp.get("read_message_history"): d_missing.append("Read Message History")
 
-        if v.get("discord_validating"):
+        if is_val_d:
             d_status = ""
             for ldr in self.query("#op_d_loader"): ldr.display = True
             for lbl in self.query("#op_lbl_d_status"): lbl.display = False
@@ -288,15 +295,17 @@ class OperationPane(Container):
                 d_status = "[red]SERVER NOT SET[/red]"
             elif v.get("discord_timeout"):
                 d_status = "[red]TIMEOUT[/red]"
-            elif d_err:
+            if d_err:
                 d_status = f"[red]{d_err}[/red]"
             elif d_missing:
                 d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
-            else:
+            elif v.get("discord_token") is False:
                 d_status = "[red]INVALID[/red]"
+            else:
+                d_status = ""
                 
-        if d_status:
-            for lbl in self.query("#op_lbl_d_status"): lbl.update(f"{d_status}")
+        for lbl in self.query("#op_lbl_d_status"): 
+            lbl.update(f"{d_status}")
 
         # Target / Backup Info
         if self.view_mode == "backup":
@@ -329,7 +338,8 @@ class OperationPane(Container):
             
             for lbl in self.query("#op_lbl_t_header"): lbl.update(plat)
             
-            if v.get("target_validating"):
+            is_val_t = v.get("target_validating") or v.get("target_token") is None
+            if is_val_t:
                 c_disp, tb_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
             elif v.get("target_timeout"):
                 c_disp, tb_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
@@ -353,7 +363,7 @@ class OperationPane(Container):
                 if tp:
                     t_missing = [k.replace('_', ' ').title() for k, val_p in tp.items() if not val_p]
 
-            if v.get("target_validating"):
+            if is_val_t:
                 t_status = ""
                 for ldr in self.query("#op_t_loader"): ldr.display = True
                 for lbl in self.query("#op_lbl_t_status"): lbl.display = False
@@ -369,11 +379,13 @@ class OperationPane(Container):
                     t_status = f"ERROR: [red]{t_err}[/red]"
                 elif t_missing:
                     t_status = f"[yellow]MISSING: {', '.join(t_missing)} Permission[/yellow]"
-                else:
+                elif v.get("target_token") is False:
                     t_status = "ERROR: [red]INVALID[/red]"
-                    
-            if t_status:
-                for lbl in self.query("#op_lbl_t_status"): lbl.update(f"{t_status}")
+                else:
+                    t_status = ""
+            
+            for lbl in self.query("#op_lbl_t_status"): 
+                lbl.update(f"{t_status}")
 
             # Buttons
             for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
@@ -385,6 +397,7 @@ class OperationPane(Container):
     async def run_validate(self) -> None:
         if not self.is_mounted:
             return
+        
         try:
             plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
             # Use query().first() or check presence to avoid NoMatches crashes
@@ -405,14 +418,14 @@ class OperationPane(Container):
             logger.error(f"Error in run_validate setup: {e}")
 
         self.validation_results = {
-            "discord_validating": False,
-            "target_validating": False,
-            "discord_token": False, "discord_bot_name": None,
-            "discord_server": False, "discord_server_name": None,
+            "discord_validating": True,
+            "target_validating": True,
+            "discord_token": None, "discord_bot_name": None,
+            "discord_server": None, "discord_server_name": None,
             "discord_intents": {}, "discord_permissions": {},
             "discord_error": None,
-            "target_token": False, "target_bot_name": None,
-            "target_community": False, "target_community_name": None,
+            "target_token": None, "target_bot_name": None,
+            "target_community": None, "target_community_name": None,
             "target_permissions": {},
             "target_error": None,
             "discord_timeout": False, "target_timeout": False,
@@ -422,31 +435,34 @@ class OperationPane(Container):
         self.permissions_complete = False
         self.has_backup = False
 
-        fillers = [
-            "DISCORD_BOT_TOKEN", "FLUXER_BOT_TOKEN", "STOAT_BOT_TOKEN",
-            "TARGET_BOT_TOKEN",
-            "000000000000000000", "DISCORD_SERVER_ID", "FLUXER_COMMUNITY_ID",
-            "STOAT_SERVER_ID", "TARGET_SERVER_ID", "", None,
-        ]
-        
-        # Check dummies
-        d_token_dummy = self.config.discord_bot_token in fillers
-        d_server_dummy = self.config.discord_server_id in fillers
-        
-        t_token_dummy = (self.config.target_bot_token or "") in fillers
-        t_server_dummy = (self.config.target_server_id or "") in fillers
+        # Check what we have
+        has_d_token = bool(self.config.discord_bot_token)
+        has_d_server = bool(self.config.discord_server_id)
+        has_t_token = bool(self.config.target_bot_token)
+        has_t_server = bool(self.config.target_server_id)
 
         # Flag which operations are being validated
         validating_discord = False
         validating_target = False
 
+        # 1. Determine Discord validating status
         if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-            if not d_server_dummy: validating_discord = True
+            if has_d_server: 
+                validating_discord = True
+            else:
+                self.validation_results["discord_token"] = False
+                self.validation_results["discord_server"] = False
         else:
-            if not d_token_dummy: validating_discord = True
-        
-        if self.view_mode == "shuttle" and not t_token_dummy:
+            if has_d_token:
+                validating_discord = True
+            else:
+                self.validation_results["discord_token"] = False
+
+        # 2. Determine Target validating status
+        if self.view_mode == "shuttle" and has_t_token:
             validating_target = True
+        elif self.view_mode == "shuttle":
+            self.validation_results["target_token"] = False
 
         self.validation_results["discord_validating"] = validating_discord
         self.validation_results["target_validating"] = validating_target
