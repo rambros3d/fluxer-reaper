@@ -499,12 +499,14 @@ async def migrate_messages(
                                             frames = []
                                             durations = []
                                             # Create a RGBA canvas for disposal handling
-                                            canvas = Image.new('RGBA', img.size, (0,0,0,0))
                                             for i in range(img.n_frames):
                                                 img.seek(i)
                                                 frame = img.convert('RGBA')
-                                                canvas.paste(frame, (0, 0), frame)
-                                                frames.append(canvas.convert('RGBA'))
+                                                # Use a fresh canvas for each frame to avoid ghosting/stacking
+                                                # For stickers, we want each GIF frame to be independent
+                                                current_frame = Image.new('RGBA', img.size, (0,0,0,0))
+                                                current_frame.paste(frame, (0, 0))
+                                                frames.append(current_frame)
                                                 durations.append(img.info.get('duration', 100))
                                             frames[0].save(
                                                 gif_buf, format='GIF', save_all=True,
