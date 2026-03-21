@@ -16,6 +16,7 @@ class MigrationContext:
     def __init__(self, config: AppConfig, target_platform: str | None = None, source_mode: str = "live", base_dir: str = ""):
         self.config = config
         self.source_mode = source_mode
+        self.base_dir = base_dir
         # If caller didn't specify, fall back to config value
         self.target_platform = target_platform or config.target_platform or "fluxer"
         self.state = MigrationState()
@@ -76,7 +77,7 @@ class MigrationContext:
         try:
             d_valid = await self.discord_reader.validate()
             t_valid = await self.writer.validate()
-            return {
+            results = {
                 "discord_token": d_valid.get("token", False),
                 "discord_bot_name": d_valid.get("bot_name"),
                 "discord_server": d_valid.get("server", False),
@@ -92,11 +93,10 @@ class MigrationContext:
             
             # CONSISTENCY: Once target metadata is known, initialize the flat SQLite DB.
             if results["target_community"] and results["target_community_name"]:
-                import re
-                clean_name = re.sub(r'[^\w\s-]', '', results["target_community_name"]).strip()
-                clean_name = re.sub(r'[-\s]+', '_', clean_name)
-                db_community_id = str(self.config.target_server_id or "")
-                self.state.set_folder(db_community_id, clean_name, base_dir=base_dir)
+                self.ensure_state_initialized(
+                    str(self.config.target_server_id or ""),
+                    results["target_community_name"]
+                )
                 
             return results
         except Exception as e:
@@ -107,6 +107,23 @@ class MigrationContext:
                 "target_token": False,
                 "target_community": False
             }
+
+    def ensure_state_initialized(self, community_id: str, community_name: str):
+        """Ensures the MigrationState database is initialized with the correct folder naming."""
+        if not community_id or not community_name:
+            return
+            
+        import re
+        clean_name = re.sub(r'[^\w\s-]', '', community_name).strip()
+        clean_name = re.sub(r'[-\s]+', '_', clean_name)
+        
+        # Determine base directory (same logic as used in _find_backup_path)
+        # We assume the caller might have provided a base_dir in __init__
+        # but for state we usually want it in the same place as backups
+        # or a logical subfolder.
+        base_dir = getattr(self, "base_dir", "")
+        
+        self.state.set_folder(community_id, clean_name, base_dir=base_dir)
 
     async def start_connections(self):
         await self.discord_reader.start()
