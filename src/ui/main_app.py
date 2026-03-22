@@ -183,15 +183,38 @@ class ConfigSelectionScreen(Screen):
         configs = get_available_configs()
         lv = self.query_one("#config_list", ListView)
         lv.clear()
+        
+        is_standalone = ("." in configs)
+        try:
+            self.query_one("#btn_new_config", Button).display = not is_standalone
+        except Exception: pass
+
         for c in configs:
-            lv.append(ListItem(Label(c), name=c))
+            label = c
+            if c == ".":
+                dir_name = Path(".").resolve().name
+                if dir_name.startswith("ReaperFiles-"):
+                    label = dir_name[len("ReaperFiles-"):]
+                else:
+                    label = dir_name
+            lv.append(ListItem(Label(label), name=c))
         return configs
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         cfg_name = event.item.name
-        cfg_path = Path(f"ReaperFiles-{cfg_name}") / "config.yaml"
+        if cfg_name == ".":
+            cfg_path = Path("reaper_config.yaml")
+            dir_name = Path(".").resolve().name
+            if dir_name.startswith("ReaperFiles-"):
+                display_name = dir_name[len("ReaperFiles-"):]
+            else:
+                display_name = dir_name
+        else:
+            cfg_path = Path(f"ReaperFiles-{cfg_name}") / "reaper_config.yaml"
+            display_name = cfg_name
+            
         from src.ui.mode_screen import ModeScreen
-        self.app.push_screen(ModeScreen(cfg_name, cfg_path))
+        self.app.push_screen(ModeScreen(display_name, cfg_path))
 
     def action_new_config(self) -> None:
         def cb(name: str | None):
@@ -199,7 +222,7 @@ class ConfigSelectionScreen(Screen):
                 create_new_config(name)
                 self.refresh_configs()
                 # Immediately open the ConfigScreen for the new config
-                cfg_path = Path(f"ReaperFiles-{name}") / "config.yaml"
+                cfg_path = Path(f"ReaperFiles-{name}") / "reaper_config.yaml"
                 def on_config_saved(saved: bool = False):
                     if saved:
                         self.refresh_configs()
@@ -399,7 +422,7 @@ class ConfigScreen(Screen):
 
                 yield Rule(id="footer_rule")
                 with Horizontal(id="cfg_actions"):
-                    yield Button("Save Configuration", variant="success", id="btn_save", tooltip="Save all changes to config.yaml")
+                    yield Button("Save Configuration", variant="success", id="btn_save", tooltip="Save all changes to reaper_config.yaml")
                     yield Button("Back", id="btn_back")
         yield Footer()
         yield RamDisplay()
