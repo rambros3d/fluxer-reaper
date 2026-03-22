@@ -17,34 +17,6 @@ class AppConfig(BaseModel):
     anonymize_users: bool = Field(default=False)
     log_level: str = Field(default="INFO")
 
-    # ── backward‑compat shims (read‑only) ────────────────────────────────
-    # The rest of the codebase (fluxer/stoat modules) still reads these.
-    # They all delegate to the unified target_* fields.
-
-    @property
-    def use_fluxer(self) -> bool:
-        return self.target_platform == "fluxer"
-
-    @property
-    def use_stoat(self) -> bool:
-        return self.target_platform == "stoat"
-
-    @property
-    def target_bot_token(self) -> Optional[str]:
-        return self.fluxer_bot_token if self.target_platform == "fluxer" else self.stoat_bot_token
-
-    @property
-    def target_server_id(self) -> Optional[str]:
-        return self.fluxer_server_id if self.target_platform == "fluxer" else self.stoat_server_id
-
-    @property
-    def target_api_url(self) -> Optional[str]:
-        return self.fluxer_api_url if self.target_platform == "fluxer" else self.stoat_api_url
-    
-    @property
-    def fluxer_community_id(self) -> Optional[str]:
-        return self.fluxer_server_id
-
 def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing: bool = True) -> AppConfig:
     path = Path(config_path)
     if not path.exists():
@@ -61,24 +33,6 @@ def load_config(config_path: Union[str, Path] = "config.yaml", create_if_missing
         
     if not data:
         raise ValueError("Configuration file is empty or invalid YAML.")
-
-    # ── migrate legacy configs that used single target fields ──
-    if "fluxer_community_id" in data:
-        data.setdefault("fluxer_server_id", data.pop("fluxer_community_id"))
-
-    if "target_bot_token" in data or "target_server_id" in data:
-        platform = data.get("target_platform", "fluxer")
-        if platform == "fluxer":
-            data.setdefault("fluxer_bot_token", data.get("target_bot_token"))
-            data.setdefault("fluxer_server_id", data.get("target_server_id"))
-            data.setdefault("fluxer_api_url", data.get("target_api_url"))
-        elif platform == "stoat":
-            data.setdefault("stoat_bot_token", data.get("target_bot_token"))
-            data.setdefault("stoat_server_id", data.get("target_server_id"))
-            data.setdefault("stoat_api_url", data.get("target_api_url"))
-            
-        for key in ("target_bot_token", "target_server_id", "target_api_url", "use_fluxer", "use_stoat"):
-            data.pop(key, None)
 
     return AppConfig(**data)
 

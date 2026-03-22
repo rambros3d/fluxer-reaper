@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from pathlib import Path
 from typing import Dict, Any
@@ -20,6 +21,7 @@ class MigrationContext:
         # If caller didn't specify, fall back to config value
         self.target_platform = target_platform or config.target_platform or "fluxer"
         self.state = MigrationState()
+        self._audit_lock = asyncio.Lock()
         
         # Select the appropriate source reader
         if source_mode == "backup":
@@ -35,15 +37,17 @@ class MigrationContext:
             logger.info("Source mode: LIVE — using Discord API")
         
         # Build the writer for the active target platform only
-        token = config.target_bot_token or ""
-        community_id = config.target_server_id or ""
-        api_url = config.target_api_url or "default"
-
         if self.target_platform == "stoat":
+            token = config.stoat_bot_token or ""
+            community_id = config.stoat_server_id or ""
+            api_url = config.stoat_api_url or "default"
             self.writer = StoatWriter(token=token, community_id=community_id, api_url=api_url)
             self.stoat_writer = self.writer
             self.fluxer_writer = FluxerWriter(token="", community_id="", api_url="default")
         else:
+            token = config.fluxer_bot_token or ""
+            community_id = config.fluxer_server_id or ""
+            api_url = config.fluxer_api_url or "default"
             self.writer = FluxerWriter(token=token, community_id=community_id, api_url=api_url)
             self.fluxer_writer = self.writer
             self.stoat_writer = StoatWriter(token="", community_id="", api_url="default")
@@ -104,8 +108,9 @@ class MigrationContext:
             
             # CONSISTENCY: Once target metadata is known, initialize the flat SQLite DB.
             if results["target_community"] and results["target_community_name"]:
+                tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
                 self.ensure_state_initialized(
-                    str(self.config.target_server_id or ""),
+                    str(tid or ""),
                     results["target_community_name"]
                 )
                 

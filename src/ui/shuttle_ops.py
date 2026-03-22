@@ -320,7 +320,7 @@ class OperationPane(Container):
             
             enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
             for bid in ("#op_backup_msgs", "#op_backup_sync"):
-                self.query_one(bid, Button).disabled = not enabled
+                for btn in self.query(bid): btn.disabled = not enabled
                 
             for btn in self.query("#op_backup_stats"):
                 btn.display = self.has_backup
@@ -389,7 +389,7 @@ class OperationPane(Container):
 
             # Buttons
             for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_danger"):
-                self.query_one(bid, Button).disabled = not self.tokens_valid
+                for btn in self.query(bid): btn.disabled = not self.tokens_valid
 
     # ── validation ────────────────────────────────────────────────────────
 
@@ -438,8 +438,13 @@ class OperationPane(Container):
         # Check what we have
         has_d_token = bool(self.config.discord_bot_token)
         has_d_server = bool(self.config.discord_server_id)
-        has_t_token = bool(self.config.target_bot_token)
-        has_t_server = bool(self.config.target_server_id)
+        
+        if self.target_platform == "stoat":
+            has_t_token = bool(self.config.stoat_bot_token)
+            has_t_server = bool(self.config.stoat_server_id)
+        else:
+            has_t_token = bool(self.config.fluxer_bot_token)
+            has_t_server = bool(self.config.fluxer_server_id)
 
         # Flag which operations are being validated
         validating_discord = False
@@ -1105,7 +1110,8 @@ class OperationPane(Container):
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
                 # ENSURE INITIALIZED for mapping lookup in analyze/migrate
-                self.engine.ensure_state_initialized(str(self.engine.config.target_server_id), tgt_server_name)
+                tid = self.engine.config.fluxer_server_id if self.target_platform == "fluxer" else self.engine.config.stoat_server_id
+                self.engine.ensure_state_initialized(str(tid or ""), tgt_server_name)
 
                 if src_server:
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
@@ -1533,7 +1539,7 @@ class OperationPane(Container):
         try:
             if "dz_del_roles" in selections:
                 if is_fluxer:
-                    community_id = self.engine.config.target_server_id
+                    community_id = self.engine.config.fluxer_server_id
                     roles_raw = await writer.client.get_guild_roles(community_id)
                     role_names = [
                         r.get("name", "Unknown") for r in roles_raw
@@ -1554,7 +1560,7 @@ class OperationPane(Container):
             if "dz_del_assets" in selections:
                 asset_names = []
                 if is_fluxer:
-                    community_id = self.engine.config.target_server_id
+                    community_id = self.engine.config.fluxer_server_id
                     emojis = await writer.client.get_guild_emojis(community_id)
                     asset_names += [f"{e.get('name', '?')} (emoji)" for e in emojis]
                     try:
@@ -1592,23 +1598,24 @@ class OperationPane(Container):
         target_stickers_map = {}
         try:
             if is_fluxer:
-                target_roles_raw = await writer.client.get_guild_roles(self.engine.config.target_server_id)
+                tid = self.engine.config.fluxer_server_id
+                target_roles_raw = await writer.client.get_guild_roles(tid)
                 target_roles_map = {r.get("name", "").lower(): str(r.get("id")) for r in target_roles_raw}
                 
-                target_emojis_raw = await writer.client.get_guild_emojis(self.engine.config.target_server_id)
+                target_emojis_raw = await writer.client.get_guild_emojis(tid)
                 target_emojis_map = {e.get("name", "").lower(): str(e.get("id")) for e in target_emojis_raw}
                 
                 # RE-INITIALIZE STATE if we found community info
                 # This ensures mapping persistence even if validate_all was skipped
                 try:
-                    community_info = await writer.client.get_guild(self.engine.config.target_server_id)
+                    community_info = await writer.client.get_guild(tid)
                     if community_info:
-                        self.engine.ensure_state_initialized(str(self.engine.config.target_server_id), community_info.get("name", "Target"))
+                        self.engine.ensure_state_initialized(str(tid or ""), community_info.get("name", "Target"))
                 except Exception:
                     pass
 
                 try:
-                    target_stickers_raw = await writer.client.get_guild_stickers(self.engine.config.target_server_id)
+                    target_stickers_raw = await writer.client.get_guild_stickers(tid)
                     target_stickers_map = {s.get("name", "").lower(): str(s.get("id")) for s in target_stickers_raw}
                 except Exception:
                     pass
@@ -1620,7 +1627,8 @@ class OperationPane(Container):
                 target_emojis_map = {e.name.lower(): str(e.id) for e in target_emojis_raw}
 
                 # RE-INITIALIZE STATE
-                self.engine.ensure_state_initialized(str(self.engine.config.target_server_id), server.name)
+                tid = self.engine.config.stoat_server_id
+                self.engine.ensure_state_initialized(str(tid or ""), server.name)
             
             target_chans_raw = await writer.get_channels()
             target_chans_map = {c.get("name", "").lower(): str(c.get("id")) for c in target_chans_raw if c.get("type") != 4}

@@ -14,8 +14,8 @@ async def sync_assets_state(context: MigrationContext):
     discord_emojis = await context.discord_reader.get_emojis()
     discord_stickers = await context.discord_reader.get_stickers()
     
-    fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_community_id)
-    fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_community_id)
+    fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
+    fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
     fluxer_emoji_map = {e.get("name"): str(e.get("id")) for e in fluxer_emojis if e.get("name")}

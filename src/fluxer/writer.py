@@ -200,6 +200,7 @@ class FluxerWriter:
             rate_limit_per_user=slowmode_delay,
             position=position
         )
+        self._channels_cache = None
         return str(guild_channel["id"])
 
     async def modify_channel(self, channel_id: str, parent_id: Optional[str] = None, name: Optional[str] = None, topic: Optional[str] = None, nsfw: Optional[bool] = None, slowmode_delay: Optional[int] = None, position: Optional[int] = None) -> bool:

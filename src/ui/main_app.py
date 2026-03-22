@@ -327,8 +327,10 @@ class ConfigScreen(Screen):
                             )
                         yield Label("Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
+                            cur_plat = self.config.target_platform or "fluxer"
+                            t_token = self.config.stoat_bot_token if cur_plat == "stoat" else self.config.fluxer_bot_token
                             yield Input(
-                                value=self.config.target_bot_token or "",
+                                value=t_token or "",
                                 id="inp_target_token",
                                 password=True,
                                 placeholder="Paste Target Bot Token",
@@ -344,8 +346,9 @@ class ConfigScreen(Screen):
                         )
                         
                         yield Label("Target API URL:", classes="field_label")
+                        t_api = self.config.stoat_api_url if cur_plat == "stoat" else self.config.fluxer_api_url
                         yield Input(
-                            value=self.config.target_api_url if (self.config.target_api_url and self.config.target_api_url != "default") else "",
+                            value=t_api if (t_api and t_api != "default") else "",
                             id="inp_target_api",
                             placeholder="Leave this Empty for official instance",
                             tooltip="Enter the custom API url\nfor self hosted instances"
@@ -373,12 +376,14 @@ class ConfigScreen(Screen):
         
         # Also auto-fetch target servers if mode is not backup_only
         if self._get_selected_mode() != "backup_only":
-            if self.config.target_bot_token:
-                platform = self.config.target_platform
+            platform = self.config.target_platform
+            t_token = self.config.stoat_bot_token if platform == "stoat" else self.config.fluxer_bot_token
+            if t_token:
                 if platform != "none":
+                    t_api = self.config.stoat_api_url if platform == "stoat" else self.config.fluxer_api_url
                     self.run_worker(self._do_fetch_target_servers(
-                        token=self.config.target_bot_token,
-                        api_url=self.config.target_api_url,
+                        token=t_token,
+                        api_url=t_api,
                         platform=platform,
                         initial=True
                     ))

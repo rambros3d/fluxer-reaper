@@ -266,6 +266,7 @@ class StoatWriter:
             else: # Text Channel
                 ch = await server.create_text_channel(name=name, description=topic)
                 # We no longer parent here, clone_server.py will do it in bulk
+                self._server = None # Clear cache
                 return str(ch.id)
         except Exception as e:
             logger.error(f"Failed to create Stoat channel {name}: {e}")

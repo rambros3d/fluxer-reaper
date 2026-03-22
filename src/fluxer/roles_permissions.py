@@ -12,7 +12,7 @@ async def sync_roles_state(context: MigrationContext):
     """
     logger.info("Synchronizing role mappings with Fluxer...")
     discord_roles = await context.discord_reader.get_roles()
-    fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_community_id)
+    fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
     fluxer_role_map = {r.get("name"): str(r.get("id")) for r in fluxer_roles if r.get("name")}
@@ -70,7 +70,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
                 discord_role_id = str(target.id)
                 # Handle @everyone role special case
                 if discord_role_id == context.config.discord_server_id:
-                    fluxer_role_id = context.config.fluxer_community_id
+                    fluxer_role_id = context.config.fluxer_server_id
                 else:
                     fluxer_role_id = context.state.get_fluxer_role_id(discord_role_id)
                 
