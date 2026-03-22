@@ -295,12 +295,15 @@ class OperationPane(Container):
                 d_status = "[red]SERVER NOT SET[/red]"
             elif v.get("discord_timeout"):
                 d_status = "[red]TIMEOUT[/red]"
-            if d_err:
+            elif d_err:
                 d_status = f"[red]{d_err}[/red]"
             elif d_missing:
                 d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
             elif v.get("discord_token") is False:
-                d_status = "[red]INVALID[/red]"
+                if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
+                    d_status = "[yellow]Local Backup[/yellow] [red]Not Found[/red]"
+                else:
+                    d_status = "[red]INVALID[/red]"
             else:
                 d_status = ""
                 

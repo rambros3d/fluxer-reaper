@@ -68,24 +68,15 @@ class MigrationContext:
                 if d.is_dir():
                     dname = d.name.upper()
                     if "DISCORD_BACKUP" in dname and dname.endswith(f"-{sid_str}"):
-                        logger.info(f"Found backup directory: {d}")
+                        logger.info(f"Found backup directory in workspace: {d}")
                         return d
-                    
-        # 2. Fallback to global search if it wasn't found in the workspace
-        # We use a pattern that matches the name directly to be faster than rglob("*")
-        pattern = f"DISCORD_BACKUP-{sid_str}"
-        for d in Path(".").rglob(pattern):
-            if d.is_dir():
-                logger.info(f"Found backup directory globally: {d}")
-                return d
         
-        # 3. Last ditch: some backups might not have the DISCORD_BACKUP prefix in some forks/versions?
-        # Unlikely here, so we stick to the return
-        
-        # If not found anywhere, return the expected location inside the workspace
+        # If not found in the workspace, return the expected location inside the workspace
+        # This allows validation screens to correctly report "not found" or "invalid"
         new_path = base_dir / f"DISCORD_BACKUP-{sid_str}"
-        logger.info(f"Using lazy backup path: {new_path}")
+        logger.info(f"Using lazy backup path (not yet existing): {new_path}")
         return new_path
+
 
     async def validate_all(self) -> Dict[str, Any]:
         """Returns connection validation status as a dictionary."""
