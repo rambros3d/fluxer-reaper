@@ -1115,3 +1115,120 @@ class ChannelIDInputModal(ModalScreen[dict | None]):
             else:
                 preview.update(f"[bold red]No channel found with ID: {chan_id_str}[/bold red]\n[dim]Make sure the ID belongs to a channel in the target community.[/dim]")
         yield RamDisplay()
+
+# ---------------------------------------------------------------------------
+# UpdateModalScreen & UpdateProgressScreen
+# ---------------------------------------------------------------------------
+
+class UpdateModalScreen(ModalScreen[bool]):
+    """Modal to display release notes and confirm update."""
+    DEFAULT_CSS = """
+    UpdateModalScreen { align: center middle; }
+    #update_dialog {
+        width: 60%; height: auto; max-height: 60%;
+        border: solid $accent; background: $surface; padding: 1 2; layout: vertical;
+    }
+    #update_title { text-style: bold; color: $accent; margin-bottom: 1; content-align: center middle; width: 100%; }
+    #update_notes_scroll { height: 1fr; margin-bottom: 1; border: solid $primary; padding: 1; }
+    #update_buttons { height: auto; dock: bottom; }
+    #update_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, version: str, notes: str, prerelease: bool = False):
+        super().__init__()
+        self.version_tag = version
+        self.notes = notes
+        self.prerelease = prerelease
+
+    def compose(self) -> ComposeResult:
+        from textual.widgets import Markdown
+        with Container(id="update_dialog"):
+            titlePrefix = "[orange]Beta Available[/orange]" if self.prerelease else "[green]Update Available[/green]"
+            yield Label(f"{titlePrefix}: {self.version_tag}", id="update_title")
+            with VerticalScroll(id="update_notes_scroll"):
+                yield Markdown(self.notes)
+            with Horizontal(id="update_buttons"):
+                yield Button("Auto Update", variant="success", id="btn_do_update", tooltip="Download and install the update. The app will restart.")
+                yield Button("Not Now", id="btn_cancel_update")
+        yield RamDisplay()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_cancel_update":
+            self.dismiss(False)
+        elif event.button.id == "btn_do_update":
+            self.dismiss(True)
+
+class UpdateProgressScreen(ModalScreen[None]):
+    """Screen to show download progress of the update."""
+    DEFAULT_CSS = """
+    UpdateProgressScreen { align: center middle; }
+    #up_prog_dialog {
+        width: 60; height: auto;
+        border: solid green; background: $surface; padding: 1 2; layout: vertical;
+    }
+    #up_prog_title { text-style: bold; margin-bottom: 1; content-align: center middle; width: 100%; }
+    #up_prog_bar { margin-bottom: 1; }
+    #up_prog_status { content-align: center middle; width: 100%; margin-bottom: 1; }
+    #up_prog_btn { display: none; margin-top: 1; width: 100%; }
+    """
+
+    def __init__(self, asset_url: str):
+        super().__init__()
+        self.asset_url = asset_url
+
+    def compose(self) -> ComposeResult:
+        with Container(id="up_prog_dialog"):
+            yield Label("Downloading Update...", id="up_prog_title")
+            yield ProgressBar(id="up_prog_bar", show_eta=False)
+            yield Label("Starting download...", id="up_prog_status")
+            yield Button("Close", id="up_prog_btn", variant="error")
+        yield RamDisplay()
+
+    async def on_mount(self) -> None:
+        self.run_worker(self.do_download())
+
+    async def do_download(self):
+        from src.core.updater import download_and_extract_update, apply_update_and_restart
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            bar = self.query_one("#up_prog_bar", ProgressBar)
+            lbl = self.query_one("#up_prog_status", Label)
+
+            def prog_cb(downloaded, total):
+                try:
+                    # We are in the main thread (async worker). Update UI directly.
+                    bar.update(total=total, progress=downloaded)
+                    
+                    mb_dl = downloaded / (1024*1024)
+                    mb_tot = total / (1024*1024)
+                    lbl.update(f"{mb_dl:.1f} MB / {mb_tot:.1f} MB")
+                except Exception as e:
+                    logger.error(f"Error in download progress callback: {e}")
+
+            logger.info(f"Starting update download from: {self.asset_url}")
+            new_exe_path = await download_and_extract_update(self.asset_url, progress_callback=prog_cb)
+            
+            if new_exe_path:
+                logger.info(f"Update downloaded to {new_exe_path}. Applying...")
+                lbl.update("[bold green]Download complete! Applying update...[/bold green]")
+                # We need to give the UI a moment before restarting
+                await asyncio.sleep(1)
+                apply_update_and_restart(new_exe_path)
+            else:
+                logger.error("Download failed - no path returned from updater.")
+                lbl.update("[bold red]Applying update failed! Check logs.[/bold red]")
+                self.query_one("#up_prog_title", Label).update("Update Failed")
+                self.query_one("#up_prog_btn", Button).display = True
+        except Exception as e:
+            logger.exception(f"Exception in do_download worker: {e}")
+            try:
+                self.query_one("#up_prog_status", Label).update(f"[bold red]Error:[/bold red] {e}")
+                self.query_one("#up_prog_btn", Button).display = True
+            except Exception:
+                pass
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "up_prog_btn":
+            self.dismiss(None)

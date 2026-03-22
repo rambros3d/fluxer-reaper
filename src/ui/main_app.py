@@ -127,7 +127,9 @@ class ConfigSelectionScreen(Screen):
     }
     #config_sel_actions { height: auto; margin-top: 0; }
     #config_sel_actions Button { width: 1fr; margin: 0 1; }
-    #btn_about { margin-top: 2; border: none; }
+    #bottom_actions_row { height: auto; align: center middle; margin-top: 2; }
+    #btn_update_app { display: none; margin-bottom: 1; width: 40; border: none; height: 1; }
+    #btn_about { border: none; width: 40; height: 1; }
     """
 
     def compose(self) -> ComposeResult:
@@ -141,18 +143,38 @@ class ConfigSelectionScreen(Screen):
                     yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
                     yield Button("Exit", id="btn_exit", variant="error")
         with Center():
-            yield Button("Info", id="btn_about", tooltip="Show app information")
+            with Vertical(id="bottom_actions_row"):
+                yield Button("Update Available", id="btn_update_app", variant="warning", tooltip="A new version is available!")
+                yield Button("Info", id="btn_about", tooltip="Show app information")
         yield Footer()
         yield Footnote()
         yield RamDisplay()
 
     def on_mount(self) -> None:
+        self.run_worker(self.check_updates())
         configs = self.refresh_configs()
         if not configs:
             def on_first_info_dismiss(res):
                 if res == "start_new":
                     self.action_new_config()
             self.app.push_screen(FirstInfoModal(), on_first_info_dismiss)
+
+    async def check_updates(self):
+        from src.core.updater import check_for_updates
+        update_info = await check_for_updates()
+        if update_info:
+            self.update_info = update_info
+            try:
+                btn = self.query_one("#btn_update_app", Button)
+                btn.display = True
+                if update_info.get("prerelease", False):
+                    btn.label = f"Beta Version Available ({update_info['version']})"
+                    btn.variant = "warning"
+                else:
+                    btn.label = f"Update Available ({update_info['version']})"
+                    btn.variant = "success"
+            except Exception:
+                pass
 
     def on_screen_resume(self) -> None:
         self.refresh_configs()
@@ -192,6 +214,20 @@ class ConfigSelectionScreen(Screen):
             self.action_new_config()
         elif event.button.id == "btn_about":
             self.app.push_screen(FirstInfoModal())
+        elif event.button.id == "btn_update_app":
+            if hasattr(self, 'update_info') and self.update_info:
+                from src.ui.modals import UpdateModalScreen, UpdateProgressScreen
+                def on_update_confirm(do_update):
+                    if do_update:
+                        self.app.push_screen(UpdateProgressScreen(asset_url=self.update_info['asset_url']))
+                self.app.push_screen(
+                    UpdateModalScreen(
+                        version=self.update_info['version'], 
+                        notes=self.update_info['body'], 
+                        prerelease=self.update_info.get('prerelease', False)
+                    ),
+                    on_update_confirm
+                )
         elif event.button.id == "btn_exit":
             self.app.exit()
 

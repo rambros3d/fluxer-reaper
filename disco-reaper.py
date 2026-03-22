@@ -88,12 +88,30 @@ def setup_ssl():
                 os.environ["REQUESTS_CA_BUNDLE"] = path
                 break
 
+def cleanup_old_update():
+    """Removes the .old executable left behind by a Windows update."""
+    import os
+    import sys
+    
+    if sys.platform != "win32":
+        return
+        
+    current_exe = sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]
+    old_exe = current_exe + ".old"
+    
+    if os.path.exists(old_exe):
+        try:
+            os.remove(old_exe)
+        except Exception:
+            pass
+
 def main():
     import os
     # Ensure screenshots directory is configured (but not created yet)
     shot_path = os.path.abspath("screenshots")
     os.environ["TEXTUAL_SCREENSHOT_LOCATION"] = shot_path
 
+    cleanup_old_update()
     relaunch_in_terminal()
     setup_ssl()
     setup_logging()
