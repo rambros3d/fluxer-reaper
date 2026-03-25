@@ -21,7 +21,10 @@ class DiscordExporter:
         self.base_dir = Path(base_dir) if base_dir else Path(".")
         self.is_running = True
         self.db: Optional[BackupDatabase] = None
-        self.sticker_cache: Dict[int, bytes] = {} # Deduplicate downloads in one session
+        self.sticker_cache: Dict[int, bytes] = {}  # Deduplicate downloads in one session
+        # Pending avatar downloads — flushed after each message batch to keep the
+        # hot message-formatting path free of HTTP latency.
+        self._pending_avatars: List[tuple] = []  # (user_id, save_coroutine, av_path)
 
     async def setup(self):
         """Prepares the output directory and fetches server metadata."""
@@ -379,6 +382,9 @@ class DiscordExporter:
                             accumulated_files += len(m["attachments"])
 
                     # Persist to DB
+                    # Flush deferred avatar downloads before persisting this batch
+                    await self._flush_pending_avatars()
+
                     if self.db:
                         if batch_users: self.db.save_users(batch_users)
                         self.db.save_messages_batch(batch_messages)
@@ -393,32 +399,35 @@ class DiscordExporter:
                     batch_users.clear()
                     batch_raw.clear()
 
-                if batch_raw and self.is_running:
-                    results = await asyncio.gather(*(self._format_message(m) for m in batch_raw))
-                    for m_data, u_list in results:
-                        batch_messages.append(m_data)
-                        if u_list: batch_users.extend(u_list)
-                    
-                    new_count += len(batch_messages)
-                    accumulated_count += len(batch_messages)
-                    
-                    for m in batch_messages:
-                        if "attachments" in m:
-                            accumulated_files += len(m["attachments"])
-                    
-                    
-                    if self.db:
-                        if batch_users: self.db.save_users(batch_users)
-                        self.db.save_messages_batch(batch_messages)
-                    
-                    if progress_callback:
-                        last_msg = batch_raw[-1]
-                        author_name = getattr(last_msg.author, "display_name", "Unknown")
-                        await progress_callback(channel_name, accumulated_count, author_name=author_name, thread_count=accumulated_threads, file_count=accumulated_files)
-                    
-                    batch_messages.clear()
-                    batch_users.clear()
-                    batch_raw.clear()
+            # Process any remaining messages that didn't fill a full batch
+            if batch_raw and self.is_running:
+                results = await asyncio.gather(*(self._format_message(m) for m in batch_raw))
+                for m_data, u_list in results:
+                    batch_messages.append(m_data)
+                    if u_list: batch_users.extend(u_list)
+                
+                new_count += len(batch_messages)
+                accumulated_count += len(batch_messages)
+                
+                for m in batch_messages:
+                    if "attachments" in m:
+                        accumulated_files += len(m["attachments"])
+
+                # Flush deferred avatar downloads before persisting this batch
+                await self._flush_pending_avatars()
+
+                if self.db:
+                    if batch_users: self.db.save_users(batch_users)
+                    self.db.save_messages_batch(batch_messages)
+                
+                if progress_callback:
+                    last_msg = batch_raw[-1]
+                    author_name = getattr(last_msg.author, "display_name", "Unknown")
+                    await progress_callback(channel_name, accumulated_count, author_name=author_name, thread_count=accumulated_threads, file_count=accumulated_files)
+                
+                batch_messages.clear()
+                batch_users.clear()
+                batch_raw.clear()
 
         except discord.Forbidden:
             logger.error(f"403 Forbidden: Missing Access to read messages in {channel_name} ({channel_id})")
@@ -431,22 +440,24 @@ class DiscordExporter:
         return accumulated_count, accumulated_threads, accumulated_files
 
     async def _format_user(self, user):
-        """Formats user data for the author or a mention."""
+        """Formats user data for the author or a mention.
+        
+        Avatar downloads are intentionally deferred to keep this off the hot
+        message-formatting path.  Call _flush_pending_avatars() after each batch.
+        """
         user_id = str(user.id)
         if user_id in self.user_cache:
             return None
 
-        # New user discovered
+        # New user discovered — schedule avatar download but don't block here
         avatar_file = None
         if user.avatar:
-            try:
-                av_name = f"{user_id}.png"
-                av_target = self.users_path / av_name
-                if not av_target.exists():
-                    await user.avatar.save(av_target)
-                avatar_file = f"users/{av_name}"
-            except Exception as e:
-                logger.error(f"Failed to save avatar for {user.name}: {e}")
+            av_name = f"{user_id}.png"
+            av_target = self.users_path / av_name
+            avatar_file = f"users/{av_name}"
+            if not av_target.exists():
+                # Queue for deferred download
+                self._pending_avatars.append((user_id, user.avatar, av_target))
 
         roles = []
         if hasattr(user, "roles"):
@@ -463,6 +474,21 @@ class DiscordExporter:
         self.user_cache[user_id] = user_data
         return user_data
 
+    async def _flush_pending_avatars(self):
+        """Downloads all queued user avatars concurrently, then clears the queue."""
+        if not self._pending_avatars:
+            return
+        
+        async def _save_avatar(user_id, avatar_asset, target_path):
+            try:
+                await avatar_asset.save(target_path)
+            except Exception as e:
+                logger.error(f"Failed to save avatar for user {user_id}: {e}")
+        
+        pending = self._pending_avatars[:]
+        self._pending_avatars.clear()
+        await asyncio.gather(*[_save_avatar(uid, av, path) for uid, av, path in pending])
+
     async def _format_message(self, msg):
         """Formats a single message and its author for DB storage."""
         new_users = []
@@ -478,11 +504,11 @@ class DiscordExporter:
                 if u_ment: new_users.append(u_ment)
 
         # 2. Attachments handling (Content-Addressable Storage)
-        # ... (rest of the logic remains same, just updating m_data)
+        # All attachments in a message are downloaded concurrently.
         attachments = []
         if msg.attachments:
-            for att in msg.attachments:
-                att_data = await self._process_media(
+            att_tasks = [
+                self._process_media(
                     media_id=att.id,
                     url=att.url,
                     filename=att.filename,
@@ -490,8 +516,10 @@ class DiscordExporter:
                     content_type=att.content_type,
                     save_method=att.save
                 )
-                if att_data:
-                    attachments.append(att_data)
+                for att in msg.attachments
+            ]
+            att_results = await asyncio.gather(*att_tasks)
+            attachments = [r for r in att_results if r]
 
         # 2.5 Stickers handling
         stickers = []
@@ -556,16 +584,20 @@ class DiscordExporter:
             if snapshot.content:
                 content = snapshot.content
             
-            for s_att in snapshot.attachments:
-                att_res = await self._process_media(
-                    media_id=s_att.id,
-                    url=s_att.url,
-                    filename=s_att.filename,
-                    size=s_att.size,
-                    content_type=s_att.content_type,
-                    save_method=s_att.save
-                )
-                if att_res: attachments.append(att_res)
+            if snapshot.attachments:
+                snap_tasks = [
+                    self._process_media(
+                        media_id=s_att.id,
+                        url=s_att.url,
+                        filename=s_att.filename,
+                        size=s_att.size,
+                        content_type=s_att.content_type,
+                        save_method=s_att.save
+                    )
+                    for s_att in snapshot.attachments
+                ]
+                snap_results = await asyncio.gather(*snap_tasks)
+                attachments.extend(r for r in snap_results if r)
             
             for s_emb in snapshot.embeds:
                 embeds.append(s_emb.to_dict())
@@ -623,14 +655,16 @@ class DiscordExporter:
                 try: tmp.close()
                 except: pass
                 
-                file_hash = self._calculate_sha256(tmp_path)
-                actual_size = tmp_path.stat().st_size
+                # Offload CPU-bound hashing and blocking file ops to the thread pool
+                # so we don't stall concurrent downloads on the event loop.
+                file_hash = await asyncio.to_thread(self._calculate_sha256, tmp_path)
+                actual_size = (await asyncio.to_thread(tmp_path.stat)).st_size
                 
                 # Check if hash already exists in pool
                 if self.db:
                     in_pool = self.db.get_media_by_hash(file_hash)
                     if in_pool:
-                        tmp_path.unlink()
+                        await asyncio.to_thread(tmp_path.unlink)
                         return {
                             "id": str(media_id),
                             "filename": filename,
@@ -645,8 +679,11 @@ class DiscordExporter:
                 target_filename = f"{file_hash}{ext}"
                 target_path = self.attachments_path / target_filename
                 
-                shutil.move(str(tmp_path), str(target_path))
+                await asyncio.to_thread(shutil.move, str(tmp_path), str(target_path))
                 
+                # Mark as successfully moved so finally block doesn't delete it
+                tmp_path = None
+
                 if self.db:
                     self.db.add_media_to_pool(file_hash, f"attachments/{target_filename}", actual_size, content_type, str(url))
                 
@@ -658,9 +695,14 @@ class DiscordExporter:
                     "content_type": content_type,
                     "local_hash": file_hash
                 }
-        except Exception as e:
-            logger.error(f"Failed to process media {filename}: {e}")
-            if tmp_path and tmp_path.exists(): tmp_path.unlink()
+        except BaseException as e:
+            if not isinstance(e, asyncio.CancelledError):
+                logger.error(f"Failed to process media {filename}: {e}")
+            raise
+        finally:
+            if tmp_path and tmp_path.exists():
+                try: tmp_path.unlink()
+                except: pass
             return None
 
     async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, accumulated_threads=0, accumulated_files=0, after_id: int | None = None):
@@ -750,25 +792,35 @@ class DiscordExporter:
                 })
             self.db.save_threads(thread_meta)
 
-        for thread in all_threads:
-            if not self.is_running: break
-            await asyncio.sleep(0)
-            
-            accumulated_threads += 1
+        # Export threads concurrently — semaphore limits to 5 at a time to
+        # avoid flooding Discord's rate limiter.
+        sem = asyncio.Semaphore(5)
+
+        async def _export_one_thread(thread, t_idx):
+            async with sem:
+                if not self.is_running:
+                    return 0, 0, 0
+                cnt, thr, fls = await self.export_channel_messages(
+                    thread.id,
+                    progress_callback=progress_callback,
+                    force=force,
+                    accumulated_count=0,
+                    accumulated_threads=0,
+                    accumulated_files=0,
+                    after_id=after_id
+                )
+                return cnt, thr, fls
+
+        if all_threads:
+            thread_results = await asyncio.gather(
+                *[_export_one_thread(t, i) for i, t in enumerate(all_threads)]
+            )
+            for cnt, thr, fls in thread_results:
+                accumulated_count += cnt
+                accumulated_threads += 1 + thr  # +1 for the thread itself
+                accumulated_files += fls
+
             if progress_callback:
                 await progress_callback(channel.name, accumulated_count, thread_count=accumulated_threads, file_count=accumulated_files)
-            
-            # Backup thread messages
-            accumulated_count, accumulated_threads, accumulated_files = await self.export_channel_messages(thread.id, progress_callback=progress_callback, force=force, accumulated_count=accumulated_count, accumulated_threads=accumulated_threads, accumulated_files=accumulated_files, after_id=after_id)
 
-            # For forums, ensure the starter message exists in the DB
-            if is_forum:
-                # starter_message is handled by export_channel_messages since it's just a message in that thread
-                # However we may want to mark it or store forum-specific tags
-                try:
-                    # Just yield for concurrency
-                    await asyncio.sleep(0)
-                except Exception as e:
-                    logger.error(f"Error processing forum thread {thread.name}: {e}")
-                    
         return accumulated_count, accumulated_threads, accumulated_files
