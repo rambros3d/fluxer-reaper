@@ -184,6 +184,9 @@ class OperationPane(Container):
         self.run_validate()
 
     def _base_dir(self) -> str:
+        # If the config file is in the root, our base directory is current (.)
+        if str(self.config_path) == "reaper_config.yaml":
+            return "."
         return f"ReaperFiles-{self.cfg_name}"
 
     def _rebuild_engine(self):

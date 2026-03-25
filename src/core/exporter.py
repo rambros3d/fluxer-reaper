@@ -543,7 +543,13 @@ class DiscordExporter:
         content = msg.content or ""
         msg_type = int(msg.type.value) if hasattr(msg.type, "value") else 0
         
+        # Force MessageType.thread_starter_message (21) for forum post starter messages
+        if isinstance(msg.channel, discord.Thread) and isinstance(msg.channel.parent, discord.ForumChannel):
+            if msg.id == msg.channel.id:
+                msg_type = 21
+
         is_forwarded = getattr(msg.flags, 'forwarded', False)
+
         if is_forwarded and hasattr(msg, 'message_snapshots') and msg.message_snapshots:
             msg_type = 100 # Custom Forward type
             snapshot = msg.message_snapshots[0]
