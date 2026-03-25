@@ -21,7 +21,6 @@ class MigrationContext:
         # If caller didn't specify, fall back to config value
         self.target_platform = target_platform or config.target_platform or "fluxer"
         self.state = MigrationState()
-        self._audit_lock = asyncio.Lock()
         
         # Select the appropriate source reader
         if source_mode == "backup":

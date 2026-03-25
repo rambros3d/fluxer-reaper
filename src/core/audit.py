@@ -1,14 +1,18 @@
 import logging
+import asyncio
 from src.core.base import MigrationContext
 
 logger = logging.getLogger(__name__)
+
+# Shared lock to prevent concurrent audit channel setup across different context instances
+_setup_lock = asyncio.Lock()
 
 async def log_audit_event(context: MigrationContext, title: str, description: str, files: list[dict] | None = None) -> None:
     """
     Logs an event by sending a summary to the `#reaper-logs` audit channel.
     If the channel does not exist, it will dynamically create it.
     """
-    async with context._audit_lock:
+    async with _setup_lock:
         # 1. Initialize or Validate channel
         channel_id = context.state.audit_log_channel
         
