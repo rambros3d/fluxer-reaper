@@ -5,10 +5,10 @@ from datetime import datetime
 import asyncio
 
 from textual.app import ComposeResult
-from textual.screen import Screen
-from textual.containers import Container, Vertical, VerticalScroll, Horizontal
-from textual.widgets import Button, Label, Rule, Tree
-from textual import work
+from textual.screen import Screen, ModalScreen
+from textual.containers import Container, Vertical, VerticalScroll, Horizontal, Grid
+from textual.widgets import Button, Label, Rule, Tree, Static
+from textual import work, on
 from rich.text import Text
 from rich.style import Style
 
@@ -227,7 +227,7 @@ class BackupStatsScreen(Screen[None]):
         
         # Add a header row to the tree root, purely for visual columns
         # Using depth=4 for header to compensate for root node toggle position delta
-        header_text = self._format_tree_row("NAME", "MESSAGES", "THREADS", "FILES", "SIZE", depth=-1)
+        header_text = self._format_tree_row("NAME", "MESSAGES", "THREADS", "FILES", "SIZE", "MANAGE", depth=-1)
         header_text.stylize("bold")
         self.stats_tree.root.set_label(header_text)
         self.stats_tree.show_root = True
@@ -237,6 +237,25 @@ class BackupStatsScreen(Screen[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_back":
             self.dismiss()
+
+    @on(Tree.NodeSelected)
+    def on_node_selected(self, event: Tree.NodeSelected) -> None:
+        """Handle selection of a channel node to open management modal."""
+        node_data = event.node.data
+        if node_data and node_data.get("is_channel") and node_data.get("is_backed_up"):
+            self.app.push_screen(
+                ManageBackupModal(
+                    node_data["name"],
+                    node_data["id"],
+                    node_data["stats"],
+                    self.target_dir
+                ),
+                callback=self._on_modal_close
+            )
+
+    def _on_modal_close(self, changed: bool) -> None:
+        if changed:
+            self.load_data()
 
     def _format_size(self, size_bytes: int) -> str:
         if size_bytes == 0:
@@ -249,7 +268,7 @@ class BackupStatsScreen(Screen[None]):
             return f"{size_bytes / (1024 * 1024):.2f} MB"
         return f"{size_bytes / (1024 * 1024 * 1024):.2f} GB"
 
-    def _format_tree_row(self, name: str, msgs, threads, files, size, depth=0) -> Text:
+    def _format_tree_row(self, name: str, msgs, threads, files, size, manage="", depth=0) -> Text:
         """Pads and aligns columns for the tree view to simulate a table."""
         # Textual Tree indents child nodes. Standard indent is 4 characters.
         # To maintain vertical alignment of values, we subtract the indentation from the name column width.
@@ -263,11 +282,16 @@ class BackupStatsScreen(Screen[None]):
         col_thd = str(threads).rjust(12)
         col_file = str(files).rjust(12)
         col_size = str(size).rjust(15)
-        return Text(f"{col_name}{col_msg}{col_thd}{col_file}{col_size}")
+        col_manage = str(manage).rjust(10)
+        return Text(f"{col_name}{col_msg}{col_thd}{col_file}{col_size}{col_manage}")
 
     @work(exclusive=True)
     async def load_data(self) -> None:
         try:
+            # Clear old nodes
+            while self.stats_tree.root.children:
+                self.stats_tree.root.children[0].remove()
+                
             # Initialize BackupReader
             reader = BackupReader(self.target_dir)
             await reader.start()
@@ -365,12 +389,15 @@ class BackupStatsScreen(Screen[None]):
                     is_bu = ch.id in backed_up_channel_ids
                     
                     chan_nodes_data.append({
+                        "id": ch.id,
                         "name": f"# {ch.name}",
                         "msgs": stats["message_count"] if is_bu else "NA",
                         "threads": stats["thread_count"] if is_bu else "NA",
                         "files": stats["attachment_count"] if is_bu else "NA",
                         "size": stats["total_size"] if is_bu else 0,
-                        "is_backed_up": is_bu
+                        "is_backed_up": is_bu,
+                        "is_channel": True,
+                        "stats": stats
                     })
                     
                     c_msgs += stats["message_count"]
@@ -384,14 +411,16 @@ class BackupStatsScreen(Screen[None]):
                 
                 for ch_data in chan_nodes_data:
                     size_str = self._format_size(ch_data['size']) if ch_data['is_backed_up'] else "NA"
-                    ch_lbl = self._format_tree_row(ch_data['name'], ch_data['msgs'], ch_data['threads'], ch_data['files'], size_str, depth=2)
+                    manage_icon = "🖍️" if ch_data['is_backed_up'] else ""
+                    ch_lbl = self._format_tree_row(ch_data['name'], ch_data['msgs'], ch_data['threads'], ch_data['files'], size_str, manage_icon, depth=2)
                     
                     if ch_data['is_backed_up']:
                         ch_lbl.stylize("bold white")
                     else:
                         ch_lbl.stylize("dim white")
                     
-                    node.add_leaf(ch_lbl)
+                    newNode = node.add_leaf(ch_lbl)
+                    newNode.data = ch_data
 
         except Exception as e:
             import traceback
@@ -403,3 +432,135 @@ class BackupStatsScreen(Screen[None]):
         finally:
             if 'reader' in locals():
                 await reader.close()
+
+class ManageBackupModal(ModalScreen[bool]):
+    """Modal for managing channel backup data."""
+
+    DEFAULT_CSS = """
+    ManageBackupModal {
+        align: center middle;
+        background: rgba(0, 0, 0, 0.6);
+    }
+    
+    #mb_container {
+        width: 60;
+        height: auto;
+        max-height: 80%;
+        border: thick $accent;
+        background: $surface;
+        padding: 1 2;
+    }
+    
+    #mb_title {
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    
+    .mb_info {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+    
+    #mb_options {
+        margin-top: 1;
+        layout: vertical;
+        height: auto;
+    }
+    
+    #mb_options Button {
+        width: 100%;
+        margin-bottom: 1;
+    }
+    
+    #mb_footer {
+        margin-top: 1;
+        layout: vertical;
+        content-align: center middle;
+        height: auto;
+    }
+    
+    #mb_confirm_text {
+        color: $error;
+        text-style: bold italic;
+        margin-bottom: 1;
+        height: 1;
+        content-align: center middle;
+        width: 100%;
+    }
+
+    #btn_cancel {
+        width: 16;
+    }
+    """
+
+    def __init__(self, channel_name: str, channel_id: int, stats: dict, target_dir: Path, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.channel_name = channel_name
+        self.channel_id = channel_id
+        self.stats = stats
+        self.target_dir = target_dir
+        self.primed_button = None # Tracks which button is awaiting second click
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="mb_container"):
+            yield Label(f"Manage Backup: {self.channel_name}", id="mb_title")
+            
+            msgs = self.stats.get("message_count", 0)
+            files = self.stats.get("attachment_count", 0)
+            yield Label(f"Currently contains {msgs} messages and {files} attachments.", classes="mb_info")
+            
+            yield Rule()
+            
+            with Vertical(id="mb_options"):
+                yield Button("Delete All Messages", id="btn_delete_msgs", variant="warning")
+                yield Button("Delete Messages & Purge Unused Attachments", id="btn_delete_purge", variant="warning")
+            
+            with Vertical(id="mb_footer"):
+                yield Label("", id="mb_confirm_text")
+                yield Button("Cancel", id="btn_cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_cancel":
+            self.dismiss(False)
+            return
+
+        btn_id = event.button.id
+        if btn_id not in ("btn_delete_msgs", "btn_delete_purge"):
+            return
+
+        if self.primed_button == btn_id:
+            # Second click, proceed
+            purge = (btn_id == "btn_delete_purge")
+            self.run_deletion(purge=purge)
+        else:
+            # First click, prime it
+            # Reset other buttons first
+            btn_msgs = self.query_one("#btn_delete_msgs", Button)
+            btn_purge = self.query_one("#btn_delete_purge", Button)
+            btn_msgs.variant = "warning"
+            btn_purge.variant = "warning"
+
+            # Prime current click
+            event.button.variant = "error"
+            self.primed_button = btn_id
+            self.query_one("#mb_confirm_text", Label).update("Click again to proceed")
+
+    @work(exclusive=True)
+    async def run_deletion(self, purge: bool = False) -> None:
+        try:
+            from src.core.backup_database import BackupDatabase
+            db_path = self.target_dir / "backup.db"
+            db = BackupDatabase(db_path)
+            
+            # 1. Delete messages
+            db.delete_channel_messages(self.channel_id)
+            
+            # 2. Optionally purge
+            if purge:
+                db.purge_unused_media(self.target_dir)
+            
+            db.close()
+            self.dismiss(True)
+        except Exception as e:
+            logger.exception("Failed to delete channel data")
+            self.app.notify(f"Error: {e}", severity="error")

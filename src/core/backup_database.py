@@ -464,39 +464,41 @@ class BackupDatabase:
                 INSERT OR REPLACE INTO media_pool (hash, local_path, size, mime_type, first_seen_url)
                 VALUES (?, ?, ?, ?, ?)
             """, (file_hash, str(local_path), size, mime_type, url))
-
     def get_stats_by_channel(self) -> Dict[int, Dict[str, Any]]:
         """Returns aggregate stats for all channels with backups."""
         with self._lock:
+            # 1. Message counts (aggregating threads into parent channel)
             msg_rows = self._conn.execute("""
                 SELECT 
-                    COALESCE(t.parent_id, m.channel_id) as channel_id,
+                    COALESCE(t.parent_id, m.channel_id) as agg_channel_id,
                     COUNT(m.id) as msg_count
                 FROM messages m
                 LEFT JOIN threads t ON m.channel_id = t.id
-                GROUP BY channel_id
+                GROUP BY agg_channel_id
             """).fetchall()
             
+            # 2. Thread counts
             thread_rows = self._conn.execute("""
                 SELECT parent_id, COUNT(*) as thread_count 
                 FROM threads 
                 GROUP BY parent_id
             """).fetchall()
             
+            # 3. Attachment counts and sizes
             att_rows = self._conn.execute("""
                 SELECT 
-                    COALESCE(t.parent_id, m.channel_id) as channel_id,
+                    COALESCE(t.parent_id, m.channel_id) as agg_channel_id,
                     COUNT(a.id) as att_count,
                     SUM(a.size) as total_size
                 FROM attachments a
                 JOIN messages m ON a.message_id = m.id
                 LEFT JOIN threads t ON m.channel_id = t.id
-                GROUP BY channel_id
+                GROUP BY agg_channel_id
             """).fetchall()
             
             stats = {}
             for r in msg_rows:
-                cid = parse_snowflake(r["channel_id"])
+                cid = parse_snowflake(r["agg_channel_id"])
                 if cid is None: continue
                 stats[cid] = {
                     "message_count": r["msg_count"],
@@ -513,7 +515,7 @@ class BackupDatabase:
                 stats[cid]["thread_count"] = r["thread_count"]
             
             for r in att_rows:
-                cid = parse_snowflake(r["channel_id"])
+                cid = parse_snowflake(r["agg_channel_id"])
                 if cid is None: continue
                 if cid not in stats:
                     stats[cid] = {"message_count": 0, "thread_count": 0, "attachment_count": 0, "total_size": 0}
@@ -695,6 +697,83 @@ class BackupDatabase:
                     m["stickers"] = sts_by_msg.get(m_id, [])
             
             return msg_list
+
+    def delete_channel_messages(self, channel_id: Union[str, int]):
+        """Deletes all messages and related metadata for a specific channel and its threads."""
+        cid = str(channel_id)
+        with self._lock:
+            # 1. Identify all channel IDs involved (parent + all threads)
+            target_ids = [cid]
+            thread_rows = self._conn.execute("SELECT id FROM threads WHERE parent_id = ?", (cid,)).fetchall()
+            for tr in thread_rows:
+                target_ids.append(tr["id"])
+            
+            placeholders_chans = ",".join(["?"] * len(target_ids))
+            
+            # 2. Get all message IDs for these channels
+            msg_ids = [r["id"] for r in self._conn.execute(
+                f"SELECT id FROM messages WHERE channel_id IN ({placeholders_chans})", target_ids
+            ).fetchall()]
+            
+            if not msg_ids:
+                return
+            
+            placeholders_msgs = ",".join(["?"] * len(msg_ids))
+            
+            # 3. Delete related metadata
+            self._conn.execute(f"DELETE FROM attachments WHERE message_id IN ({placeholders_msgs})", msg_ids)
+            self._conn.execute(f"DELETE FROM embeds WHERE message_id IN ({placeholders_msgs})", msg_ids)
+            self._conn.execute(f"DELETE FROM reactions WHERE message_id IN ({placeholders_msgs})", msg_ids)
+            self._conn.execute(f"DELETE FROM message_stickers WHERE message_id IN ({placeholders_msgs})", msg_ids)
+            
+            # 4. Delete messages
+            self._conn.execute(f"DELETE FROM messages WHERE channel_id IN ({placeholders_chans})", target_ids)
+            
+            # 5. Delete thread metadata (optional but consistent)
+            self._conn.execute(f"DELETE FROM threads WHERE parent_id = ?", (cid,))
+            
+            self._conn.commit()
+            logger.info(f"Deleted messages, metadata, and threads for channel {cid}")
+
+    def purge_unused_media(self, backup_root: Path) -> int:
+        """Removes media files from disk and DB that are no longer referenced by any message."""
+        purged_count = 0
+        with self._lock:
+            # 1. Find all hashes in use
+            used_hashes = set()
+            for r in self._conn.execute("SELECT DISTINCT local_hash FROM attachments WHERE local_hash IS NOT NULL").fetchall():
+                used_hashes.add(r[0])
+            for r in self._conn.execute("SELECT DISTINCT local_hash FROM message_stickers WHERE local_hash IS NOT NULL").fetchall():
+                used_hashes.add(r[0])
+            
+            # 2. Get all hashes in pool
+            all_media = self._conn.execute("SELECT hash, local_path FROM media_pool").fetchall()
+            
+            to_delete = []
+            for m in all_media:
+                m_hash = m["hash"]
+                if m_hash not in used_hashes:
+                    to_delete.append(dict(m))
+            
+            if not to_delete:
+                return 0
+            
+            # 3. Delete from filesystem and DB
+            for m in to_delete:
+                try:
+                    file_path = backup_root / m["local_path"]
+                    if file_path.exists():
+                        file_path.unlink()
+                    
+                    self._conn.execute("DELETE FROM media_pool WHERE hash = ?", (m["hash"],))
+                    purged_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to purge media {m['hash']}: {e}")
+            
+            self._conn.commit()
+            logger.info(f"Purged {purged_count} unused media files")
+        
+        return purged_count
 
     def close(self):
         """Commits any pending writes and closes the connection."""

@@ -703,7 +703,7 @@ class DiscordExporter:
             if tmp_path and tmp_path.exists():
                 try: tmp_path.unlink()
                 except: pass
-            return None
+        return None
 
     async def export_threads(self, channel_id: int, progress_callback=None, force=False, accumulated_count=0, accumulated_threads=0, accumulated_files=0, after_id: int | None = None):
         """Exports active and archived threads for a channel to SQLite."""

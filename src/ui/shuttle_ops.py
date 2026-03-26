@@ -423,6 +423,7 @@ class OperationPane(Container):
         except Exception as e:
             logger.error(f"Error in run_validate setup: {e}")
 
+        info = self._get_backup_info()
         self.validation_results = {
             "discord_validating": True,
             "target_validating": True,
@@ -435,11 +436,11 @@ class OperationPane(Container):
             "target_permissions": {},
             "target_error": None,
             "discord_timeout": False, "target_timeout": False,
-            "backup_info_text": "",
+            "backup_info_text": f"Last backup: [cyan]{info}[/cyan]" if info else "",
         }
         self.tokens_valid = False
         self.permissions_complete = False
-        self.has_backup = False
+        self.has_backup = bool(info)
 
         # Check what we have
         has_d_token = bool(self.config.discord_bot_token)
@@ -542,11 +543,11 @@ class OperationPane(Container):
         
         if self.view_mode == "backup":
             self.tokens_valid = bool(discord_ok)
-            if self.tokens_valid:
-                info = self._get_backup_info()
-                if info:
-                    self.validation_results["backup_info_text"] = f"Last backup: [cyan]{info}[/cyan]"
-                    self.has_backup = True
+            # Check for backup regardless of token validity
+            info = self._get_backup_info()
+            if info:
+                self.validation_results["backup_info_text"] = f"Last backup: [cyan]{info}[/cyan]"
+                self.has_backup = True
         else:
             target_ok = v.get("target_token") and v.get("target_community")
             self.tokens_valid = bool(discord_ok and target_ok)
