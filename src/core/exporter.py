@@ -367,13 +367,13 @@ class DiscordExporter:
             async for msg in self.reader.fetch_message_history(channel_id, after_id=last_id):
                 if not self.is_running: break
                 batch_raw.append(msg)
-                
+
                 if len(batch_raw) >= BATCH_SIZE:
                     results = await asyncio.gather(*(self._format_message(m) for m in batch_raw))
                     for m_data, u_list in results:
                         batch_messages.append(m_data)
                         if u_list: batch_users.extend(u_list)
-                    
+
                     new_count += len(batch_messages)
                     accumulated_count += len(batch_messages)
                     
@@ -388,13 +388,13 @@ class DiscordExporter:
                     if self.db:
                         if batch_users: self.db.save_users(batch_users)
                         self.db.save_messages_batch(batch_messages)
-                    
+
                     if progress_callback:
                         last_msg = batch_raw[-1]
                         author_name = getattr(last_msg.author, "display_name", "Unknown")
                         preview = (last_msg.content or "")[:150]
                         await progress_callback(channel_name, accumulated_count, author_name=author_name, message_preview=preview, thread_count=accumulated_threads, file_count=accumulated_files)
-                    
+
                     batch_messages.clear()
                     batch_users.clear()
                     batch_raw.clear()
@@ -492,7 +492,7 @@ class DiscordExporter:
     async def _format_message(self, msg):
         """Formats a single message and its author for DB storage."""
         new_users = []
-        
+
         # 1. Author handling
         u_data = await self._format_user(msg.author)
         if u_data: new_users.append(u_data)
@@ -631,7 +631,7 @@ class DiscordExporter:
                     "filename": filename,
                     "size": existing["size"],
                     "url": str(url),
-                    "content_type": existing["content_type"],
+                    "content_type": existing["mime_type"],
                     "local_hash": existing["hash"]
                 }
 
@@ -654,7 +654,7 @@ class DiscordExporter:
                 # Ensure it's closed before hashing
                 try: tmp.close()
                 except: pass
-                
+
                 # Offload CPU-bound hashing and blocking file ops to the thread pool
                 # so we don't stall concurrent downloads on the event loop.
                 file_hash = await asyncio.to_thread(self._calculate_sha256, tmp_path)
@@ -678,7 +678,7 @@ class DiscordExporter:
                 ext = Path(filename).suffix
                 target_filename = f"{file_hash}{ext}"
                 target_path = self.attachments_path / target_filename
-                
+
                 await asyncio.to_thread(shutil.move, str(tmp_path), str(target_path))
                 
                 # Mark as successfully moved so finally block doesn't delete it
@@ -686,7 +686,7 @@ class DiscordExporter:
 
                 if self.db:
                     self.db.add_media_to_pool(file_hash, f"attachments/{target_filename}", actual_size, content_type, str(url))
-                
+
                 return {
                     "id": str(media_id),
                     "filename": filename,
