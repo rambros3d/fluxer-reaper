@@ -670,7 +670,7 @@ class DiscordExporter:
                             "filename": filename,
                             "size": actual_size,
                             "url": str(url),
-                            "content_type": content_type or in_pool["content_type"],
+                            "content_type": content_type or in_pool["mime_type"],
                             "local_hash": file_hash
                         }
                 
