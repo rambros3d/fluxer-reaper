@@ -109,7 +109,7 @@ class DiscordExporter:
                 "name": r.name,
                 "color": r.color.value,
                 "position": r.position,
-                "permissions": str(r.permissions.value),
+                "permissions": r.permissions.value,
                 "hoist": 1 if r.hoist else 0,
                 "mentionable": 1 if r.mentionable else 0
             })
@@ -563,9 +563,10 @@ class DiscordExporter:
                 })
 
         # 5. Message data
+        from src.core.utils import parse_snowflake
         message_reference = None
         if msg.reference and msg.reference.message_id:
-            message_reference = str(msg.reference.message_id)
+            message_reference = parse_snowflake(msg.reference.message_id)
 
         # 5.5 Forwarded snapshots
         content = msg.content or ""

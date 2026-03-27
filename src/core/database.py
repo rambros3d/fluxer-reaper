@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict, Any
 import threading
 import sys
+from src.core.utils import parse_snowflake
 
 logger = logging.getLogger(__name__)
 
@@ -27,16 +28,72 @@ class MigrationDatabase:
         return self._local.conn
 
     def _init_db(self):
-        """Initialize tables if they don't exist."""
+        """Initialize tables if they don't exist and handle migrations."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
+        # 1. MIME Type to Content Type Migrations (if applicable - not in this class usually)
+        
+        # 2. Universal ID Migration (TEXT -> INTEGER)
+        # Mapping of table names to columns that must be INTEGER (Snowflakes)
+        id_migrations = {
+            "message_mappings": ["channel_id", "source_msg_id", "target_msg_id"],
+            "thread_mappings": ["channel_id", "thread_id", "source_msg_id", "target_msg_id"],
+            "channel_tracking": ["channel_id", "last_msg_id"],
+            "thread_tracking": ["channel_id", "thread_id", "last_msg_id"],
+            "server_mappings": ["source_id", "target_id"],
+            "asset_mappings": ["source_id", "target_id"],
+            "user_alias": ["user_id"]
+        }
+
+        for table, id_cols in id_migrations.items():
+            cursor.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'")
+            res = cursor.fetchone()
+            if not res or res[0] == 0:
+                continue
+
+            cursor.execute(f"PRAGMA table_info({table})")
+            cols = cursor.fetchall()
+            needs_migration = False
+            for col in cols:
+                if col[1] in id_cols and col[2] == "TEXT":
+                    needs_migration = True
+                    break
+            
+            if needs_migration:
+                logger.info(f"MigrationDatabase: Migrating {table}: converting ID columns to INTEGER")
+                cursor.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+                
+                if table == "message_mappings":
+                    cursor.execute("CREATE TABLE message_mappings (channel_id INTEGER, source_msg_id INTEGER, target_msg_id INTEGER, timestamp TEXT, PRIMARY KEY (channel_id, source_msg_id))")
+                elif table == "thread_mappings":
+                    cursor.execute("CREATE TABLE thread_mappings (channel_id INTEGER, thread_id INTEGER, source_msg_id INTEGER, target_msg_id INTEGER, timestamp TEXT, PRIMARY KEY (channel_id, thread_id, source_msg_id))")
+                elif table == "channel_tracking":
+                    cursor.execute("CREATE TABLE channel_tracking (channel_id INTEGER PRIMARY KEY, last_msg_id INTEGER, last_msg_ts TEXT, msg_count INTEGER DEFAULT 0, file_count INTEGER DEFAULT 0)")
+                elif table == "thread_tracking":
+                    cursor.execute("CREATE TABLE thread_tracking (channel_id INTEGER, thread_id INTEGER, last_msg_id INTEGER, last_msg_ts TEXT, msg_count INTEGER DEFAULT 0, file_count INTEGER DEFAULT 0, completed INTEGER DEFAULT 0, PRIMARY KEY (channel_id, thread_id))")
+                elif table == "server_mappings":
+                    cursor.execute("CREATE TABLE server_mappings (category TEXT, source_id INTEGER, target_id INTEGER, PRIMARY KEY (category, source_id))")
+                elif table == "asset_mappings":
+                    cursor.execute("CREATE TABLE asset_mappings (category TEXT, source_id INTEGER, target_id INTEGER, PRIMARY KEY (category, source_id))")
+                elif table == "user_alias":
+                    cursor.execute("CREATE TABLE user_alias (user_id INTEGER PRIMARY KEY, alias TEXT UNIQUE)")
+                
+                old_cols = [c[1] for c in cursor.execute(f"PRAGMA table_info({table}_old)").fetchall()]
+                new_cols = [c[1] for c in cursor.execute(f"PRAGMA table_info({table})").fetchall()]
+                common_cols = [c for c in old_cols if c in new_cols]
+                col_str = ", ".join(common_cols)
+                
+                cursor.execute(f"INSERT OR IGNORE INTO {table} ({col_str}) SELECT {col_str} FROM {table}_old")
+                cursor.execute(f"DROP TABLE {table}_old")
+
+        # Initial Creation / Ensure Schema Correctness
         # Table for message mappings: SourceID -> TargetID
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS message_mappings (
-                channel_id TEXT,
-                source_msg_id TEXT,
-                target_msg_id TEXT,
+                channel_id INTEGER,
+                source_msg_id INTEGER,
+                target_msg_id INTEGER,
                 timestamp TEXT,
                 PRIMARY KEY (channel_id, source_msg_id)
             )
@@ -45,10 +102,10 @@ class MigrationDatabase:
         # Table for thread mappings
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS thread_mappings (
-                channel_id TEXT,
-                thread_id TEXT,
-                source_msg_id TEXT,
-                target_msg_id TEXT,
+                channel_id INTEGER,
+                thread_id INTEGER,
+                source_msg_id INTEGER,
+                target_msg_id INTEGER,
                 timestamp TEXT,
                 PRIMARY KEY (channel_id, thread_id, source_msg_id)
             )
@@ -57,8 +114,8 @@ class MigrationDatabase:
         # Table for per-channel stats and tracking
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS channel_tracking (
-                channel_id TEXT PRIMARY KEY,
-                last_msg_id TEXT,
+                channel_id INTEGER PRIMARY KEY,
+                last_msg_id INTEGER,
                 last_msg_ts TEXT,
                 msg_count INTEGER DEFAULT 0,
                 file_count INTEGER DEFAULT 0
@@ -68,9 +125,9 @@ class MigrationDatabase:
         # Table for per-thread stats
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS thread_tracking (
-                channel_id TEXT,
-                thread_id TEXT,
-                last_msg_id TEXT,
+                channel_id INTEGER,
+                thread_id INTEGER,
+                last_msg_id INTEGER,
                 last_msg_ts TEXT,
                 msg_count INTEGER DEFAULT 0,
                 file_count INTEGER DEFAULT 0,
@@ -89,8 +146,8 @@ class MigrationDatabase:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS server_mappings (
                 category TEXT,
-                source_id TEXT,
-                target_id TEXT,
+                source_id INTEGER,
+                target_id INTEGER,
                 PRIMARY KEY (category, source_id)
             )
         """)
@@ -99,8 +156,8 @@ class MigrationDatabase:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS asset_mappings (
                 category TEXT,
-                source_id TEXT,
-                target_id TEXT,
+                source_id INTEGER,
+                target_id INTEGER,
                 PRIMARY KEY (category, source_id)
             )
         """)
@@ -136,7 +193,7 @@ class MigrationDatabase:
         # Table for auto-generated user aliases (user_id -> alias)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_alias (
-                user_id TEXT PRIMARY KEY,
+                user_id INTEGER PRIMARY KEY,
                 alias TEXT UNIQUE
             )
         """)
@@ -152,7 +209,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO message_mappings (channel_id, source_msg_id, target_msg_id, timestamp) VALUES (?, ?, ?, ?)",
-            (channel_id, source_id, target_id, timestamp)
+            (parse_snowflake(channel_id), parse_snowflake(source_id), parse_snowflake(target_id), timestamp)
         )
         conn.commit()
 
@@ -160,7 +217,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT target_msg_id FROM message_mappings WHERE channel_id = ? AND source_msg_id = ?",
-            (channel_id, source_id)
+            (parse_snowflake(channel_id), parse_snowflake(source_id))
         ).fetchone()
         return row["target_msg_id"] if row else None
 
@@ -205,7 +262,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         
         # Check for existing alias
-        row = conn.execute("SELECT alias FROM user_alias WHERE user_id = ?", (str(user_id),)).fetchone()
+        row = conn.execute("SELECT alias FROM user_alias WHERE user_id = ?", (parse_snowflake(user_id),)).fetchone()
         if row:
             return row["alias"]
         
@@ -215,7 +272,7 @@ class MigrationDatabase:
             new_alias = self._generate_alias()
             conn.execute(
                 "INSERT INTO user_alias (user_id, alias) VALUES (?, ?)", 
-                (str(user_id), new_alias)
+                (parse_snowflake(user_id), new_alias)
             )
             conn.commit()
             return new_alias
@@ -239,7 +296,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO server_mappings (category, source_id, target_id) VALUES (?, ?, ?)",
-            (category, str(source_id), str(target_id))
+            (category, parse_snowflake(source_id), parse_snowflake(target_id))
         )
         conn.commit()
 
@@ -247,7 +304,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT target_id FROM server_mappings WHERE category = ? AND source_id = ?",
-            (category, str(source_id))
+            (category, parse_snowflake(source_id))
         ).fetchone()
         return row["target_id"] if row else None
 
@@ -263,7 +320,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "DELETE FROM server_mappings WHERE category = ? AND source_id = ?",
-            (category, str(source_id))
+            (category, parse_snowflake(source_id))
         )
         conn.commit()
 
@@ -281,7 +338,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO asset_mappings (category, source_id, target_id) VALUES (?, ?, ?)",
-            (category, str(source_id), str(target_id))
+            (category, parse_snowflake(source_id), parse_snowflake(target_id))
         )
         conn.commit()
 
@@ -289,7 +346,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT target_id FROM asset_mappings WHERE category = ? AND source_id = ?",
-            (category, str(source_id))
+            (category, parse_snowflake(source_id))
         ).fetchone()
         return row["target_id"] if row else None
 
@@ -305,7 +362,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "DELETE FROM asset_mappings WHERE category = ? AND source_id = ?",
-            (category, str(source_id))
+            (category, parse_snowflake(source_id))
         )
         conn.commit()
 
@@ -332,23 +389,23 @@ class MigrationDatabase:
     def update_channel_tracking(self, channel_id: str, last_msg_id: str = None, last_msg_ts: str = None, msg_inc: int = 0, file_inc: int = 0):
         conn = self._get_conn()
         # Initialize if missing
-        conn.execute("INSERT OR IGNORE INTO channel_tracking (channel_id) VALUES (?)", (channel_id,))
+        conn.execute("INSERT OR IGNORE INTO channel_tracking (channel_id) VALUES (?)", (parse_snowflake(channel_id),))
         
         if last_msg_id:
-            conn.execute("UPDATE channel_tracking SET last_msg_id = ? WHERE channel_id = ?", (last_msg_id, channel_id))
+            conn.execute("UPDATE channel_tracking SET last_msg_id = ? WHERE channel_id = ?", (parse_snowflake(last_msg_id), parse_snowflake(channel_id)))
         if last_msg_ts:
-            conn.execute("UPDATE channel_tracking SET last_msg_ts = ? WHERE channel_id = ?", (last_msg_ts, channel_id))
+            conn.execute("UPDATE channel_tracking SET last_msg_ts = ? WHERE channel_id = ?", (last_msg_ts, parse_snowflake(channel_id)))
         
         if msg_inc != 0 or file_inc != 0:
             conn.execute(
                 "UPDATE channel_tracking SET msg_count = msg_count + ?, file_count = file_count + ? WHERE channel_id = ?",
-                (msg_inc, file_inc, channel_id)
+                (msg_inc, file_inc, parse_snowflake(channel_id))
             )
         conn.commit()
 
     def get_channel_tracking(self, channel_id: str) -> Dict[str, Any]:
         conn = self._get_conn()
-        row = conn.execute("SELECT * FROM channel_tracking WHERE channel_id = ?", (channel_id,)).fetchone()
+        row = conn.execute("SELECT * FROM channel_tracking WHERE channel_id = ?", (parse_snowflake(channel_id),)).fetchone()
         if row:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
@@ -358,7 +415,7 @@ class MigrationDatabase:
         conn = self._get_conn()
         conn.execute(
             "INSERT OR REPLACE INTO thread_mappings (channel_id, thread_id, source_msg_id, target_msg_id, timestamp) VALUES (?, ?, ?, ?, ?)",
-            (channel_id, thread_id, source_id, target_id, timestamp)
+            (parse_snowflake(channel_id), parse_snowflake(thread_id), parse_snowflake(source_id), parse_snowflake(target_id), timestamp)
         )
         conn.commit()
 
@@ -366,31 +423,31 @@ class MigrationDatabase:
         conn = self._get_conn()
         row = conn.execute(
             "SELECT target_msg_id FROM thread_mappings WHERE channel_id = ? AND thread_id = ? AND source_msg_id = ?",
-            (channel_id, thread_id, source_id)
+            (parse_snowflake(channel_id), parse_snowflake(thread_id), parse_snowflake(source_id))
         ).fetchone()
         return row["target_msg_id"] if row else None
 
     def update_thread_tracking(self, channel_id: str, thread_id: str, last_msg_id: str = None, last_msg_ts: str = None, msg_inc: int = 0, file_inc: int = 0, completed: int = None):
         conn = self._get_conn()
-        conn.execute("INSERT OR IGNORE INTO thread_tracking (channel_id, thread_id) VALUES (?, ?)", (channel_id, thread_id))
+        conn.execute("INSERT OR IGNORE INTO thread_tracking (channel_id, thread_id) VALUES (?, ?)", (parse_snowflake(channel_id), parse_snowflake(thread_id)))
         
         if last_msg_id:
-            conn.execute("UPDATE thread_tracking SET last_msg_id = ? WHERE channel_id = ? AND thread_id = ?", (last_msg_id, channel_id, thread_id))
+            conn.execute("UPDATE thread_tracking SET last_msg_id = ? WHERE channel_id = ? AND thread_id = ?", (parse_snowflake(last_msg_id), parse_snowflake(channel_id), parse_snowflake(thread_id)))
         if last_msg_ts:
-            conn.execute("UPDATE thread_tracking SET last_msg_ts = ? WHERE channel_id = ? AND thread_id = ?", (last_msg_ts, channel_id, thread_id))
+            conn.execute("UPDATE thread_tracking SET last_msg_ts = ? WHERE channel_id = ? AND thread_id = ?", (last_msg_ts, parse_snowflake(channel_id), parse_snowflake(thread_id)))
         if completed is not None:
-            conn.execute("UPDATE thread_tracking SET completed = ? WHERE channel_id = ? AND thread_id = ?", (completed, channel_id, thread_id))
+            conn.execute("UPDATE thread_tracking SET completed = ? WHERE channel_id = ? AND thread_id = ?", (completed, parse_snowflake(channel_id), parse_snowflake(thread_id)))
         
         if msg_inc != 0 or file_inc != 0:
             conn.execute(
                 "UPDATE thread_tracking SET msg_count = msg_count + ?, file_count = file_count + ? WHERE channel_id = ? AND thread_id = ?",
-                (msg_inc, file_inc, channel_id, thread_id)
+                (msg_inc, file_inc, parse_snowflake(channel_id), parse_snowflake(thread_id))
             )
         conn.commit()
 
     def get_thread_tracking(self, channel_id: str, thread_id: str) -> Dict[str, Any]:
         conn = self._get_conn()
-        row = conn.execute("SELECT * FROM thread_tracking WHERE channel_id = ? AND thread_id = ?", (channel_id, thread_id)).fetchone()
+        row = conn.execute("SELECT * FROM thread_tracking WHERE channel_id = ? AND thread_id = ?", (parse_snowflake(channel_id), parse_snowflake(thread_id))).fetchone()
         if row:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
@@ -398,10 +455,10 @@ class MigrationDatabase:
     def clear_channel_data(self, channel_id: str):
         """Purge all mappings and tracking data for a specific channel and its threads."""
         conn = self._get_conn()
-        conn.execute("DELETE FROM message_mappings WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM thread_mappings WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM channel_tracking WHERE channel_id = ?", (channel_id,))
-        conn.execute("DELETE FROM thread_tracking WHERE channel_id = ?", (channel_id,))
+        conn.execute("DELETE FROM message_mappings WHERE channel_id = ?", (parse_snowflake(channel_id),))
+        conn.execute("DELETE FROM thread_mappings WHERE channel_id = ?", (parse_snowflake(channel_id),))
+        conn.execute("DELETE FROM channel_tracking WHERE channel_id = ?", (parse_snowflake(channel_id),))
+        conn.execute("DELETE FROM thread_tracking WHERE channel_id = ?", (parse_snowflake(channel_id),))
         conn.commit()
         logger.info(f"Cleared all tracking and mapping data for channel: {channel_id}")
 

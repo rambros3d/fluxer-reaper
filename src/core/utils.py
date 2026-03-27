@@ -1,5 +1,19 @@
+from typing import Any, Optional
 import re
 import logging
+
+def parse_snowflake(value: Any) -> Optional[int]:
+    """Safely parses a Discord ID (Snowflake) from any input, handling 'None' strings."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() == "none" or s == "NULL":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
+
 from src.core.state import MigrationState
 
 logger = logging.getLogger(__name__)
