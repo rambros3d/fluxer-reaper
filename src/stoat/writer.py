@@ -341,7 +341,10 @@ class StoatWriter:
             if files:
                 attachments = []
                 for f in files:
-                    attachments.append((f["filename"], f["data"]))
+                    if f.get("content_type"):
+                        attachments.append((f["filename"], f["data"], f["content_type"]))
+                    else:
+                        attachments.append((f["filename"], f["data"]))
             
             try:
                 # Stoat requires SendableEmbed objects, not raw dicts

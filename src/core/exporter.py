@@ -173,7 +173,7 @@ class DiscordExporter:
                     "type": "emoji",
                     "filename": filename,
                     "url": str(e.url),
-                    "mime_type": "image/gif" if e.animated else "image/png"
+                    "content_type": "image/gif" if e.animated else "image/png"
                 })
             except Exception as ex:
                 logger.error(f"Failed to download emoji {e.name}: {ex}")
@@ -191,10 +191,10 @@ class DiscordExporter:
                         with open(sticker_path, "wb") as f:
                             f.write(data)
                 
-                mime_type = "image/png"
-                if ext == "json": mime_type = "application/json"
-                elif ext == "gif": mime_type = "image/gif"
-                elif ext == "webp": mime_type = "image/webp"
+                content_type = "image/png"
+                if ext == "json": content_type = "application/json"
+                elif ext == "gif": content_type = "image/gif"
+                elif ext == "webp": content_type = "image/webp"
 
                 sticker_data.append({
                     "id": str(s.id),
@@ -202,7 +202,7 @@ class DiscordExporter:
                     "type": "sticker",
                     "filename": filename,
                     "url": str(s.url),
-                    "mime_type": mime_type
+                    "content_type": content_type
                 })
             except Exception as ex:
                 logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {ex}")
@@ -631,7 +631,7 @@ class DiscordExporter:
                     "filename": filename,
                     "size": existing["size"],
                     "url": str(url),
-                    "content_type": existing["mime_type"],
+                    "content_type": existing["content_type"],
                     "local_hash": existing["hash"]
                 }
 

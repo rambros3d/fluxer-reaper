@@ -31,7 +31,32 @@ class BackupDatabase:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.execute("PRAGMA cache_size=-32000")  # 32 MB page cache
+        self._migrate_db() # Run migrations on existing DBs
         self._init_db()
+
+    # A temporary function to handle backward compatibility for the content_type (mime_type will be deprecated)
+    # It will be removed in the future
+    def _migrate_db(self):
+        """Handles backward compatibility by renaming columns in existing databases."""
+        with self._lock:
+            # Check 'media_pool' table
+            res = self._conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='media_pool'").fetchone()
+            if res[0] > 0:
+                cols = self._conn.execute("PRAGMA table_info(media_pool)").fetchall()
+                col_names = [c["name"] for c in cols]
+                if "mime_type" in col_names and "content_type" not in col_names:
+                    logger.info("Migrating media_pool: renaming 'mime_type' to 'content_type'")
+                    self._conn.execute("ALTER TABLE media_pool RENAME COLUMN mime_type TO content_type")
+
+            # Check 'server_assets' table
+            res = self._conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='server_assets'").fetchone()
+            if res[0] > 0:
+                cols = self._conn.execute("PRAGMA table_info(server_assets)").fetchall()
+                col_names = [c["name"] for c in cols]
+                if "mime_type" in col_names and "content_type" not in col_names:
+                    logger.info("Migrating server_assets: renaming 'mime_type' to 'content_type'")
+                    self._conn.execute("ALTER TABLE server_assets RENAME COLUMN mime_type TO content_type")
+            self._conn.commit()
 
     def _init_db(self):
         """Initializes the database schema."""
@@ -224,7 +249,7 @@ class BackupDatabase:
                         hash TEXT PRIMARY KEY,
                         local_path TEXT,
                         size INTEGER,
-                        mime_type TEXT,
+                        content_type TEXT,
                         first_seen_url TEXT
                     )
                 """)
@@ -237,7 +262,7 @@ class BackupDatabase:
                         type TEXT,
                         filename TEXT,
                         url TEXT,
-                        mime_type TEXT
+                        content_type TEXT
                     )
                 """)
 
@@ -327,13 +352,13 @@ class BackupDatabase:
                     "type": a.get("type"),
                     "filename": a.get("filename"),
                     "url": a.get("url"),
-                    "mime_type": a.get("mime_type")
+                    "content_type": a.get("content_type")
                 }
                 for a in assets
             ]
             self._conn.executemany("""
-                INSERT OR REPLACE INTO server_assets (id, name, type, filename, url, mime_type)
-                VALUES (:id, :name, :type, :filename, :url, :mime_type)
+                INSERT OR REPLACE INTO server_assets (id, name, type, filename, url, content_type)
+                VALUES (:id, :name, :type, :filename, :url, :content_type)
             """, formatted)
             self._conn.commit()
 
@@ -457,13 +482,13 @@ class BackupDatabase:
             row = self._conn.execute("SELECT * FROM media_pool WHERE first_seen_url = ?", (url,)).fetchone()
             return dict(row) if row else None
 
-    def add_media_to_pool(self, file_hash: str, local_path: str, size: int, mime_type: str, url: str):
+    def add_media_to_pool(self, file_hash: str, local_path: str, size: int, content_type: str, url: str):
         # NOTE: No commit here — caller (save_messages_batch) commits at end of batch
         with self._lock:
             self._conn.execute("""
-                INSERT OR REPLACE INTO media_pool (hash, local_path, size, mime_type, first_seen_url)
+                INSERT OR REPLACE INTO media_pool (hash, local_path, size, content_type, first_seen_url)
                 VALUES (?, ?, ?, ?, ?)
-            """, (file_hash, str(local_path), size, mime_type, url))
+            """, (file_hash, str(local_path), size, content_type, url))
     def get_stats_by_channel(self) -> Dict[int, Dict[str, Any]]:
         """Returns aggregate stats for all channels with backups."""
         with self._lock:

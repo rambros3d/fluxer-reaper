@@ -454,14 +454,14 @@ class FluxerWriter:
             import base64
             image_data = base64.b64encode(banner).decode("ascii")
             if banner.startswith(b"\x89PNG"):
-                mime_type = "image/png"
+                content_type = "image/png"
             elif banner.startswith(b"\xff\xd8\xff"):
-                mime_type = "image/jpeg"
+                content_type = "image/jpeg"
             elif banner.startswith(b"GIF89a") or banner.startswith(b"GIF87a"):
-                mime_type = "image/gif"
+                content_type = "image/gif"
             else:
-                mime_type = "image/png"
-            kwargs["banner"] = f"data:{mime_type};base64,{image_data}"
+                content_type = "image/png"
+            kwargs["banner"] = f"data:{content_type};base64,{image_data}"
 
         try:
             await self.client.modify_guild(

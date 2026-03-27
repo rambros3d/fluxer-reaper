@@ -440,7 +440,11 @@ async def migrate_messages(
             for att in attachments_to_process:
                 try:
                     att_data = await context.discord_reader.download_attachment(att)
-                    files.append({"filename": att.filename, "data": att_data})
+                    files.append({
+                        "filename": att.filename, 
+                        "data": att_data,
+                        "content_type": getattr(att, "content_type", None)
+                    })
                     stats["attachments"] += 1
                 except Exception as e:
                     logger.error(f"Failed to download attachment {att.filename}: {e}")
@@ -528,7 +532,11 @@ async def migrate_messages(
                                     # Keep original apng as fallback
                             
                             filename = f"sticker_{s.name}_{s.id}.{ext}"
-                            files.append({"filename": filename, "data": sticker_data})
+                            files.append({
+                                "filename": filename, 
+                                "data": sticker_data,
+                                "content_type": f"image/{ext}" if ext != "json" else "application/json"
+                            })
                             stats["attachments"] += 1
                             logger.debug(f"Added sticker {s.name} as attachment (extension: {ext})")
                     except Exception as e:

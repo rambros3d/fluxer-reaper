@@ -444,7 +444,7 @@ class BackupMember:
 class BackupAttachment:
     """Minimal stand-in for discord.Attachment."""
 
-    __slots__ = ("id", "filename", "size", "url", "proxy_url", "_backup_root", "local_hash")
+    __slots__ = ("id", "filename", "size", "url", "proxy_url", "_backup_root", "local_hash", "content_type")
 
     def __init__(self, data: dict, backup_root: Path | None = None, media_pool: dict | None = None):
         if not isinstance(data, dict):
@@ -458,10 +458,14 @@ class BackupAttachment:
         self.proxy_url = self.url
         self._backup_root = backup_root
         self.local_hash = data.get("local_hash")
+        self.content_type = data.get("content_type")
         
-        # Resolve local path via media pool if possible
+        # Resolve local path and ensure content_type via media pool if possible
         if media_pool and self.local_hash in media_pool:
-            self.url = media_pool[self.local_hash]["local_path"]
+            pool_entry = media_pool[self.local_hash]
+            self.url = pool_entry["local_path"]
+            if not self.content_type:
+                self.content_type = pool_entry.get("content_type")
         elif self.local_hash:
             # Fallback conjecture if pool didn't have it (e.g. ad-hoc load)
             pass
@@ -493,7 +497,7 @@ class BackupEmoji:
             return
         self.id = parse_snowflake(data["id"])
         self.name = data["name"]
-        self.animated = data.get("mime_type") == "image/gif"
+        self.animated = data.get("content_type") == "image/gif"
         filename = data.get("filename", "")
         self._file_path = media_dir / filename if media_dir and filename else None
         # Use the local path if available, else original URL
