@@ -1,7 +1,10 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Optional, Any, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.core.database import MigrationDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -119,23 +122,23 @@ class MigrationState:
 
     # --- Properties for backward compatibility ---
     @property
-    def channel_map(self) -> Dict[str, str]:
+    def channel_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("channel") if self.db else {}
         
     @property
-    def category_map(self) -> Dict[str, str]:
+    def category_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("category") if self.db else {}
         
     @property
-    def role_map(self) -> Dict[str, str]:
+    def role_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("role") if self.db else {}
 
     @property
-    def emoji_map(self) -> Dict[str, str]:
+    def emoji_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_asset_mappings("emoji") if self.db else {}
         
     @property
-    def sticker_map(self) -> Dict[str, str]:
+    def sticker_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_asset_mappings("sticker") if self.db else {}
 
     @property
@@ -153,7 +156,7 @@ class MigrationState:
         if self._ensure_db():
             self.db.set_message_mapping(str(target_channel_id), str(discord_id), str(target_id))
 
-    def get_target_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+    def get_target_message_id(self, target_channel_id: str, discord_id: str) -> str | int | None:
         if self._ensure_db():
             return self.db.get_target_message_id(str(target_channel_id), str(discord_id))
         return None
@@ -161,7 +164,7 @@ class MigrationState:
     def set_message_mapping(self, target_channel_id: str, discord_id: str, target_id: str):
         self.set_target_message_mapping(target_channel_id, discord_id, target_id)
 
-    def get_fluxer_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+    def get_fluxer_message_id(self, target_channel_id: str, discord_id: str) -> str | int | None:
         return self.get_target_message_id(target_channel_id, discord_id)
 
     def increment_stats(self, target_channel_id: str, messages: int = 1, files: int = 0):
@@ -258,7 +261,7 @@ class MigrationState:
         if self._ensure_db():
             self.db.clear_channel_data(str(target_channel_id))
 
-    def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
+    def set_folder(self, server_id: str, clean_name: str, platform: str = "stoat", base_dir: Path | str = ""):
         """
         Initializes the SQLite database based on community name and ID.
         Filename: {name}-{id}.db (Flat structure)
@@ -294,7 +297,7 @@ class MigrationState:
         from src.core.database import MigrationDatabase
         if self.db:
             self.db.close()
-        self.db = MigrationDatabase(db_path)
+        self.db = MigrationDatabase(db_path, platform=platform)
         logger.info(f"Initialized SQLite database at {db_path}")
 
     def get_user_alias(self, user_id: str) -> str | None:

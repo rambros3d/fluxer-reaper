@@ -129,7 +129,7 @@ class MigrationContext:
         # or a logical subfolder.
         base_dir = getattr(self, "base_dir", "")
         
-        self.state.set_folder(community_id, clean_name, base_dir=base_dir)
+        self.state.set_folder(community_id, clean_name, self.target_platform, base_dir=base_dir)
 
     async def start_connections(self):
         await self.discord_reader.start()

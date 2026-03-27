@@ -14,15 +14,16 @@ def parse_snowflake(value: Any) -> Optional[int]:
     except ValueError:
         return None
 
-from src.core.state import MigrationState
-
 logger = logging.getLogger(__name__)
 
-def resolve_discord_links(content: str, state: MigrationState, platform: str, target_server_id: str) -> str:
+def resolve_discord_links(content: str, state, platform: str, target_server_id: str) -> str:
     """
     Finds Discord message/channel links and resolves them to the target platform 
     if they have been migrated.
     """
+    from src.core.state import MigrationState
+    if not isinstance(state, MigrationState):
+        logger.warning(f"resolve_discord_links: state is not MigrationState (type: {type(state)})")
     if not content:
         return content
 
