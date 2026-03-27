@@ -945,6 +945,11 @@ class BackupGuild:
             return next((c for c in self._reader._channels if c.id == parse_snowflake(channel_id)), None)
         return None
 
+    def get_thread(self, thread_id: int) -> "BackupChannel | None":
+        if self._reader:
+            return next((c for c in self._reader._threads if c.id == parse_snowflake(thread_id)), None)
+        return None
+
     def __repr__(self) -> str:
         return f"BackupGuild(id={self.id}, name='{self.name}')"
 
