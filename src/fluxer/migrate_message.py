@@ -73,8 +73,8 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         cid = int(match.group(1))
         
         # 1. Check if channel is mapped in state
-        if channel_map and str(cid) in channel_map:
-            return f"<#{channel_map[str(cid)]}>"
+        if channel_map and cid in channel_map:
+            return f"<#{channel_map[cid]}>"
             
         # 2. Try to resolve channel name from pre-fetched names
         name = None
@@ -100,7 +100,7 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
     def replace_emoji(match):
         animated = match.group(1) == "a"
         name = match.group(2)
-        eid = match.group(3)
+        eid = int(match.group(3))
         
         if emoji_map and eid in emoji_map:
             target_eid = emoji_map[eid]
