@@ -945,10 +945,22 @@ class BackupGuild:
             return next((c for c in self._reader._channels if c.id == parse_snowflake(channel_id)), None)
         return None
 
-    def get_thread(self, thread_id: int) -> "BackupChannel | None":
+    def get_thread(self, thread_id: int) -> "BackupThread | None":
+        """Mock discord.Guild.get_thread."""
         if self._reader:
-            return next((c for c in self._reader._threads if c.id == parse_snowflake(thread_id)), None)
+            return next((t for t in self._reader._threads if t.id == parse_snowflake(thread_id)), None)
         return None
+
+    async def fetch_channels(self) -> List[Union["BackupChannel", "BackupCategory"]]:
+        """Async stub for discord.Guild.fetch_channels."""
+        if self._reader:
+            self._reader._ensure_structure_loaded()
+            return list(self._reader._channels) + list(self._reader._categories)
+        return []
+
+    async def fetch_active_threads(self) -> List["BackupThread"]:
+        """Async stub for discord.Guild.active_threads helper (mirrors the property)."""
+        return self.active_threads
 
     def __repr__(self) -> str:
         return f"BackupGuild(id={self.id}, name='{self.name}')"
@@ -1236,6 +1248,14 @@ class BackupReader:
         if category_id is not None:
             channels = [c for c in channels if c.category_id == category_id]
         return channels
+
+    async def fetch_channels(self) -> List[Union[BackupChannel, BackupCategory]]:
+        """Uniform interface for all channels (including categories)."""
+        return list(self.channels) + list(self.categories)
+
+    async def get_active_threads(self) -> List[BackupThread]:
+        """Uniform interface for active threads."""
+        return [t for t in self.threads if not t.archived]
 
     async def get_backed_up_channel_ids(self) -> List[int]:
         """Returns a list of channel IDs that have messages in the database."""

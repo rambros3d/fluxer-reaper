@@ -83,7 +83,10 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         
         # 3. Try live lookup (fallback)
         if not name:
-            channel = guild.get_channel(cid) or guild.get_thread(cid)
+            try:
+                channel = guild.get_channel(cid) or guild.get_thread(cid)
+            except Exception:
+                channel = None
             if not channel and channel_mentions:
                 channel = next((c for c in channel_mentions if c.id == cid), None)
             if channel:
@@ -261,12 +264,12 @@ async def migrate_messages(
         try:
             logger.debug(f"Pre-fetching channel and thread names for guild {context.discord_reader.guild.id}...")
             # fetch_channels usually includes all non-thread channels
-            all_channels = await context.discord_reader.guild.fetch_channels()
+            all_channels = await context.discord_reader.fetch_channels()
             for c in all_channels:
                 context.channel_names[str(c.id)] = c.name
             
-            # active_threads helps find threads that might be mentioned
-            threads = await context.discord_reader.guild.active_threads()
+            # get_active_threads helps find threads that might be mentioned
+            threads = await context.discord_reader.get_active_threads()
             for t in threads:
                 context.channel_names[str(t.id)] = t.name
             
