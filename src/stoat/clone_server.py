@@ -61,11 +61,21 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         force: If True, re-create channels even if they exist in state.
     """
     categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    all_channels = await context.discord_reader.get_channels()
     
     # Sort categories and channels by position to preserve order
     categories = sorted(categories, key=lambda c: getattr(c, 'position', 0))
-    channels = sorted(channels, key=lambda c: getattr(c, 'position', 0))
+    all_channels = sorted(all_channels, key=lambda c: getattr(c, 'position', 0))
+
+    # Only migrate text-like and voice channels. Forum channels are not yet supported in Stoat.
+    reader = context.discord_reader
+    channels = [
+        ch for ch in all_channels
+        if ch.type != reader.CHANNEL_TYPE_FORUM
+    ]
+    skipped = [ch.name for ch in all_channels if ch not in channels]
+    if skipped:
+        logger.info(f"Skipping {len(skipped)} forum channel(s): {', '.join(skipped)}")
     
     cloned_info = {
         "categories_created": [],
@@ -97,22 +107,7 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
     if total == 0:
         return cloned_info
 
-    # 1. Migrate Categories
-    for cat in missing_categories:
-        if not context.is_running: break
-        
-        state_key = str(cat.id)
-        target_id = await context.writer.create_channel(cat.name, type=4)
-        if target_id:
-            context.state.set_target_category_mapping(state_key, target_id)
-            cloned_info["categories_created"].append(cat.name)
-            if cat.name not in cloned_info["structure"]:
-                cloned_info["structure"][cat.name] = []
-        
-        current_idx += 1
-        if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
-
-    # 2. Create missing channels (unparented for now)
+    # 1. Create missing channels (unparented for now)
     for channel in channels_to_create:
         if not context.is_running: break
             
@@ -123,13 +118,27 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         logger.debug(f"Creating channel {channel.name}: topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
+        # Map Discord-specific types to target-supported types
+        # 5 (News) -> 0 (Text), and fallback any unknown non-voice types to text
+        raw_type = channel.type.value if hasattr(channel.type, 'value') else 0
+        if raw_type == context.discord_reader.CHANNEL_TYPE_VOICE.value:
+            ch_type = 2
+            is_voice = True
+        elif raw_type in [context.discord_reader.CHANNEL_TYPE_TEXT.value, context.discord_reader.CHANNEL_TYPE_NEWS.value]:
+            ch_type = 0
+            is_voice = False
+        else:
+            # Fallback for Stage channels (13) etc. to Text for safety
+            ch_type = 0
+            is_voice = False
+        
         target_id = await context.writer.create_channel(
             name=channel.name, 
-            topic=topic, 
-            type=0, 
+            topic=topic if not is_voice else "", 
+            type=ch_type, 
             parent_id=None,
-            nsfw=nsfw,
-            slowmode_delay=slowmode
+            nsfw=nsfw if not is_voice else False,
+            slowmode_delay=slowmode if not is_voice else 0
         )
         if target_id:
             context.state.set_target_channel_mapping(state_key, target_id)
@@ -140,14 +149,15 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
                 cloned_info["structure"][parent_name] = []
             cloned_info["structure"][parent_name].append(channel.name)
             
-            # Sync properties immediately
-            await context.writer.modify_channel(
-                channel_id=target_id,
-                name=channel.name,
-                topic=topic,
-                nsfw=nsfw,
-                slowmode_delay=slowmode
-            )
+            # Sync properties immediately (only for non-voice channels)
+            if not is_voice:
+                await context.writer.modify_channel(
+                    channel_id=target_id,
+                    name=channel.name,
+                    topic=topic,
+                    nsfw=nsfw,
+                    slowmode_delay=slowmode
+                )
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)
@@ -174,6 +184,21 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Syncing", current_idx, total)
+
+    # 3. Create missing categories
+    for cat in missing_categories:
+        if not context.is_running: break
+        
+        state_key = str(cat.id)
+        target_id = await context.writer.create_channel(cat.name, type=4)
+        if target_id:
+            context.state.set_target_category_mapping(state_key, target_id)
+            cloned_info["categories_created"].append(cat.name)
+            if cat.name not in cloned_info["structure"]:
+                cloned_info["structure"][cat.name] = []
+        
+        current_idx += 1
+        if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
 
     # 4. Final step: Parent the channels into categories via mass server.edit()
     logger.info("Parenting all channels into their respective categories...")

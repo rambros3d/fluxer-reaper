@@ -998,7 +998,8 @@ class BackupReader:
     Forbidden = BackupForbidden
 
     CHANNEL_TYPE_TEXT = ChannelType.text
-    CHANNEL_TYPE_NEWS = ChannelType.voice  # simplified
+    CHANNEL_TYPE_VOICE = ChannelType.voice
+    CHANNEL_TYPE_NEWS = ChannelType.news
     CHANNEL_TYPE_FORUM = ChannelType.forum
 
     @staticmethod

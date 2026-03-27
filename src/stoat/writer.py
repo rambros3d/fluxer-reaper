@@ -263,9 +263,12 @@ class StoatWriter:
                 await server.edit(categories=categories)
                 self._server = None # Clear cache after structural change
                 return new_id
+            elif type == 2: # Voice Channel
+                ch = await server.create_voice_channel(name=name)
+                self._server = None # Clear cache
+                return str(ch.id)
             else: # Text Channel
                 ch = await server.create_text_channel(name=name, description=topic)
-                # We no longer parent here, clone_server.py will do it in bulk
                 self._server = None # Clear cache
                 return str(ch.id)
         except Exception as e:
