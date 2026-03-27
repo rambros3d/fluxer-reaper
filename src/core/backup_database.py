@@ -40,6 +40,7 @@ class BackupDatabase:
         """Handles backward compatibility by renaming columns in existing databases."""
         with self._lock:
             # Check 'media_pool' table
+            self._conn.execute("")
             res = self._conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='media_pool'").fetchone()
             if res[0] > 0:
                 cols = self._conn.execute("PRAGMA table_info(media_pool)").fetchall()
@@ -56,6 +57,27 @@ class BackupDatabase:
                 if "mime_type" in col_names and "content_type" not in col_names:
                     logger.info("Migrating server_assets: renaming 'mime_type' to 'content_type'")
                     self._conn.execute("ALTER TABLE server_assets RENAME COLUMN mime_type TO content_type")
+            res = self._conn.execute("SELECT count(*) FROM messages LIMIT 1").fetchone()
+            if res[0] > 0:
+                cols = self._conn.execute("PRAGMA table_info(messages)").fetchall()
+                id_type = next(col for col in cols if col[1] == "id")[2]
+                if id_type == "TEXT":
+                    logger.info("Migrating messages: Changing id column type to integer")
+                    self._conn.execute("ALTER TABLE messages RENAME TO messages_old")
+                    self._conn.execute("""CREATE TABLE IF NOT EXISTS messages
+                                 (
+                                     id INTEGER PRIMARY KEY,
+                                     channel_id TEXT, 
+                                     author_id TEXT,
+                                     content TEXT,
+                                     timestamp TEXT,
+                                     type INTEGER,
+                                     message_reference TEXT,
+                                     is_pinned INTEGER,
+                                     extra_data TEXT
+                                 )
+                                 """)
+                    self._conn.execute("INSERT INTO messages SELECT * FROM messages_old")
             self._conn.commit()
 
     def _init_db(self):
@@ -135,7 +157,7 @@ class BackupDatabase:
                 # Messages
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS messages (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         channel_id TEXT,
                         author_id TEXT,
                         content TEXT,
