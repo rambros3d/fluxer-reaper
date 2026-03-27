@@ -78,6 +78,7 @@ class BackupDatabase:
                                  )
                                  """)
                     self._conn.execute("INSERT INTO messages SELECT * FROM messages_old")
+                    self._conn.execute("DROP TABLE messages_old")
             self._conn.commit()
 
     def _init_db(self):
