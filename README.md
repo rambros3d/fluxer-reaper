@@ -149,8 +149,14 @@ But now their own website states that **Persona** will be used in some countries
 - Code is provided as is; This tool was developed with AI.
 - Take it, use it, modify it, feel free to do whatever you wish.
 
-### Star History
+---
+
+## Contributors
+
+<a href="https://github.com/rambros3d/disco-reaper/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=rambros3d/disco-reaper" />
+</a>
+
+Made with [contrib.rocks](https://contrib.rocks).
 
 [![Star History Chart](https://api.star-history.com/image?repos=rambros3d/disco-reaper&type=date&legend=top-left)](https://www.star-history.com/?repos=rambros3d%2Fdisco-reaper&type=date&legend=top-left)
-
----

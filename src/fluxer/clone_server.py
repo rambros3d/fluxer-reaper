@@ -61,7 +61,17 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
     """
     # Sort by position to respect Discord arrangement
     categories = sorted(await context.discord_reader.get_categories(), key=lambda c: getattr(c, 'position', 0))
-    channels = sorted(await context.discord_reader.get_channels(), key=lambda c: getattr(c, 'position', 0))
+    all_channels = sorted(await context.discord_reader.get_channels(), key=lambda c: getattr(c, 'position', 0))
+
+    # Only migrate text-like and voice channels. Forum channels are not yet supported in Fluxer.
+    reader = context.discord_reader
+    channels = [
+        ch for ch in all_channels
+        if ch.type != reader.CHANNEL_TYPE_FORUM
+    ]
+    skipped = [ch.name for ch in all_channels if ch not in channels]
+    if skipped:
+        logger.info(f"Skipping {len(skipped)} forum channel(s): {', '.join(skipped)}")
     
     cloned_info = {
         "categories_created": [],
@@ -130,13 +140,27 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         parent_id = context.state.get_fluxer_category_id(str(channel.category_id)) if channel.category_id else None
         pos = getattr(channel, 'position', None)
         
+        # Map Discord-specific types to target-supported types
+        # 5 (News) -> 0 (Text), and fallback any unknown non-voice types to text
+        raw_type = channel.type.value if hasattr(channel.type, 'value') else 0
+        if raw_type == context.discord_reader.CHANNEL_TYPE_VOICE.value:
+            ch_type = 2
+            is_voice = True
+        elif raw_type in [context.discord_reader.CHANNEL_TYPE_TEXT.value, context.discord_reader.CHANNEL_TYPE_NEWS.value]:
+            ch_type = 0
+            is_voice = False
+        else:
+            # Fallback for Stage channels (13) etc. to Text for safety
+            ch_type = 0
+            is_voice = False
+        
         fluxer_id = await context.fluxer_writer.create_channel(
             name=channel.name, 
-            topic=topic, 
-            type=0, 
+            topic=topic if not is_voice else "", 
+            type=ch_type, 
             parent_id=parent_id,
-            nsfw=nsfw,
-            slowmode_delay=slowmode,
+            nsfw=nsfw if not is_voice else False,
+            slowmode_delay=slowmode if not is_voice else 0,
             position=pos
         )
         context.state.set_channel_mapping(state_key, fluxer_id)
@@ -147,16 +171,17 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
             cloned_info["structure"][parent_name] = []
         cloned_info["structure"][parent_name].append(channel.name)
         
-        # Sync again immediately because some properties (like slowmode) are ignored on creation
-        await context.fluxer_writer.modify_channel(
-            channel_id=fluxer_id,
-            parent_id=parent_id,
-            name=channel.name,
-            topic=topic,
-            nsfw=nsfw,
-            slowmode_delay=slowmode,
-            position=pos
-        )
+        # Sync again immediately (only for non-voice channels)
+        if not is_voice:
+            await context.fluxer_writer.modify_channel(
+                channel_id=fluxer_id,
+                parent_id=parent_id,
+                name=channel.name,
+                topic=topic,
+                nsfw=nsfw,
+                slowmode_delay=slowmode,
+                position=pos
+            )
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Copying", current_idx, total)

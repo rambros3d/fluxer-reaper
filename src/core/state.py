@@ -224,9 +224,9 @@ class MigrationState:
         row = conn.execute("SELECT channel_id, target_msg_id FROM message_mappings WHERE source_msg_id = ?", (str(discord_id),)).fetchone()
         if row:
             return str(row["channel_id"]), str(row["target_msg_id"])
-        row = conn.execute("SELECT thread_id, target_msg_id FROM thread_mappings WHERE source_msg_id = ?", (str(discord_id),)).fetchone()
+        row = conn.execute("SELECT channel_id, target_msg_id FROM thread_mappings WHERE source_msg_id = ?", (str(discord_id),)).fetchone()
         if row:
-            return str(row["thread_id"]), str(row["target_msg_id"])
+            return str(row["channel_id"]), str(row["target_msg_id"])
         return None, None
 
     # --- Danger Zone Clearing ---

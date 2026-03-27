@@ -20,6 +20,7 @@ class DiscordReader:
     
     # Channel Types
     CHANNEL_TYPE_TEXT = discord.ChannelType.text
+    CHANNEL_TYPE_VOICE = discord.ChannelType.voice
     CHANNEL_TYPE_NEWS = discord.ChannelType.news
     CHANNEL_TYPE_FORUM = discord.ChannelType.forum
 
@@ -227,6 +228,18 @@ class DiscordReader:
         if category_id:
             all_channels = [c for c in all_channels if c.category_id == category_id]
         return all_channels
+
+    async def get_active_threads(self) -> list[discord.Thread]:
+        """Returns all active threads in the guild."""
+        if not self.guild:
+            return []
+        return self.guild.active_threads
+
+    async def fetch_channels(self) -> list[Union[discord.TextChannel, discord.VoiceChannel, discord.CategoryChannel, discord.ForumChannel]]:
+        """Async stub for discord.Guild.fetch_channels."""
+        if not self.guild:
+            return []
+        return await self.guild.fetch_channels()
 
     async def get_channel(self, channel_id: int):
         """Returns a channel object."""
