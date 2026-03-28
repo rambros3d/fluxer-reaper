@@ -6,12 +6,13 @@ Discord API.  Implements the same public interface as DiscordReader so that
 migration scripts and UI code can use either provider transparently.
 """
 
+from __future__ import annotations
 import json
 import logging
 from datetime import datetime, timezone
 from enum import IntEnum
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Any, List, Optional
+from typing import AsyncGenerator, Dict, Any, List, Optional, Union
 from src.core.backup_database import BackupDatabase, parse_snowflake
 
 logger = logging.getLogger(__name__)
