@@ -148,11 +148,13 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
             break
             
         logger.debug(f"Creating role: {role.name}")
+        # No permission mapping nescessary since fluxer uses the same permission map as discord
         fluxer_id = await context.fluxer_writer.create_role(
             name=role.name,
             color=role.color.value,
             hoist=role.hoist,
             mentionable=role.mentionable,
+            permissions=role.permissions.value,
             position=role.position
         )
         if fluxer_id:
