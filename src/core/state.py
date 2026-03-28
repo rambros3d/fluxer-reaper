@@ -1,7 +1,10 @@
 import json
 import logging
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Optional, Any, Union, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.core.database import MigrationDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +38,14 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("channel", str(discord_id))
 
+    def remove_target_channel_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_server_mapping("channel", str(discord_id))
     
+    def set_target_channel_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_channel_mapping to handle legacy calls."""
+        self.set_channel_mapping(discord_id, target_id)
+        
     get_fluxer_channel_id = get_target_channel_id
     set_target_channel_mapping = set_channel_mapping
 
@@ -55,6 +65,10 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("category", str(discord_id))
     
+    def set_target_category_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_category_mapping to handle legacy calls."""
+        self.set_category_mapping(discord_id, target_id)
+        
     get_fluxer_category_id = get_category_mapping
     get_target_category_id = get_category_mapping
     set_target_category_mapping = set_category_mapping
@@ -75,6 +89,10 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("role", str(discord_id))
     
+    def set_target_role_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_role_mapping to handle legacy calls."""
+        self.set_role_mapping(discord_id, target_id)
+        
     get_fluxer_role_id = get_role_mapping
     get_target_role_id = get_role_mapping
     set_target_role_mapping = set_role_mapping
@@ -119,23 +137,23 @@ class MigrationState:
 
     # --- Properties for backward compatibility ---
     @property
-    def channel_map(self) -> Dict[str, str]:
+    def channel_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("channel") if self.db else {}
         
     @property
-    def category_map(self) -> Dict[str, str]:
+    def category_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("category") if self.db else {}
         
     @property
-    def role_map(self) -> Dict[str, str]:
+    def role_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_server_mappings("role") if self.db else {}
 
     @property
-    def emoji_map(self) -> Dict[str, str]:
+    def emoji_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_asset_mappings("emoji") if self.db else {}
         
     @property
-    def sticker_map(self) -> Dict[str, str]:
+    def sticker_map(self) -> Dict[Union[str, int], Union[str, int]]:
         return self.db.get_all_asset_mappings("sticker") if self.db else {}
 
     @property
@@ -153,7 +171,7 @@ class MigrationState:
         if self._ensure_db():
             self.db.set_message_mapping(str(target_channel_id), str(discord_id), str(target_id))
 
-    def get_target_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+    def get_target_message_id(self, target_channel_id: str, discord_id: str) -> str | int | None:
         if self._ensure_db():
             return self.db.get_target_message_id(str(target_channel_id), str(discord_id))
         return None
@@ -161,7 +179,7 @@ class MigrationState:
     def set_message_mapping(self, target_channel_id: str, discord_id: str, target_id: str):
         self.set_target_message_mapping(target_channel_id, discord_id, target_id)
 
-    def get_fluxer_message_id(self, target_channel_id: str, discord_id: str) -> str | None:
+    def get_fluxer_message_id(self, target_channel_id: str, discord_id: str) -> str | int | None:
         return self.get_target_message_id(target_channel_id, discord_id)
 
     def increment_stats(self, target_channel_id: str, messages: int = 1, files: int = 0):
@@ -209,8 +227,34 @@ class MigrationState:
         
     def get_last_message_id(self, target_channel_id: str) -> str | None:
         if self._ensure_db():
-            return self.db.get_channel_tracking(str(target_channel_id)).get("last_msg_id")
+            tracking = self.db.get_channel_tracking(str(target_channel_id))
+            return tracking.get("last_msg_id") if tracking else None
         return None
+        
+
+    def get_global_min_last_message_id(self, all_mapped_ids: List[str]) -> int | None:
+        """Returns the absolute minimum last_msg_id among the given list of mapped target IDs (channels and threads)."""
+        if self._ensure_db():
+            return self.db.get_global_min_last_message_id(all_mapped_ids)
+        return None
+
+    def set_waterfall_last_id(self, last_id: str | int):
+        if self.db:
+            self.db.set_metadata("waterfall_last_id", str(last_id))
+            
+    def get_waterfall_last_id(self) -> int | None:
+        if self.db:
+            val = self.db.get_metadata("waterfall_last_id")
+            return int(val) if val else None
+        return None
+        
+    def get_all_last_message_ids(self) -> Dict[str, str]:
+        """Returns a combined map of channel_id/thread_id -> last_msg_id."""
+        if self._ensure_db():
+            c_map = self.db.get_all_channel_tracking_ids()
+            t_map = self.db.get_all_thread_tracking_ids()
+            return {**c_map, **t_map}
+        return {}
 
     def get_thread_last_message_id(self, target_channel_id: str, thread_id: str) -> str | None:
         if self._ensure_db():
@@ -258,7 +302,7 @@ class MigrationState:
         if self._ensure_db():
             self.db.clear_channel_data(str(target_channel_id))
 
-    def set_folder(self, server_id: str, clean_name: str, base_dir: Path | str = ""):
+    def set_folder(self, server_id: str, clean_name: str, platform: str = "stoat", base_dir: Path | str = ""):
         """
         Initializes the SQLite database based on community name and ID.
         Filename: {name}-{id}.db (Flat structure)
@@ -294,7 +338,7 @@ class MigrationState:
         from src.core.database import MigrationDatabase
         if self.db:
             self.db.close()
-        self.db = MigrationDatabase(db_path)
+        self.db = MigrationDatabase(db_path, platform=platform)
         logger.info(f"Initialized SQLite database at {db_path}")
 
     def get_user_alias(self, user_id: str) -> str | None:

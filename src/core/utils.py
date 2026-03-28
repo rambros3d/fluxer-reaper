@@ -1,14 +1,29 @@
+from typing import Any, Optional
 import re
 import logging
-from src.core.state import MigrationState
+
+def parse_snowflake(value: Any) -> Optional[int]:
+    """Safely parses a Discord ID (Snowflake) from any input, handling 'None' strings."""
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s or s.lower() == "none" or s == "NULL":
+        return None
+    try:
+        return int(s)
+    except ValueError:
+        return None
 
 logger = logging.getLogger(__name__)
 
-def resolve_discord_links(content: str, state: MigrationState, platform: str, target_server_id: str) -> str:
+def resolve_discord_links(content: str, state, platform: str, target_server_id: str) -> str:
     """
     Finds Discord message/channel links and resolves them to the target platform 
     if they have been migrated.
     """
+    from src.core.state import MigrationState
+    if not isinstance(state, MigrationState):
+        logger.warning(f"resolve_discord_links: state is not MigrationState (type: {type(state)})")
     if not content:
         return content
 
