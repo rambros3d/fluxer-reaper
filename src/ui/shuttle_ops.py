@@ -1105,6 +1105,11 @@ class OperationPane(Container):
                     source_channel = next(c for c in d_channels if c.id == src_id)
                     target_channel = next(c for c in f_channels if c.get("id") == tgt_id)
 
+                # 2. Analyze
+                modal = ProgressScreen(log_level=self.config.log_level)
+                self.app.push_screen(modal)
+                await asyncio.sleep(0.1)
+
                 # Determine after_id status (skip for pending channels)
                 if pending_create_name:
                     last_migrated = None
@@ -1112,11 +1117,6 @@ class OperationPane(Container):
                 else:
                     last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
                     has_previous = bool(last_migrated)
-                
-                # Analyze
-                modal = ProgressScreen(log_level=self.config.log_level)
-                self.app.push_screen(modal)
-                await asyncio.sleep(0.1)
 
                 src_server = getattr(self.engine.discord_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
