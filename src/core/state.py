@@ -215,6 +215,12 @@ class MigrationState:
             return self.db.get_channel_tracking(str(target_channel_id)).get("last_msg_id")
         return None
 
+    def get_global_min_last_message_id(self, mapped_channel_ids: List[str]) -> str | None:
+        """Returns the absolute minimum last_msg_id among the given list of mapped target channel IDs."""
+        if self._ensure_db():
+            return self.db.get_global_min_last_message_id(mapped_channel_ids)
+        return None
+
     def get_thread_last_message_id(self, target_channel_id: str, thread_id: str) -> str | None:
         if self._ensure_db():
             return self.db.get_thread_tracking(str(target_channel_id), str(thread_id)).get("last_msg_id")

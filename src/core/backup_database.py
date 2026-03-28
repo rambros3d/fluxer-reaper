@@ -791,6 +791,83 @@ class BackupDatabase:
             
             return msg_list
 
+    def get_global_messages_paged(self, limit: int = 100, offset: int = 0, after_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetches messages across ALL channels globally, ordered by timestamp/ID ascending."""
+        with self._lock:
+            query = "SELECT * FROM messages"
+            params = []
+            
+            if after_id:
+                query += " WHERE id > ?"
+                params.append(parse_snowflake(after_id))
+            
+            query += " ORDER BY id ASC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            rows = self._conn.execute(query, params).fetchall()
+            msg_list = [dict(r) for r in rows]
+            
+            if msg_list:
+                msg_ids = [m["id"] for m in msg_list]
+                placeholders = ",".join(["?"] * len(msg_ids))
+                
+                att_rows = self._conn.execute(f"SELECT * FROM attachments WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                atts_by_msg = {}
+                for ar in att_rows:
+                    mid = ar["message_id"]
+                    if mid not in atts_by_msg: atts_by_msg[mid] = []
+                    atts_by_msg[mid].append(dict(ar))
+                
+                emb_rows = self._conn.execute(f"SELECT * FROM embeds WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                embs_by_msg = {}
+                for er in emb_rows:
+                    mid = er["message_id"]
+                    if mid not in embs_by_msg: embs_by_msg[mid] = []
+                    
+                    e_dict = {
+                        "title": er["title"],
+                        "description": er["description"],
+                        "url": er["url"],
+                        "color": er["color"],
+                        "timestamp": er["timestamp"],
+                        "thumbnail": {"url": er["thumbnail_url"]} if er["thumbnail_url"] else None,
+                        "image": {"url": er["image_url"]} if er["image_url"] else None,
+                        "author": {
+                            "name": er["author_name"],
+                            "url": er["author_url"],
+                            "icon_url": er["author_icon_url"]
+                        } if er["author_name"] else None,
+                        "footer": {
+                            "text": er["footer_text"],
+                            "icon_url": er["footer_icon_url"]
+                        } if er["footer_text"] else None,
+                        "fields": json.loads(er["fields"]) if er["fields"] else []
+                    }
+                    embs_by_msg[mid].append(e_dict)
+                
+                rea_rows = self._conn.execute(f"SELECT * FROM reactions WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                reas_by_msg = {}
+                for rr in rea_rows:
+                    mid = rr["message_id"]
+                    if mid not in reas_by_msg: reas_by_msg[mid] = []
+                    reas_by_msg[mid].append(dict(rr))
+                
+                st_rows = self._conn.execute(f"SELECT * FROM message_stickers WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                sts_by_msg = {}
+                for sr in st_rows:
+                    mid = sr["message_id"]
+                    if mid not in sts_by_msg: sts_by_msg[mid] = []
+                    sts_by_msg[mid].append(dict(sr))
+
+                for m in msg_list:
+                    m_id = m["id"]
+                    m["attachments"] = atts_by_msg.get(m_id, [])
+                    m["embeds"] = embs_by_msg.get(m_id, [])
+                    m["reactions"] = reas_by_msg.get(m_id, [])
+                    m["stickers"] = sts_by_msg.get(m_id, [])
+            
+            return msg_list
+
     def delete_channel_messages(self, channel_id: Union[str, int]):
         """Deletes all messages and related metadata for a specific channel and its threads."""
         cid = parse_snowflake(channel_id)

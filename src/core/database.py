@@ -451,6 +451,35 @@ class MigrationDatabase:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
 
+    def get_global_min_last_message_id(self, mapped_channel_ids: List[str]) -> Optional[str]:
+        """Returns the minimum last_msg_id across all mapped channels. If any mapped channel has NO last_msg_id, returns None."""
+        if not mapped_channel_ids:
+            return None
+            
+        conn = self._get_conn()
+        placeholders = ",".join(["?"] * len(mapped_channel_ids))
+        rows = conn.execute(f"SELECT last_msg_id FROM channel_tracking WHERE channel_id IN ({placeholders})", mapped_channel_ids).fetchall()
+        
+        # If the number of tracked channels is less than mapped, it means some mapped channels haven't started.
+        if len(rows) < len(mapped_channel_ids):
+            return None
+            
+        # Parse all ids
+        ids = []
+        for r in rows:
+            val = r["last_msg_id"]
+            if not val:
+                return None  # One channel has no messages yet
+            try:
+                ids.append(int(val))
+            except ValueError:
+                pass
+                
+        if not ids:
+            return None
+            
+        return str(min(ids))
+
     # Thread methods similar to channel methods
     def set_thread_message_mapping(self, channel_id: str, thread_id: str, source_id: str, target_id: str, timestamp: str = None):
         conn = self._get_conn()
