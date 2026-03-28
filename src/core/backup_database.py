@@ -4,20 +4,11 @@ import json
 import threading
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
+from src.core.utils import parse_snowflake
 
 logger = logging.getLogger(__name__)
 
-def parse_snowflake(value: Any) -> Optional[int]:
-    """Safely parses a Discord ID (Snowflake) from any input, handling 'None' strings."""
-    if value is None:
-        return None
-    s = str(value).strip()
-    if not s or s.lower() == "none" or s == "NULL":
-        return None
-    try:
-        return int(s)
-    except ValueError:
-        return None
+
 
 class BackupDatabase:
     """Manages the SQLite database for local Discord backups."""
@@ -39,24 +30,101 @@ class BackupDatabase:
     def _migrate_db(self):
         """Handles backward compatibility by renaming columns in existing databases."""
         with self._lock:
-            # Check 'media_pool' table
-            res = self._conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='media_pool'").fetchone()
-            if res[0] > 0:
-                cols = self._conn.execute("PRAGMA table_info(media_pool)").fetchall()
-                col_names = [c["name"] for c in cols]
-                if "mime_type" in col_names and "content_type" not in col_names:
-                    logger.info("Migrating media_pool: renaming 'mime_type' to 'content_type'")
-                    self._conn.execute("ALTER TABLE media_pool RENAME COLUMN mime_type TO content_type")
+            conn = self._conn
+            # 1. MIME Type to Content Type Migrations
+            for table in ["media_pool", "server_assets"]:
+                res = conn.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'").fetchone()
+                if res and res[0] > 0:
+                    cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                    col_names = [c["name"] for c in cols]
+                    if "mime_type" in col_names and "content_type" not in col_names:
+                        logger.info(f"Migrating {table}: renaming 'mime_type' to 'content_type'")
+                        conn.execute(f"ALTER TABLE {table} RENAME COLUMN mime_type TO content_type")
 
-            # Check 'server_assets' table
-            res = self._conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='server_assets'").fetchone()
-            if res[0] > 0:
-                cols = self._conn.execute("PRAGMA table_info(server_assets)").fetchall()
-                col_names = [c["name"] for c in cols]
-                if "mime_type" in col_names and "content_type" not in col_names:
-                    logger.info("Migrating server_assets: renaming 'mime_type' to 'content_type'")
-                    self._conn.execute("ALTER TABLE server_assets RENAME COLUMN mime_type TO content_type")
-            self._conn.commit()
+            # 2. Universal ID Migration (TEXT -> INTEGER)
+            # Mapping of table names to columns that must be INTEGER (Snowflakes)
+            id_migrations = {
+                "guild_profile": ["id", "owner_id"],
+                "roles": ["id", "permissions"],
+                "channels": ["id", "category_id"],
+                "permissions": ["channel_id", "target_id"],
+                "users": ["id"],
+                "messages": ["id", "channel_id", "author_id", "message_reference"],
+                "attachments": ["id", "message_id"],
+                "embeds": ["message_id"],
+                "reactions": ["message_id", "emoji_id"],
+                "message_stickers": ["message_id", "sticker_id"],
+                "threads": ["id", "parent_id"],
+                "forum_tags": ["id", "forum_id", "emoji_id"],
+                "server_assets": ["id"]
+            }
+
+            for table, id_cols in id_migrations.items():
+                res = conn.execute(f"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='{table}'").fetchone()
+                if not res or res[0] == 0:
+                    continue
+
+                cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+                needs_migration = False
+                for col in cols:
+                    if col[1] in id_cols and col[2] == "TEXT":
+                        needs_migration = True
+                        break
+                
+                if needs_migration:
+                    logger.info(f"Migrating {table}: converting ID columns to INTEGER")
+                    # Special Case: messages already handled id, but now generic
+                    # We use a temporary table to handle the schema change
+                    conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+                    
+                    # We can't easily generate the CREATE TABLE here without duplicating _init_db logic
+                    # So we call _init_db to create the NEW table, then copy data
+                    # But _init_db has 'IF NOT EXISTS', so we just call it once at the end?
+                    # No, we need the table NOW for the INSERT.
+                    # I'll just manually define the inserts or do it in _init_db.
+                    
+                    # Actually, a better way is to do the CREATE TABLE here for this specific table.
+                    # I'll have to duplicate the schema from _init_db for the migration.
+                    
+                    # Alternatively, since we are already in _migrate_db, we can just do the 
+                    # specific CREATE TABLE for the table we are migrating.
+                    
+                    if table == "guild_profile":
+                        conn.execute("CREATE TABLE guild_profile (id INTEGER PRIMARY KEY, name TEXT, description TEXT, icon_file TEXT, icon_url TEXT, banner_file TEXT, banner_url TEXT, owner_id INTEGER, last_backup TEXT, ignore_channels TEXT)")
+                    elif table == "roles":
+                        conn.execute("CREATE TABLE roles (id INTEGER PRIMARY KEY, name TEXT, color INTEGER, position INTEGER, permissions INTEGER, hoist INTEGER, mentionable INTEGER)")
+                    elif table == "channels":
+                        conn.execute("CREATE TABLE channels (id INTEGER PRIMARY KEY, name TEXT, type INTEGER, position INTEGER, category_id INTEGER, topic TEXT, nsfw INTEGER, bitrate INTEGER, slowmode_delay INTEGER)")
+                    elif table == "permissions":
+                        conn.execute("CREATE TABLE permissions (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, target_id INTEGER, target_type TEXT, allow INTEGER, deny INTEGER)")
+                    elif table == "users":
+                        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, avatar_file TEXT, avatar_url TEXT, roles TEXT)")
+                    elif table == "messages":
+                        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, content TEXT, timestamp TEXT, type INTEGER, message_reference INTEGER, is_pinned INTEGER, extra_data TEXT)")
+                    elif table == "attachments":
+                        conn.execute("CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, filename TEXT, size INTEGER, url TEXT, content_type TEXT, local_hash TEXT)")
+                    elif table == "embeds":
+                        conn.execute("CREATE TABLE embeds (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER, title TEXT, description TEXT, url TEXT, color INTEGER, timestamp TEXT, thumbnail_url TEXT, image_url TEXT, author_name TEXT, author_url TEXT, author_icon_url TEXT, footer_text TEXT, footer_icon_url TEXT, fields TEXT)")
+                    elif table == "reactions":
+                        conn.execute("CREATE TABLE reactions (id INTEGER PRIMARY KEY AUTOINCREMENT, message_id INTEGER, emoji_id INTEGER, emoji_name TEXT, count INTEGER)")
+                    elif table == "message_stickers":
+                        conn.execute("CREATE TABLE message_stickers (message_id INTEGER, sticker_id INTEGER, name TEXT, url TEXT, format_type INTEGER, local_hash TEXT, PRIMARY KEY (message_id, sticker_id))")
+                    elif table == "threads":
+                        conn.execute("CREATE TABLE threads (id INTEGER PRIMARY KEY, name TEXT, type INTEGER, parent_id INTEGER, message_count INTEGER, member_count INTEGER, archived INTEGER, archive_timestamp TEXT, auto_archive_duration INTEGER, locked INTEGER, applied_tags TEXT)")
+                    elif table == "forum_tags":
+                        conn.execute("CREATE TABLE forum_tags (id INTEGER PRIMARY KEY, forum_id INTEGER, name TEXT, moderated INTEGER, emoji_id INTEGER, emoji_name TEXT)")
+                    elif table == "server_assets":
+                        conn.execute("CREATE TABLE server_assets (id INTEGER PRIMARY KEY, name TEXT, type TEXT, filename TEXT, url TEXT, content_type INTEGER)")
+                    
+                    old_cols = [c[1] for c in conn.execute(f"PRAGMA table_info({table}_old)").fetchall()]
+                    new_cols = [c[1] for c in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+                    common_cols = [c for c in old_cols if c in new_cols]
+                    col_str = ", ".join(common_cols)
+                    
+                    conn.execute(f"INSERT INTO {table} ({col_str}) SELECT {col_str} FROM {table}_old")
+                    conn.execute(f"DROP TABLE {table}_old")
+            
+            conn.commit()
 
     def _init_db(self):
         """Initializes the database schema."""
@@ -66,14 +134,14 @@ class BackupDatabase:
                 # Guild Profile
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS guild_profile (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         name TEXT,
                         description TEXT,
                         icon_file TEXT,
                         icon_url TEXT,
                         banner_file TEXT,
                         banner_url TEXT,
-                        owner_id TEXT,
+                        owner_id INTEGER,
                         last_backup TEXT,
                         ignore_channels TEXT
                     )
@@ -82,11 +150,11 @@ class BackupDatabase:
                 # Roles
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS roles (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         name TEXT,
                         color INTEGER,
                         position INTEGER,
-                        permissions TEXT,
+                        permissions INTEGER,
                         hoist INTEGER,
                         mentionable INTEGER
                     )
@@ -95,11 +163,11 @@ class BackupDatabase:
                 # Channels
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS channels (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         name TEXT,
                         type INTEGER,
                         position INTEGER,
-                        category_id TEXT,
+                        category_id INTEGER,
                         topic TEXT,
                         nsfw INTEGER,
                         bitrate INTEGER,
@@ -111,8 +179,8 @@ class BackupDatabase:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS permissions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        channel_id TEXT,
-                        target_id TEXT,
+                        channel_id INTEGER,
+                        target_id INTEGER,
                         target_type TEXT,
                         allow INTEGER,
                         deny INTEGER
@@ -123,7 +191,7 @@ class BackupDatabase:
                 # Users (Author cache)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS users (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         username TEXT,
                         display_name TEXT,
                         avatar_file TEXT,
@@ -135,13 +203,13 @@ class BackupDatabase:
                 # Messages
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS messages (
-                        id TEXT PRIMARY KEY,
-                        channel_id TEXT,
-                        author_id TEXT,
+                        id INTEGER PRIMARY KEY,
+                        channel_id INTEGER,
+                        author_id INTEGER,
                         content TEXT,
                         timestamp TEXT,
                         type INTEGER,
-                        message_reference TEXT,
+                        message_reference INTEGER,
                         is_pinned INTEGER,
                         extra_data TEXT
                     )
@@ -152,8 +220,8 @@ class BackupDatabase:
                 # Attachments
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS attachments (
-                        id TEXT PRIMARY KEY,
-                        message_id TEXT,
+                        id INTEGER PRIMARY KEY,
+                        message_id INTEGER,
                         filename TEXT,
                         size INTEGER,
                         url TEXT,
@@ -167,7 +235,7 @@ class BackupDatabase:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS embeds (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        message_id TEXT,
+                        message_id INTEGER,
                         title TEXT,
                         description TEXT,
                         url TEXT,
@@ -189,8 +257,8 @@ class BackupDatabase:
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS reactions (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        message_id TEXT,
-                        emoji_id TEXT,
+                        message_id INTEGER,
+                        emoji_id INTEGER,
                         emoji_name TEXT,
                         count INTEGER
                     )
@@ -200,8 +268,8 @@ class BackupDatabase:
                 # Message Stickers
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS message_stickers (
-                        message_id TEXT,
-                        sticker_id TEXT,
+                        message_id INTEGER,
+                        sticker_id INTEGER,
                         name TEXT,
                         url TEXT,
                         format_type INTEGER,
@@ -214,10 +282,10 @@ class BackupDatabase:
                 # Threads
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS threads (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         name TEXT,
                         type INTEGER,
-                        parent_id TEXT,
+                        parent_id INTEGER,
                         message_count INTEGER,
                         member_count INTEGER,
                         archived INTEGER,
@@ -232,11 +300,11 @@ class BackupDatabase:
                 # Forum Tags (Definitions for a forum channel)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS forum_tags (
-                        id TEXT PRIMARY KEY,
-                        forum_id TEXT,
+                        id INTEGER PRIMARY KEY,
+                        forum_id INTEGER,
                         name TEXT,
                         moderated INTEGER,
-                        emoji_id TEXT,
+                        emoji_id INTEGER,
                         emoji_name TEXT
                     )
                 """)
@@ -257,7 +325,7 @@ class BackupDatabase:
                 # Server Assets (Emojis, Stickers, etc.)
                 conn.execute("""
                     CREATE TABLE IF NOT EXISTS server_assets (
-                        id TEXT PRIMARY KEY,
+                        id INTEGER PRIMARY KEY,
                         name TEXT,
                         type TEXT,
                         filename TEXT,
@@ -276,10 +344,10 @@ class BackupDatabase:
                 INSERT OR REPLACE INTO guild_profile (id, name, description, icon_file, icon_url, banner_file, banner_url, owner_id, last_backup, ignore_channels)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                str(data.get("id")), data.get("name"), data.get("description"),
+                parse_snowflake(data.get("id")), data.get("name"), data.get("description"),
                 data.get("icon_file"), data.get("icon_url"), 
                 data.get("banner_file"), data.get("banner_url"), 
-                str(data.get("owner_id")),
+                parse_snowflake(data.get("owner_id")),
                 data.get("last_backup"), json.dumps(data.get("ignore_channels", []))
             ))
             self._conn.commit()
@@ -300,7 +368,7 @@ class BackupDatabase:
         with self._lock:
             formatted = [
                 {
-                    "id": str(r["id"]),
+                    "id": parse_snowflake(r["id"]),
                     "name": r["name"],
                     "color": r["color"],
                     "position": r["position"],
@@ -347,7 +415,7 @@ class BackupDatabase:
         with self._lock:
             formatted = [
                 {
-                    "id": str(a["id"]),
+                    "id": parse_snowflake(a["id"]),
                     "name": a.get("name"),
                     "type": a.get("type"),
                     "filename": a.get("filename"),
@@ -407,7 +475,7 @@ class BackupDatabase:
                     for rea in msg["reactions"]:
                         all_reactions.append({
                             "message_id": msg["id"],
-                            "emoji_id": str(rea["emoji_id"]) if rea.get("emoji_id") else None,
+                            "emoji_id": parse_snowflake(rea["emoji_id"]) if rea.get("emoji_id") else None,
                             "emoji_name": rea.get("emoji_name"),
                             "count": rea.get("count", 0)
                         })
@@ -417,7 +485,7 @@ class BackupDatabase:
                     for st in msg["stickers"]:
                         all_stickers.append({
                             "message_id": msg["id"],
-                            "sticker_id": str(st["id"]),
+                            "sticker_id": parse_snowflake(st["id"]),
                             "name": st.get("name"),
                             "url": st.get("url"),
                             "format_type": st.get("format_type"),
@@ -469,7 +537,7 @@ class BackupDatabase:
 
     def get_last_message_id(self, channel_id: str) -> Optional[str]:
         with self._lock:
-            row = self._conn.execute("SELECT id FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT 1", (str(channel_id),)).fetchone()
+            row = self._conn.execute("SELECT id FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT 1", (parse_snowflake(channel_id),)).fetchone()
             return row["id"] if row else None
 
     def get_media_by_hash(self, file_hash: str) -> Optional[Dict[str, Any]]:
@@ -600,7 +668,7 @@ class BackupDatabase:
         """Returns forum tag definitions."""
         with self._lock:
             if forum_id:
-                rows = self._conn.execute("SELECT * FROM forum_tags WHERE forum_id = ?", (str(forum_id),)).fetchall()
+                rows = self._conn.execute("SELECT * FROM forum_tags WHERE forum_id = ?", (parse_snowflake(forum_id),)).fetchall()
             else:
                 rows = self._conn.execute("SELECT * FROM forum_tags").fetchall()
             return [dict(r) for r in rows]
@@ -608,13 +676,13 @@ class BackupDatabase:
     def get_threads_by_parent(self, parent_id: str) -> List[Dict[str, Any]]:
         """Returns all threads belonging to a parent channel."""
         with self._lock:
-            rows = self._conn.execute("SELECT * FROM threads WHERE parent_id = ?", (str(parent_id),)).fetchall()
+            rows = self._conn.execute("SELECT * FROM threads WHERE parent_id = ?", (parse_snowflake(parent_id),)).fetchall()
             return [dict(r) for r in rows]
 
     def get_thread(self, thread_id: str) -> Optional[Dict[str, Any]]:
         """Retrieves a single thread's metadata."""
         with self._lock:
-            row = self._conn.execute("SELECT * FROM threads WHERE id = ?", (str(thread_id),)).fetchone()
+            row = self._conn.execute("SELECT * FROM threads WHERE id = ?", (parse_snowflake(thread_id),)).fetchone()
             return dict(row) if row else None
 
     def get_all_users(self) -> List[Dict[str, Any]]:
@@ -624,7 +692,7 @@ class BackupDatabase:
 
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
-            row = self._conn.execute("SELECT * FROM users WHERE id = ?", (str(user_id),)).fetchone()
+            row = self._conn.execute("SELECT * FROM users WHERE id = ?", (parse_snowflake(user_id),)).fetchone()
             if row:
                 data = dict(row)
                 if data.get("roles"):
@@ -650,11 +718,88 @@ class BackupDatabase:
     def get_messages_paged(self, channel_id: str, limit: int = 100, offset: int = 0, after_id: Optional[str] = None) -> List[Dict[str, Any]]:
         with self._lock:
             query = "SELECT * FROM messages WHERE channel_id = ?"
-            params = [str(channel_id)]
+            params = [parse_snowflake(channel_id)]
             
             if after_id:
                 query += " AND id > ?"
-                params.append(str(after_id))
+                params.append(parse_snowflake(after_id))
+            
+            query += " ORDER BY id ASC LIMIT ? OFFSET ?"
+            params.extend([limit, offset])
+            
+            rows = self._conn.execute(query, params).fetchall()
+            msg_list = [dict(r) for r in rows]
+            
+            if msg_list:
+                msg_ids = [m["id"] for m in msg_list]
+                placeholders = ",".join(["?"] * len(msg_ids))
+                
+                att_rows = self._conn.execute(f"SELECT * FROM attachments WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                atts_by_msg = {}
+                for ar in att_rows:
+                    mid = ar["message_id"]
+                    if mid not in atts_by_msg: atts_by_msg[mid] = []
+                    atts_by_msg[mid].append(dict(ar))
+                
+                emb_rows = self._conn.execute(f"SELECT * FROM embeds WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                embs_by_msg = {}
+                for er in emb_rows:
+                    mid = er["message_id"]
+                    if mid not in embs_by_msg: embs_by_msg[mid] = []
+                    
+                    e_dict = {
+                        "title": er["title"],
+                        "description": er["description"],
+                        "url": er["url"],
+                        "color": er["color"],
+                        "timestamp": er["timestamp"],
+                        "thumbnail": {"url": er["thumbnail_url"]} if er["thumbnail_url"] else None,
+                        "image": {"url": er["image_url"]} if er["image_url"] else None,
+                        "author": {
+                            "name": er["author_name"],
+                            "url": er["author_url"],
+                            "icon_url": er["author_icon_url"]
+                        } if er["author_name"] else None,
+                        "footer": {
+                            "text": er["footer_text"],
+                            "icon_url": er["footer_icon_url"]
+                        } if er["footer_text"] else None,
+                        "fields": json.loads(er["fields"]) if er["fields"] else []
+                    }
+                    embs_by_msg[mid].append(e_dict)
+                
+                rea_rows = self._conn.execute(f"SELECT * FROM reactions WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                reas_by_msg = {}
+                for rr in rea_rows:
+                    mid = rr["message_id"]
+                    if mid not in reas_by_msg: reas_by_msg[mid] = []
+                    reas_by_msg[mid].append(dict(rr))
+                
+                st_rows = self._conn.execute(f"SELECT * FROM message_stickers WHERE message_id IN ({placeholders})", msg_ids).fetchall()
+                sts_by_msg = {}
+                for sr in st_rows:
+                    mid = sr["message_id"]
+                    if mid not in sts_by_msg: sts_by_msg[mid] = []
+                    sts_by_msg[mid].append(dict(sr))
+
+                for m in msg_list:
+                    m_id = m["id"]
+                    m["attachments"] = atts_by_msg.get(m_id, [])
+                    m["embeds"] = embs_by_msg.get(m_id, [])
+                    m["reactions"] = reas_by_msg.get(m_id, [])
+                    m["stickers"] = sts_by_msg.get(m_id, [])
+            
+            return msg_list
+
+    def get_global_messages_paged(self, limit: int = 100, offset: int = 0, after_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Fetches messages across ALL channels globally, ordered by timestamp/ID ascending."""
+        with self._lock:
+            query = "SELECT * FROM messages"
+            params = []
+            
+            if after_id:
+                query += " WHERE id > ?"
+                params.append(parse_snowflake(after_id))
             
             query += " ORDER BY id ASC LIMIT ? OFFSET ?"
             params.extend([limit, offset])
@@ -725,7 +870,7 @@ class BackupDatabase:
 
     def delete_channel_messages(self, channel_id: Union[str, int]):
         """Deletes all messages and related metadata for a specific channel and its threads."""
-        cid = str(channel_id)
+        cid = parse_snowflake(channel_id)
         with self._lock:
             # 1. Identify all channel IDs involved (parent + all threads)
             target_ids = [cid]

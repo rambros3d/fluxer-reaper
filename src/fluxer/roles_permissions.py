@@ -15,8 +15,8 @@ async def sync_roles_state(context: MigrationContext):
     fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
-    fluxer_role_map = {r.get("name"): str(r.get("id")) for r in fluxer_roles if r.get("name")}
-    fluxer_role_ids = {str(r.get("id")) for r in fluxer_roles}
+    fluxer_role_map = {r.get("name"): r.get("id") for r in fluxer_roles if r.get("name")}
+    fluxer_role_ids = {r.get("id") for r in fluxer_roles}
     
     updates = 0
     removals = 0

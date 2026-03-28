@@ -18,10 +18,10 @@ async def sync_assets_state(context: MigrationContext):
     fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
-    fluxer_emoji_map = {e.get("name"): str(e.get("id")) for e in fluxer_emojis if e.get("name")}
-    fluxer_sticker_map = {s.get("name"): str(s.get("id")) for s in fluxer_stickers if s.get("name")}
-    fluxer_emoji_ids = {str(e.get("id")) for e in fluxer_emojis}
-    fluxer_sticker_ids = {str(s.get("id")) for s in fluxer_stickers}
+    fluxer_emoji_map = {e.get("name"): e.get("id") for e in fluxer_emojis if e.get("name")}
+    fluxer_sticker_map = {s.get("name"): s.get("id") for s in fluxer_stickers if s.get("name")}
+    fluxer_emoji_ids = {e.get("id") for e in fluxer_emojis}
+    fluxer_sticker_ids = {s.get("id") for s in fluxer_stickers}
     
     updates = 0
     removals = 0
