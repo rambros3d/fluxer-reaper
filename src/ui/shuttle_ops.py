@@ -724,7 +724,6 @@ class OperationPane(Container):
                 return
             elif choice == "btn_main_menu":
                 modal.dismiss()
-                self.app.switch_screen("config_selection")
                 return
 
             force_mode = (choice == "btn_start_id")
@@ -806,7 +805,6 @@ class OperationPane(Container):
                 return
             elif choice == "btn_main_menu":
                 modal.dismiss()
-                self.app.switch_screen("config_selection")
                 return
 
             force_mode = (choice == "btn_start_id")
@@ -1251,7 +1249,6 @@ class OperationPane(Container):
                     continue # Return to channel picker
                 elif choice == "btn_main_menu":
                     modal.dismiss()
-                    self.app.switch_screen("config_selection")
                     self.engine.is_running = False
                     await self.engine.close_connections()
                     return
@@ -1415,7 +1412,6 @@ class OperationPane(Container):
             else:
                 modal.write(f"[bold red]Error: {err}[/bold red]")
             modal.phase_report("Message Migration", "error", show_back=False)
-            import traceback
             logger.error(f"Migration Error: {traceback.format_exc()}")
         finally:
             self.engine.is_running = False
@@ -1442,82 +1438,137 @@ class OperationPane(Container):
             await self._perform_auto_matching()
 
             # 1. Missing channels check
-            full_d = await self.engine.discord_reader.get_channels()
-            if hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
-                valid_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
-                d_channels = [c for c in full_d if c.id in valid_ids and c.type in [0, 5]]
+            if hasattr(self.engine.discord_reader, "get_all_channels"):
+                full_d = await self.engine.discord_reader.get_all_channels()
+                # Include TEXT (0), CATEGORY (4), and NEWS (5)
+                d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             else:
-                d_channels = [c for c in full_d if c.type in [0, 5]]
-
+                full_d = await self.engine.discord_reader.get_channels()
+                d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             missing_channels = []
             for d in d_channels:
-                tgt_id = self.engine.state.get_target_channel_id(str(d.id))
+                if d.type == 4:
+                    tgt_id = self.engine.state.get_target_category_id(str(d.id))
+                else:
+                    tgt_id = self.engine.state.get_target_channel_id(str(d.id))
                 if not tgt_id:
                     missing_channels.append(d)
 
             if missing_channels:
-                modal.write(f"\n[bold yellow]Found {len(missing_channels)} channels with backups but no target mapping.[/bold yellow]")
-                modal.write("[dim]Do you want to automatically create these missing channels now?[/dim]")
+                modal.write(f"\n[bold yellow]Found {len(missing_channels)} backed-up channels/categories missing from target platform:[/bold yellow]")
+                for mc in missing_channels:
+                    prefix = "[bold cyan]📁[/bold cyan] " if mc.type == 4 else "[bold white]#[/bold white] "
+                    modal.write(f"  {prefix}{mc.name}")
                 
                 choice = await modal.phase_wait_confirm(
                     show_continue=False,
                     show_id=True,
-                    btn_start_label=f"Yes, Create {len(missing_channels)} Missing Channels",
-                    btn_id_label="No, Skip Them",
+                    btn_start_label="Clone missing channels",
+                    btn_id_label="Skip missing channels",
                     btn_start_variant="primary",
-                    btn_start_tooltip="Create channels and map them",
-                    btn_id_tooltip="Skip them (Warning: may cause broken mentions)"
+                    btn_start_tooltip=f"Automatically create {len(missing_channels)} entities on target",
+                    btn_id_tooltip="Start migration without these channels"
                 )
                 
                 if choice == "btn_back":
                     modal.dismiss()
+                    await self.engine.close_connections()
                     return
                 elif choice == "btn_main_menu":
                     modal.dismiss()
-                    self.app.switch_screen("config_selection")
+                    await self.engine.close_connections()
                     return
                 
                 if choice == "btn_start_first":
-                    modal.set_status("Creating missing channels...")
+                    modal.set_status("Cloning missing categories and channels...")
+                    # Sort so categories (type 4) come first
+                    missing_channels.sort(key=lambda x: 0 if x.type == 4 else 1)
+                    
                     for mc in missing_channels:
                         try:
-                            modal.write(f"Creating channel '#{mc.name}'...")
-                            new_id = await self.engine.writer.create_channel(name=mc.name)
-                            # Link them
-                            self.engine.state.set_target_channel_id(str(mc.id), new_id, self.engine.platform)
-                            modal.write(f"[green]Created {mc.name} ({new_id})[/green]")
+                            parent_target_id = None
+                            if mc.type == 4:
+                                modal.write(f"Creating category '[bold cyan]{mc.name}[/bold cyan]'...")
+                                new_id = await self.engine.writer.create_channel(name=mc.name, type=4)
+                                self.engine.state.set_target_category_mapping(str(mc.id), new_id)
+                                modal.write(f"[green]Created Category {mc.name} ({new_id})[/green]")
+                            else:
+                                if hasattr(mc, 'category_id') and mc.category_id:
+                                    parent_target_id = self.engine.state.get_target_category_id(str(mc.category_id))
+                                
+                                modal.write(f"Creating channel '#{mc.name}'...")
+                                new_id = await self.engine.writer.create_channel(name=mc.name, parent_id=parent_target_id)
+                                self.engine.state.set_target_channel_id(str(mc.id), new_id, self.engine.target_platform)
+                                modal.write(f"[green]Created Channel {mc.name} ({new_id})[/green]")
                         except Exception as e:
+                            logger.error(f"Failed to create {mc.name}: {e}\n{traceback.format_exc()}")
                             modal.write(f"[red]Failed to create {mc.name}: {e}[/red]")
+                elif choice == "btn_id":
+                    # Skip missing channels: remove them from the active list
+                    missing_ids = {str(c.id) for c in missing_channels}
+                    d_channels = [c for c in d_channels if str(c.id) not in missing_ids]
             
             # 2. Resumption check
             all_mapped_tgt_ids = []
-            # Check regular channels
-            for did in [str(c.id) for c in d_channels]:
+            # Check regular text channels (exclude categories for resume check)
+            for c in d_channels:
+                if c.type == 4: continue
+                did = str(c.id)
                 tid = self.engine.state.get_target_channel_id(did)
                 if tid: all_mapped_tgt_ids.append(tid)
             
-            # Also check threads
+            # Also check threads (filtering to only include those belonging to active channels)
+            active_channel_ids = {str(c.id) for c in d_channels}
             if hasattr(self.engine.discord_reader, "get_active_threads"):
                 threads = await self.engine.discord_reader.get_active_threads()
                 for t in threads:
+                    pid = str(getattr(t, 'parent_id', getattr(t, 'channel_id', None)))
+                    if pid not in active_channel_ids: continue
                     tid = self.engine.state.get_target_channel_id(str(t.id))
                     if tid: all_mapped_tgt_ids.append(tid)
+            
+            # 2.5 Filter by actual content (Only for BackupReader)
+            # If a channel has NO messages in the backup, it will always be at 0 progress.
+            # We exclude those from the global MIN calculation to avoid pulling it to 0.
+            if hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
+                backed_up_src_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+                backed_up_src_ids_str = {str(sid) for sid in backed_up_src_ids}
                 
-            min_last_id = self.engine.state.get_global_min_last_message_id(all_mapped_tgt_ids)
+                filtered_tgt_ids = []
+                # Find which target IDs belong to source channels that HAVE messages
+                for c in d_channels: # (d_channels is already filtered for skipped)
+                    if str(c.id) in backed_up_src_ids_str:
+                        tid = self.engine.state.get_target_channel_id(str(c.id))
+                        if tid: filtered_tgt_ids.append(tid)
+                
+                # Also check threads
+                if hasattr(self.engine.discord_reader, "threads"):
+                    for t in self.engine.discord_reader.threads:
+                        if str(t.id) in backed_up_src_ids_str:
+                            tid = self.engine.state.get_target_channel_id(str(t.id))
+                            if tid: filtered_tgt_ids.append(tid)
+                
+                if filtered_tgt_ids:
+                    all_mapped_tgt_ids = filtered_tgt_ids
+
+            # 2.6 Resume Point: Prioritize Global waterfall tracker, fallback to channel minimums
+            min_last_id = self.engine.state.get_waterfall_last_id()
+            if min_last_id is None:
+                min_last_id = self.engine.state.get_global_min_last_message_id(all_mapped_tgt_ids)
             
             modal.write(f"\n[bold cyan]Waterfall Migration Resume Point:[/bold cyan]")
-            if min_last_id:
+            if min_last_id is not None:
                 modal.write(f"Minimum unmigrated message ID found: [green]{min_last_id}[/green]")
             else:
                 modal.write("No previous migration state found. Starting from the beginning.")
             
             choice = await modal.phase_wait_confirm(
-                show_continue=bool(min_last_id),
+                show_continue=min_last_id is not None,
                 show_id=False,
                 btn_start_label="Start From Beginning",
                 btn_start_tooltip="Safe, skips duplicates automatically",
-                btn_start_variant="default" if min_last_id else "primary",
-                btn_continue_label=f"Continue from ID {min_last_id}" if min_last_id else "Continue Migration",
+                btn_start_variant="default" if min_last_id is not None else "primary",
+                btn_continue_label=f"Continue from ID {min_last_id if min_last_id is not None else 0}" if min_last_id is not None else "Continue Migration",
                 btn_continue_tooltip="Fastest"
             )
             
@@ -1528,11 +1579,10 @@ class OperationPane(Container):
             elif choice == "btn_main_menu":
                 modal.dismiss()
                 await self.engine.close_connections()
-                self.app.switch_screen("config_selection")
                 return
                 
             after_id = None
-            if choice == "btn_continue" and min_last_id:
+            if choice == "btn_continue" and min_last_id is not None:
                 after_id = int(min_last_id)
             
             # Phase 3: Progress
@@ -1594,7 +1644,6 @@ class OperationPane(Container):
             modal.write(f"[bold red]Error: {err}[/bold red]")
             modal.phase_report("Waterfall Migration", "error", show_back=False)
             
-            import traceback
             logger.error(traceback.format_exc())
         finally:
             self.engine.is_running = False
@@ -1682,7 +1731,6 @@ class OperationPane(Container):
                 return
             elif choice == "btn_main_menu":
                 modal.dismiss()
-                self.app.switch_screen("config_selection")
                 return
 
             modal.cancel_callback = lambda: setattr(self.engine, "is_running", False)
@@ -1841,6 +1889,39 @@ class OperationPane(Container):
             logger.warning(f"Auto-matching: failed to fetch target data: {e}")
             return # Cannot match without target data
 
+        # 1.5 Cleanup deleted entities from mapping database
+        # This prevents "Ghost" mappings to channels/roles that were deleted on target
+        valid_chan_ids = {str(c.get("id")) for c in target_chans_raw}
+        valid_cat_ids = {str(c.get("id")) for c in target_chans_raw if c.get("type") == 4}
+        valid_role_ids = set(target_roles_map.values())
+        valid_emoji_ids = set(target_emojis_map.values())
+
+        # Channels
+        for src_id, tgt_id in self.engine.state.channel_map.items():
+            if str(tgt_id) not in valid_chan_ids:
+                logger.info(f"Auto-matching: clearing deleted channel mapping {src_id} -> {tgt_id}")
+                self.engine.state.remove_target_channel_mapping(src_id)
+
+        # Categories
+        for src_id, tgt_id in self.engine.state.category_map.items():
+            if str(tgt_id) not in valid_cat_ids:
+                logger.info(f"Auto-matching: clearing deleted category mapping {src_id} -> {tgt_id}")
+                self.engine.state.remove_category_mapping(src_id)
+
+        # Roles
+        for src_id, tgt_id in self.engine.state.role_map.items():
+            if str(tgt_id) not in valid_role_ids:
+                logger.info(f"Auto-matching: clearing deleted role mapping {src_id} -> {tgt_id}")
+                self.engine.state.remove_role_mapping(src_id)
+
+        # Emojis
+        for src_id, tgt_id in self.engine.state.emoji_map.items():
+            if str(tgt_id) not in valid_emoji_ids:
+                # Emojis might be URLs in some platforms, but we check if they are IDs first
+                if isinstance(tgt_id, str) and tgt_id.isdigit():
+                    logger.info(f"Auto-matching: clearing deleted emoji mapping {src_id} -> {tgt_id}")
+                    self.engine.state.remove_emoji_mapping(src_id)
+
         # 2. Match entities
         try:
             # Roles
@@ -1884,6 +1965,7 @@ class OperationPane(Container):
                         logger.info(f"Auto-matched Sticker: {s.name} -> {target_stickers_map[name_l]}")
                         self.engine.state.set_target_sticker_mapping(s.id, target_stickers_map[name_l])
         except Exception as e:
+            logger.error(f"Auto-matching error: {e}\n{traceback.format_exc()}")
             logger.warning(f"Auto-matching error: {e}")
 
         return {
@@ -2148,7 +2230,6 @@ class OperationPane(Container):
                     after_id = verified_id
                 elif choice == "btn_main_menu":
                     modal_prog.dismiss()
-                    self.app.switch_screen("config_selection")
                     return
                 
                 # If we are here, proceeding either via Start First or Start from ID (after_id)
@@ -2259,7 +2340,7 @@ class OperationPane(Container):
                 self.engine.is_running = False
                 await self.engine.close_connections()
                 if choice == "btn_main_menu":
-                    self.app.switch_screen("config_selection")
+                    pass
                 return
 
             modal_prog.cancel_callback = lambda: setattr(self.engine, "is_running", False)

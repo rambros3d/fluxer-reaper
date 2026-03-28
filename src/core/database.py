@@ -451,34 +451,48 @@ class MigrationDatabase:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
 
-    def get_global_min_last_message_id(self, mapped_channel_ids: List[str]) -> Optional[str]:
-        """Returns the minimum last_msg_id across all mapped channels. If any mapped channel has NO last_msg_id, returns None."""
-        if not mapped_channel_ids:
+
+    def get_global_min_last_message_id(self, all_mapped_ids: List[str]) -> Optional[int]:
+        """
+        Returns the minimum last_msg_id successfully migrated across all mapped channels/threads.
+        If any mapped entity has no progress record, it is treated as ID 0.
+        Returns None only if NO progress has been made across ANY entity.
+        """
+        if not all_mapped_ids:
             return None
             
         conn = self._get_conn()
-        placeholders = ",".join(["?"] * len(mapped_channel_ids))
-        rows = conn.execute(f"SELECT last_msg_id FROM channel_tracking WHERE channel_id IN ({placeholders})", mapped_channel_ids).fetchall()
+        placeholders = ",".join(["?"] * len(all_mapped_ids))
         
-        # If the number of tracked channels is less than mapped, it means some mapped channels haven't started.
-        if len(rows) < len(mapped_channel_ids):
-            return None
-            
-        # Parse all ids
+        # 1. Get last message IDs from channel tracking
+        c_rows = conn.execute(f"SELECT channel_id, last_msg_id FROM channel_tracking WHERE channel_id IN ({placeholders})", all_mapped_ids).fetchall()
+        c_map = {r["channel_id"]: r["last_msg_id"] for r in c_rows}
+        
+        # 2. Get last message IDs from thread tracking
+        t_rows = conn.execute(f"SELECT thread_id, last_msg_id FROM thread_tracking WHERE thread_id IN ({placeholders})", all_mapped_ids).fetchall()
+        t_map = {r["thread_id"]: r["last_msg_id"] for r in t_rows}
+        
+        # Combine maps
+        progress_map = {**c_map, **t_map}
+        
+        # 3. Aggregate IDs
         ids = []
-        for r in rows:
-            val = r["last_msg_id"]
-            if not val:
-                return None  # One channel has no messages yet
-            try:
-                ids.append(int(val))
-            except ValueError:
-                pass
-                
-        if not ids:
+        has_any_progress = False
+        for mid in all_mapped_ids:
+            last_id = progress_map.get(mid)
+            if not last_id:
+                ids.append(0) # Unmigrated entity
+            else:
+                try:
+                    ids.append(int(last_id))
+                    has_any_progress = True
+                except (ValueError, TypeError):
+                    ids.append(0)
+                    
+        if not has_any_progress:
             return None
             
-        return str(min(ids))
+        return min(ids)
 
     # Thread methods similar to channel methods
     def set_thread_message_mapping(self, channel_id: str, thread_id: str, source_id: str, target_id: str, timestamp: str = None):
@@ -524,6 +538,18 @@ class MigrationDatabase:
         if row:
             return dict(row)
         return {"last_msg_id": None, "last_msg_ts": None, "msg_count": 0, "file_count": 0}
+
+    def get_all_channel_tracking_ids(self) -> Dict[str, str]:
+        """Returns a map of channel_id -> last_msg_id for all tracked channels."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT channel_id, last_msg_id FROM channel_tracking WHERE last_msg_id IS NOT NULL").fetchall()
+        return {str(row["channel_id"]): str(row["last_msg_id"]) for row in rows}
+
+    def get_all_thread_tracking_ids(self) -> Dict[str, str]:
+        """Returns a map of thread_id -> last_msg_id for all tracked threads."""
+        conn = self._get_conn()
+        rows = conn.execute("SELECT thread_id, last_msg_id FROM thread_tracking WHERE last_msg_id IS NOT NULL").fetchall()
+        return {str(row["thread_id"]): str(row["last_msg_id"]) for row in rows}
 
     def clear_channel_data(self, channel_id: str):
         """Purge all mappings and tracking data for a specific channel and its threads."""

@@ -543,8 +543,11 @@ async def migrate_messages(
                     except Exception as e:
                         logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {e}")
                 
+            # Check for existing mapping to avoid duplicates when resuming
+            if context.state.get_target_message_id(target_channel_id, str(msg.id)):
+                continue
+                
             try:
-                # Check if this message is a reply
                 reply_to_fluxer_id = None
                 if msg.reference and msg.reference.message_id:
                     reply_to_fluxer_id = context.state.get_fluxer_message_id(target_channel_id, str(msg.reference.message_id))
@@ -676,9 +679,26 @@ async def analyze_global_migration(context: MigrationContext, after_message_id: 
     
     # In global mode, thread messages are returned natively in timestamp order by global fetch if they're in the DB
     # However we just count them if the fetcher yields them.
+    # Fetch global progress map to skip migrated messages efficiently
+    progress_map = context.state.get_all_last_message_ids()
+    
     async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
         if not context.is_running:
             break
+            
+        # Determine target channel to check for existing mapping
+        if not msg.channel:
+            continue
+            
+        target_channel_id = context.state.get_target_channel_id(str(msg.channel.id))
+        if not target_channel_id:
+            continue
+
+        # Efficient skip: if message ID is <= last migrated ID for this channel/thread
+        # This is the primary resume mechanism: wait until we pass the last migrated ID for this channel
+        last_id = progress_map.get(str(msg.channel.id))
+        if last_id and msg.id <= int(last_id):
+            continue
             
         if msg.type not in [
             context.discord_reader.MESSAGE_TYPE_DEFAULT,
@@ -738,6 +758,9 @@ async def migrate_global_messages(
     db_media = context.discord_reader.db.get_all_media() if context.discord_reader.db else {}
     target_server_id = getattr(context.fluxer_writer, "server_id", None)
     
+    # Fetch global progress map to skip migrated messages efficiently
+    progress_map = context.state.get_all_last_message_ids()
+
     try:
         async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
             if not context.is_running:
@@ -757,9 +780,17 @@ async def migrate_global_messages(
                 continue
                 
             # Determine target channel
+            if not msg.channel:
+                continue
+                
             target_channel_id = context.state.get_target_channel_id(str(msg.channel.id))
             if not target_channel_id:
-                logger.debug(f"Skipping msg {msg.id}: channel {msg.channel.id} not mapped.")
+                continue
+
+            # Efficient skip: if message ID is <= last migrated ID for this channel/thread
+            # This ensures we only resume a channel once we reach its last known progress point
+            last_id = progress_map.get(str(target_channel_id))
+            if last_id and msg.id <= int(last_id):
                 continue
                 
             # If it's a thread message, we need to handle it based on if it's the thread starter or a reply
@@ -874,6 +905,7 @@ async def migrate_global_messages(
                 if fluxer_msg_id:
                     context.state.set_target_message_mapping(target_channel_id, msg.id, fluxer_msg_id)
                     context.state.update_last_message_id(target_channel_id, msg.id)
+                    context.state.set_waterfall_last_id(msg.id)
                     stats["attachments"] += len(files) if files else 0
 
                 stats["messages"] += 1
