@@ -4,6 +4,7 @@ import re
 import json
 import io
 from typing import Callable, Awaitable, Dict, Any, List
+from pathlib import Path
 
 try:
     from lottie.objects import Animation
@@ -27,22 +28,25 @@ def clean_mentions(content: str, guild, user_mentions=None, role_mentions=None, 
         uid = int(match.group(1))
         if anonymize_users and state:
             alias = state.get_user_alias(str(uid))
-            return f"`@{alias}`"
+            return f"`@{alias}`" if alias else "`@Anonymized User`"
+        
         # 1. Try provided guild
         member = guild.get_member(uid)
         if member:
             return f"`@{member.display_name}`"
-        # 2. Try message's user_mentions
+        
+        # 2. Try provided user_mentions
         if user_mentions:
-            for u in user_mentions:
-                if u.id == uid:
-                    return f"`@{getattr(u, 'display_name', u.name)}`"
+            m = next((u for u in user_mentions if u.id == uid), None)
+            if m:
+                return f"`@{m.display_name}`"
+        
         # 3. Try global cache via guild.client
         if hasattr(guild, 'client'):
             user = guild.client.get_user(uid)
             if user:
                 return f"`@{user.name}`"
-        return f"`@Unknown User`"
+        return "`@Unknown User`"
         
     def replace_role(match):
         rid = int(match.group(1))
@@ -539,8 +543,11 @@ async def migrate_messages(
                     except Exception as e:
                         logger.error(f"Failed to download sticker {getattr(s, 'name', 'unknown')}: {e}")
                 
+            # Check for existing mapping to avoid duplicates when resuming
+            if context.state.get_target_message_id(target_channel_id, str(msg.id)):
+                continue
+                
             try:
-                # Check if this message is a reply
                 reply_to_fluxer_id = None
                 if msg.reference and msg.reference.message_id:
                     reply_to_fluxer_id = context.state.get_fluxer_message_id(target_channel_id, str(msg.reference.message_id))
@@ -557,23 +564,22 @@ async def migrate_messages(
                 if thread_name and stats["messages"] == 0:
                     content = f"> <<< THREAD: **{thread_name}** >>>\n{content}"
                 
-                # Get or generate alias
+                # Always ensure alias is created/retrieved to populate user_alias table
                 alias = context.state.get_user_alias(str(msg.author.id))
-
-                if context.config.anonymize_users:
-                    author_name = alias
-                    avatar_url = f"https://api.dicebear.com/9.x/fun-emoji/jpg?seed={alias}"
+                
+                anonymize_users = context.config.anonymize_users if hasattr(context, 'config') else False
+                if anonymize_users:
+                    author_name = alias or "Anonymized User"
+                    author_avatar_url = None
                 else:
                     author_name = msg.author.display_name
-                    avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar.url else None
-                    if avatar_url and not avatar_url.startswith("http"):
-                        avatar_url = None
+                    author_avatar_url = msg.author.avatar.url if hasattr(msg.author, 'avatar') and msg.author.avatar else None
 
                 logger.debug(f"Fluxer: Calling send_message for Discord ID {msg.id}")
                 fluxer_msg_id = await context.fluxer_writer.send_message(
                     channel_id=target_channel_id,
                     author_name=author_name,
-                    author_avatar_url=avatar_url,
+                    author_avatar_url=author_avatar_url,
                     content=content,
                     timestamp=int(msg.created_at.timestamp()),
                     files=files if files else None,
@@ -662,4 +668,262 @@ async def migrate_messages(
         context.is_running = False
         pass
     
+    return stats
+
+
+async def analyze_global_migration(context: MigrationContext, after_message_id: int | None = None, inclusive: bool = False, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None) -> Dict[str, int]:
+    """
+    Scans the entire server history to count messages, threads, and attachments globally.
+    """
+    stats = {"messages": 0, "threads": 0, "attachments": 0}
+    
+    # In global mode, thread messages are returned natively in timestamp order by global fetch if they're in the DB
+    # However we just count them if the fetcher yields them.
+    # Fetch global progress map to skip migrated messages efficiently
+    progress_map = context.state.get_all_last_message_ids()
+    
+    async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
+        if not context.is_running:
+            break
+            
+        # Determine target channel to check for existing mapping
+        if not msg.channel:
+            continue
+            
+        target_channel_id = context.state.get_target_channel_id(str(msg.channel.id))
+        if not target_channel_id:
+            continue
+
+        # Efficient skip: if message ID is <= last migrated ID for this channel/thread
+        # This is the primary resume mechanism: wait until we pass the last migrated ID for this channel
+        last_id = progress_map.get(str(msg.channel.id))
+        if last_id and msg.id <= int(last_id):
+            continue
+            
+        if msg.type not in [
+            context.discord_reader.MESSAGE_TYPE_DEFAULT,
+            context.discord_reader.MESSAGE_TYPE_REPLY,
+            context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
+            context.discord_reader.MESSAGE_TYPE_FORWARD,
+            context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+            context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+            context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+        ]:
+            continue
+            
+        stats["messages"] += 1
+        stats["attachments"] += len(msg.attachments)
+        if hasattr(msg, 'thread') and msg.thread:
+            # We don't recursively traverse here, we just count the fact there is a thread
+            # The actual thread messages are also fetched by the global fetcher because they have their own timestamp/id
+            stats["threads"] += 1
+            
+        if progress_callback and stats["messages"] % 100 == 0:
+            await progress_callback(stats)
+            
+    if progress_callback:
+        await progress_callback(stats)
+        
+    return stats
+
+
+async def migrate_global_messages(
+    context: MigrationContext,
+    after_message_id: int | None = None,
+    inclusive: bool = False,
+    progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None
+) -> Dict[str, Any]:
+    """
+    Migrates messages across all channels chronologically.
+    """
+    stats = {
+        "messages": 0,
+        "threads": 0,
+        "attachments": 0,
+        "last_message_content": "",
+        "last_message_author": "",
+        "first_message_url": None,
+        "last_message_url": None
+    }
+    
+    processed_threads = set()
+    logger.info("Starting Global Waterfall Migration for Fluxer...")
+    
+    # Keep track of active thread mapping natively to pass parent target IDs if needed
+    thread_to_target_channel = {}
+    
+    # Emojis and mapped users cache setup
+    emoji_map = context.state.emoji_map
+    db_media = context.discord_reader.db.get_all_media() if context.discord_reader.db else {}
+    target_server_id = getattr(context.fluxer_writer, "server_id", None)
+    
+    # Fetch global progress map to skip migrated messages efficiently
+    progress_map = context.state.get_all_last_message_ids()
+
+    try:
+        async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
+            if not context.is_running:
+                logger.warning("Global migration interrupted by user")
+                break
+                
+            if msg.type not in [
+                context.discord_reader.MESSAGE_TYPE_DEFAULT,
+                context.discord_reader.MESSAGE_TYPE_REPLY,
+                context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
+                context.discord_reader.MESSAGE_TYPE_FORWARD,
+                context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+                context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
+                context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+            ]:
+                continue
+                
+            # Determine target channel
+            if not msg.channel:
+                continue
+                
+            target_channel_id = context.state.get_target_channel_id(str(msg.channel.id))
+            if not target_channel_id:
+                continue
+
+            # Efficient skip: if message ID is <= last migrated ID for this channel/thread
+            # This ensures we only resume a channel once we reach its last known progress point
+            last_id = progress_map.get(str(target_channel_id))
+            if last_id and msg.id <= int(last_id):
+                continue
+                
+            # If it's a thread message, we need to handle it based on if it's the thread starter or a reply
+            parent_target_id = None
+            if hasattr(msg, 'thread') and msg.thread and msg.id == msg.thread.id:
+                processed_threads.add(msg.thread.id)
+                stats["threads"] += 1
+            elif msg.channel.type in [11, 12]:  # Thread channels
+                # It's a message IN a thread.
+                # In Fluxer, threads might just be linear messages or threaded replies depending on schema
+                # For basic migration we just send it to the parent mapped target channel.
+                # The parent mapped target channel ID should already be calculated correctly by get_target_channel_id (which returns mapped thread or parent channel)
+                pass
+
+            # Formatting
+            files = []
+            file_names = []
+            
+            # Always ensure alias is created/retrieved to populate user_alias table
+            alias = context.state.get_user_alias(str(msg.author.id))
+            
+            anonymize_users = context.config.anonymize_users if hasattr(context, 'config') else False
+            
+            if anonymize_users:
+                author_name = alias or "Anonymized User"
+                author_avatar_url = None
+            else:
+                author_name = msg.author.display_name
+                author_avatar_url = msg.author.avatar.url if hasattr(msg.author, 'avatar') and msg.author.avatar else None
+
+            for att in msg.attachments:
+                media_info = db_media.get(att.local_hash) if db_media else None
+                local_path = None
+                if media_info:
+                    local_path = Path(media_info["local_path"])
+                elif hasattr(att, 'read'):
+                    # Fallback
+                    pass 
+
+                if local_path and local_path.exists():
+                    files.append(local_path)
+                    file_names.append(att.filename)
+
+            content = msg.content or ""
+            
+            # Stickers
+            for sticker in msg.stickers:
+                sticker_name = sticker.name
+                sticker_url = sticker.url
+                
+                # Check for uploaded media pool logic first
+                s_hash = sticker.local_hash
+                sticker_file = None
+                s_media = db_media.get(s_hash) if db_media and s_hash else None
+                if s_media:
+                    s_path = Path(s_media["local_path"])
+                    if s_path.exists():
+                        sticker_file = s_path
+                
+                content += f"\n[Sticker: {sticker_name}]"
+                if sticker_file:
+                    files.append(sticker_file)
+                    file_names.append(f"sticker_{sticker_name}.png")
+
+            content = clean_mentions(
+                content=content,
+                guild=context.discord_reader.guild,
+                user_mentions=msg.mentions,
+                role_mentions=msg.role_mentions,
+                channel_mentions=msg.channel_mentions,
+                emoji_map=emoji_map,
+                channel_map=context.state.channel_map,
+                state=context.state,
+                target_server_id=target_server_id,
+                channel_names=context.channel_names if hasattr(context, 'channel_names') else None,
+                anonymize_users=anonymize_users
+            )
+
+            if not content and not files:
+                logger.debug(f"Message {msg.id} empty after processing, skipping.")
+                continue
+                
+            timestamp_int = int(msg.created_at.timestamp())
+
+            if msg.reference and msg.reference.message_id:
+                # Resolve the author of the message being replied to
+                source_ref_msg = await context.discord_reader.get_message(msg.channel.id, msg.reference.message_id)
+                if source_ref_msg and source_ref_msg.author:
+                    ref_author_id = str(source_ref_msg.author.id)
+                    if anonymize_users:
+                        ref_name = context.state.get_user_alias(ref_author_id) or "Anonymized User"
+                    else:
+                        ref_name = source_ref_msg.author.display_name
+                    content = f"`@{ref_name}`\n{content}"
+                else:
+                    # Fallback if author cannot be resolved (e.g. deleted/missing from backup)
+                    tgt_reply = context.state.get_target_message_id(target_channel_id, msg.reference.message_id)
+                    if tgt_reply:
+                        content = f"[Reply to {tgt_reply}]\n{content}"
+
+            try:
+                fluxer_msg_id = await context.fluxer_writer.send_message(
+                    channel_id=target_channel_id,
+                    author_name=author_name,
+                    author_avatar_url=author_avatar_url,
+                    content=content,
+                    files=files,
+                    timestamp=timestamp_int,
+                    embeds=msg.embeds
+                )
+                
+                if fluxer_msg_id:
+                    context.state.set_target_message_mapping(target_channel_id, msg.id, fluxer_msg_id)
+                    context.state.update_last_message_id(target_channel_id, msg.id)
+                    context.state.set_waterfall_last_id(msg.id)
+                    stats["attachments"] += len(files) if files else 0
+
+                stats["messages"] += 1
+                stats["last_message_content"] = content
+                stats["last_message_author"] = author_name
+
+                if not stats["first_message_url"]:
+                    stats["first_message_url"] = msg.jump_url
+                stats["last_message_url"] = msg.jump_url
+                
+                if progress_callback:
+                    await progress_callback(stats)
+                    
+            except Exception as e:
+                logger.error(f"Failed to process global message {msg.id}: {e}")
+                
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        context.is_running = False
+        pass
+        
     return stats

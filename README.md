@@ -9,8 +9,8 @@
 
 ![Disco Reaper](images/fluxer-reaper.jpg)
 
-### Modern Terminal Interface
-The tool now features a unified, intuitive TUI (Terminal User Interface) - no more text commands
+### Video Guide - [Youtube](https://www.youtube.com/watch?v=SwIPQDxLzqA)
+
 
 | Features | Fluxer | Stoat |
 | :--- | :---: | :---: |

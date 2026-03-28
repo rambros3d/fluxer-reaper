@@ -38,7 +38,14 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("channel", str(discord_id))
 
+    def remove_target_channel_mapping(self, discord_id: int | str):
+        if self.db:
+            self.db.delete_server_mapping("channel", str(discord_id))
     
+    def set_target_channel_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_channel_mapping to handle legacy calls."""
+        self.set_channel_mapping(discord_id, target_id)
+        
     get_fluxer_channel_id = get_target_channel_id
     set_target_channel_mapping = set_channel_mapping
 
@@ -58,6 +65,10 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("category", str(discord_id))
     
+    def set_target_category_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_category_mapping to handle legacy calls."""
+        self.set_category_mapping(discord_id, target_id)
+        
     get_fluxer_category_id = get_category_mapping
     get_target_category_id = get_category_mapping
     set_target_category_mapping = set_category_mapping
@@ -78,6 +89,10 @@ class MigrationState:
         if self.db:
             self.db.delete_server_mapping("role", str(discord_id))
     
+    def set_target_role_id(self, discord_id: int | str, target_id: str, *args):
+        """Alias for set_role_mapping to handle legacy calls."""
+        self.set_role_mapping(discord_id, target_id)
+        
     get_fluxer_role_id = get_role_mapping
     get_target_role_id = get_role_mapping
     set_target_role_mapping = set_role_mapping
@@ -212,8 +227,34 @@ class MigrationState:
         
     def get_last_message_id(self, target_channel_id: str) -> str | None:
         if self._ensure_db():
-            return self.db.get_channel_tracking(str(target_channel_id)).get("last_msg_id")
+            tracking = self.db.get_channel_tracking(str(target_channel_id))
+            return tracking.get("last_msg_id") if tracking else None
         return None
+        
+
+    def get_global_min_last_message_id(self, all_mapped_ids: List[str]) -> int | None:
+        """Returns the absolute minimum last_msg_id among the given list of mapped target IDs (channels and threads)."""
+        if self._ensure_db():
+            return self.db.get_global_min_last_message_id(all_mapped_ids)
+        return None
+
+    def set_waterfall_last_id(self, last_id: str | int):
+        if self.db:
+            self.db.set_metadata("waterfall_last_id", str(last_id))
+            
+    def get_waterfall_last_id(self) -> int | None:
+        if self.db:
+            val = self.db.get_metadata("waterfall_last_id")
+            return int(val) if val else None
+        return None
+        
+    def get_all_last_message_ids(self) -> Dict[str, str]:
+        """Returns a combined map of channel_id/thread_id -> last_msg_id."""
+        if self._ensure_db():
+            c_map = self.db.get_all_channel_tracking_ids()
+            t_map = self.db.get_all_thread_tracking_ids()
+            return {**c_map, **t_map}
+        return {}
 
     def get_thread_last_message_id(self, target_channel_id: str, thread_id: str) -> str | None:
         if self._ensure_db():

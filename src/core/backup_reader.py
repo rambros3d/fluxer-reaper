@@ -1417,6 +1417,42 @@ class BackupReader:
             if len(msgs) < batch_size:
                 break
 
+    async def fetch_global_message_history(
+        self,
+        limit: int = None,
+        after_id: int = None
+    ) -> AsyncGenerator["BackupMessage", None]:
+        """Yields BackupMessages globally from SQLite across all channels, natively ordered by timestamp/ID."""
+        if not self.db: return
+        
+        offset = 0
+        batch_size = 100
+        count = 0
+        
+        while True:
+            actual_limit = batch_size
+            if limit:
+                rem = limit - count
+                if rem <= 0: break
+                actual_limit = min(batch_size, rem)
+            
+            msgs = self.db.get_global_messages_paged(
+                limit=actual_limit, 
+                offset=offset, 
+                after_id=str(after_id) if after_id else None
+            )
+            
+            if not msgs:
+                break
+                
+            for m in msgs:
+                yield self._hydrate_message(m)
+                count += 1
+                
+            offset += len(msgs)
+            if len(msgs) < batch_size:
+                break
+
     # ── download helpers ─────────────────────────────────────────────────
 
     async def download_emoji(self, emoji: BackupEmoji) -> bytes:
