@@ -4,7 +4,7 @@ import logging
 import json
 import random
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, List, Union
 import threading
 import sys
 from src.core.utils import parse_snowflake

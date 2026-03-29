@@ -232,7 +232,7 @@ class MigrationState:
         return None
         
 
-    def get_global_min_last_message_id(self, all_mapped_ids: List[str]) -> int | None:
+    def get_global_min_last_message_id(self, all_mapped_ids: list[str]) -> int | None:
         """Returns the absolute minimum last_msg_id among the given list of mapped target IDs (channels and threads)."""
         if self._ensure_db():
             return self.db.get_global_min_last_message_id(all_mapped_ids)
