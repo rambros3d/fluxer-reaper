@@ -388,7 +388,7 @@ class FluxerWriter:
             print(f"Failed to send marker: {e}")
             return None
 
-    async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool, position: Optional[int] = None) -> str:
+    async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool, permissions: int, position: Optional[int] = None) -> str:
         """
         Creates a new role in the Fluxer community.
         Returns the new Fluxer role ID.
@@ -402,6 +402,7 @@ class FluxerWriter:
                 color=color,
                 hoist=hoist,
                 mentionable=mentionable,
+                permissions=permissions,
                 position=position
             )
             return str(role["id"])

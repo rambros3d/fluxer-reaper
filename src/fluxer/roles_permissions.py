@@ -132,8 +132,8 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
     """Copies roles and their baseline permissions. Returns a list of cloned role names."""
     # Sort roles by position to respect Discord hierarchy
-    roles = sorted(await context.discord_reader.get_roles(), key=lambda r: r.position)
-    
+    roles = sorted(await context.discord_reader.get_roles(), key=lambda r: r.position, reverse=True)
+
     if not force:
         roles = [r for r in roles if not context.state.get_fluxer_role_id(str(r.id))]
 
@@ -148,11 +148,13 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
             break
             
         logger.debug(f"Creating role: {role.name}")
+        # No permission mapping nescessary since fluxer uses the same permission map as discord
         fluxer_id = await context.fluxer_writer.create_role(
             name=role.name,
             color=role.color.value,
             hoist=role.hoist,
             mentionable=role.mentionable,
+            permissions=role.permissions.value,
             position=role.position
         )
         if fluxer_id:
