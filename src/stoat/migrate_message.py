@@ -826,8 +826,8 @@ async def migrate_global_messages(
             content = msg.content or ""
             
             for sticker in msg.stickers:
-                sticker_name = sticker.name
-                s_hash = sticker.local_hash
+                sticker_name = getattr(sticker, "name", "unknown")
+                s_hash = getattr(sticker, "local_hash", None)
                 sticker_file = None
                 s_media = db_media.get(s_hash) if db_media and s_hash else None
                 if s_media:
@@ -837,8 +837,15 @@ async def migrate_global_messages(
                 
                 content += f"\n[Sticker: {sticker_name}]"
                 if sticker_file:
-                    files.append(sticker_file)
-                    file_names.append(f"sticker_{sticker_name}.png")
+                    try:
+                        with open(sticker_file, "rb") as f:
+                            files.append({
+                                "filename": f"sticker_{sticker_name}.png",
+                                "data": f.read(),
+                                "content_type": "image/png"
+                            })
+                    except Exception as e:
+                        logger.error(f"Failed to read sticker file {sticker_file}: {e}")
 
             content = clean_mentions(
                 content=content,

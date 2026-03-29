@@ -530,12 +530,13 @@ class BackupEmoji:
 class BackupSticker:
     """Minimal stand-in for discord.GuildSticker."""
 
-    __slots__ = ("id", "name", "url", "format", "_backup_root", "_file_path")
+    __slots__ = ("id", "name", "url", "format", "_backup_root", "_file_path", "local_hash")
 
     def __init__(self, data: dict, backup_root: Path | None = None, media_pool: dict | None = None):
         if not isinstance(data, dict):
             self.id = 0
             self.name = "Sticker"
+            self.local_hash = None
             return
         self.id = parse_snowflake(data.get("id") or data.get("sticker_id", 0)) or 0
         self.name = data.get("name", "Sticker")
@@ -550,14 +551,14 @@ class BackupSticker:
         self._backup_root = backup_root
         
         # 1. Check if it's a CAS-based sticker (from message_stickers table)
-        local_hash = data.get("local_hash")
-        if local_hash and backup_root:
+        self.local_hash = data.get("local_hash")
+        if self.local_hash and backup_root:
             ext = ".png"
             if self.format == StickerFormatType.lottie: ext = ".json"
             elif self.format == StickerFormatType.apng: ext = ".png"
             elif self.format == StickerFormatType.gif: ext = ".gif"
             
-            self._file_path = backup_root / "attachments" / f"{local_hash}{ext}"
+            self._file_path = backup_root / "attachments" / f"{self.local_hash}{ext}"
         # 2. Check if it's a server asset sticker (legacy or manual save)
         elif data.get("filename") and backup_root:
             self._file_path = backup_root / "server_assets" / data["filename"]

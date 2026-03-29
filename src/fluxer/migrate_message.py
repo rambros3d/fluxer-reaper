@@ -842,7 +842,7 @@ async def migrate_global_messages(
                 sticker_url = sticker.url
                 
                 # Check for uploaded media pool logic first
-                s_hash = sticker.local_hash
+                s_hash = getattr(sticker, "local_hash", None)
                 sticker_file = None
                 s_media = db_media.get(s_hash) if db_media and s_hash else None
                 if s_media:
