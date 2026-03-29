@@ -97,11 +97,17 @@ class MigrationContext:
             }
             
             # CONSISTENCY: Once target metadata is known, initialize the flat SQLite DB.
-            if results["target_community"] and results["target_community_name"]:
+            if results["target_community"]:
                 tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
+                
+                # Prefer the original discord community name for the DB file if available (e.g. from live load or backup)
+                db_name = results.get("discord_server_name")
+                if not db_name or db_name == "Not Found" or db_name == "Unknown":
+                    db_name = results.get("target_community_name") or "Unknown"
+
                 self.ensure_state_initialized(
                     str(tid or ""),
-                    results["target_community_name"]
+                    db_name
                 )
                 
             return results
@@ -120,6 +126,23 @@ class MigrationContext:
             return
             
         import re
+        import json
+        
+        # Override the target name explicitly with the original Discord source name if available.
+        # This fixes naming collisions and UI confusion like "Fluxer-123456.db" instead of "MyServer-123456.db"
+        try:
+            if hasattr(self.discord_reader, "guild") and getattr(self.discord_reader, "guild", None):
+                community_name = getattr(self.discord_reader, "guild").name
+            elif getattr(self, "source_mode", "live") == "backup" and hasattr(self.discord_reader, "backup_dir"):
+                b_dir = getattr(self.discord_reader, "backup_dir")
+                if b_dir and b_dir.exists():
+                    meta_file = b_dir / "metadata.json"
+                    if meta_file.exists():
+                        data = json.loads(meta_file.read_text())
+                        community_name = data.get("name", community_name)
+        except Exception:
+            pass
+
         clean_name = re.sub(r'[^\w\s-]', '', community_name).strip()
         clean_name = re.sub(r'[-\s]+', '_', clean_name)
         

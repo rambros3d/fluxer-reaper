@@ -905,7 +905,8 @@ async def migrate_global_messages(
                 if fluxer_msg_id:
                     context.state.set_target_message_mapping(target_channel_id, msg.id, fluxer_msg_id)
                     context.state.update_last_message_id(target_channel_id, msg.id)
-                    context.state.set_waterfall_last_id(msg.id)
+                    context.state.update_last_message_timestamp(target_channel_id, str(msg.created_at))
+                    context.state.increment_stats(target_channel_id, messages=1, files=len(files) if files else 0)
                     stats["attachments"] += len(files) if files else 0
 
                 stats["messages"] += 1

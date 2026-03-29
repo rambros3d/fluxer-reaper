@@ -238,16 +238,12 @@ class MigrationState:
             return self.db.get_global_min_last_message_id(all_mapped_ids)
         return None
 
-    def set_waterfall_last_id(self, last_id: str | int):
-        if self.db:
-            self.db.set_metadata("waterfall_last_id", str(last_id))
+
+    def clear_all_migration_data(self):
+        """Clears all message mapping and tracking state globally."""
+        if self._ensure_db():
+            self.db.clear_all_migration_data()
             
-    def get_waterfall_last_id(self) -> int | None:
-        if self.db:
-            val = self.db.get_metadata("waterfall_last_id")
-            return int(val) if val else None
-        return None
-        
     def get_all_last_message_ids(self) -> Dict[str, str]:
         """Returns a combined map of channel_id/thread_id -> last_msg_id."""
         if self._ensure_db():
