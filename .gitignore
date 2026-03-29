@@ -21,6 +21,7 @@ wheels/
 .installed.cfg
 *.egg
 *.txt
+*.exe
 
 # Virtual Environment
 venv/
@@ -44,7 +45,7 @@ tmp/
 test_*.py
 test_release.zip
 test_release/
-DiscoReaper-*
+DiscoReaper
 *.zip
 
 # App data files
