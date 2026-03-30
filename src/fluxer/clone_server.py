@@ -15,41 +15,52 @@ async def sync_channel_state(context: MigrationContext):
     channels = await context.discord_reader.get_channels()
     fluxer_channels = await context.fluxer_writer.get_channels()
     
-    # Build name -> id map and ID set for Fluxer for fast lookup
-    fluxer_name_map = {c.get("name"): str(c.get("id")) for c in fluxer_channels if c.get("name")}
-    fluxer_id_set = {str(c.get("id")) for c in fluxer_channels}
+    # Build maps for Fluxer lookup
+    # {name: id} for categories
+    fluxer_cats = {c.get("name"): str(c.get("id")) for c in fluxer_channels if c.get("type") == 4}
+    # {parent_id: {name: id}} for channels
+    fluxer_structure = {}
+    for c in fluxer_channels:
+        if c.get("type") == 4: continue
+        p_id = str(c.get("parent_id")) if c.get("parent_id") else "root"
+        if p_id not in fluxer_structure: fluxer_structure[p_id] = {}
+        fluxer_structure[p_id][c.get("name")] = str(c.get("id"))
     
+    fluxer_id_set = {str(c.get("id")) for c in fluxer_channels}
     updates = 0
     removals = 0
     
-    # 1. Verify and Sync Categories
+    # 1. Sync Categories
     for cat in categories:
         discord_id = str(cat.id)
         fluxer_id = context.state.get_fluxer_category_id(discord_id)
-        
         if fluxer_id:
             if fluxer_id not in fluxer_id_set:
                 context.state.remove_category_mapping(discord_id)
                 removals += 1
-        elif cat.name in fluxer_name_map:
-            context.state.set_category_mapping(discord_id, fluxer_name_map[cat.name])
+        elif cat.name in fluxer_cats:
+            context.state.set_category_mapping(discord_id, fluxer_cats[cat.name])
             updates += 1
                 
-    # 2. Verify and Sync Channels
+    # 2. Sync Channels (parent-aware)
     for ch in channels:
         discord_id = str(ch.id)
         fluxer_id = context.state.get_fluxer_channel_id(discord_id)
-        
         if fluxer_id:
             if fluxer_id not in fluxer_id_set:
                 context.state.remove_channel_mapping(discord_id)
                 removals += 1
-        elif ch.name in fluxer_name_map:
-            context.state.set_channel_mapping(discord_id, fluxer_name_map[ch.name])
-            updates += 1
+        else:
+            # Try to match by name within the mapped parent category
+            p_discord_id = str(ch.category_id) if ch.category_id else "root"
+            p_fluxer_id = context.state.get_fluxer_category_id(p_discord_id) if p_discord_id != "root" else "root"
+            
+            if p_fluxer_id in fluxer_structure and ch.name in fluxer_structure[p_fluxer_id]:
+                context.state.set_channel_mapping(discord_id, fluxer_structure[p_fluxer_id][ch.name])
+                updates += 1
     
     if updates > 0 or removals > 0:
-        logger.info(f"Channel sync: {updates} mapped, {removals} stale mappings removed")
+        logger.info(f"Fluxer Channel sync: {updates} mapped, {removals} stale mappings removed")
 
 
 async def migrate_channels(context: MigrationContext, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, force: bool = False) -> dict:

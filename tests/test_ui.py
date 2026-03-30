@@ -8,7 +8,7 @@ from src.ui.mode_screen import ModeScreen
 from src.core.configuration import AppConfig
 
 import os
-from textual.widgets import ListItem, ListView, Input, Button
+from textual.widgets import ListItem, ListView, Input, Button, Label
 
 
 
@@ -17,6 +17,10 @@ def mock_configs(tmp_path, log):
     reaper_dir = tmp_path / "ReaperFiles-TestConfig"
     reaper_dir.mkdir()
     (reaper_dir / "reaper_config.yaml").write_text("discord_bot_token: 'fake'\ndiscord_server_id: '123'\ntool_mode: 'backup_only'")
+    
+    autotest_dir = tmp_path / "ReaperFiles-AutoTest"
+    autotest_dir.mkdir()
+    (autotest_dir / "reaper_config.yaml").write_text("discord_bot_token: 'fake'\ndiscord_server_id: '123'\ntool_mode: 'backup_transfer'")
     
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -114,4 +118,47 @@ async def test_ui_operation_trigger(mock_configs, log):
                     log("test_ui_operation_trigger PASSED")
     except Exception as e:
         log(f"test_ui_operation_trigger FAILED: {e}")
+        raise
+
+@pytest.mark.asyncio
+async def test_ui_autotest_button(mock_configs, log):
+    """Verify visibility and trigger of the AUTO TEST button."""
+    log("Running test_ui_autotest_button")
+    from src.ui.shuttle_ops import OperationPane
+    try:
+        with patch("src.ui.main_app.ConfigSelectionScreen.check_updates", AsyncMock()):
+            with patch.object(OperationPane, "run_validate", AsyncMock()):
+                app = ReaperApp()
+                async with app.run_test() as pilot:
+                    await wait_for_screen(app, ConfigSelectionScreen)
+                    # Find the AutoTest item in the list
+                    lv = app.screen.query_one(ListView)
+                    autotest_index = -1
+                    for idx, item in enumerate(lv.children):
+                        if item.name == "AutoTest":
+                            autotest_index = idx
+                            break
+                    
+                    assert autotest_index != -1, "AutoTest profile not found in ListView"
+                    target_item = lv.children[autotest_index]
+                    await pilot.click(target_item)
+                    assert await wait_for_screen(app, ModeScreen), "Timed out waiting for ModeScreen"
+                    
+                    # Verify button is present
+                    pane = app.screen.query_one(OperationPane)
+                    btn = pane.query_one("#op_autotest", Button)
+                    assert btn.display is True
+                    assert "AUTO TEST" in str(btn.label)
+                    
+                    # Mock the sequence and trigger it
+                    with patch.object(OperationPane, "run_autotest_sequence", AsyncMock()) as mock_seq:
+                        btn.disabled = False
+                        await pilot.pause(0.1)
+                        btn.focus()
+                        await pilot.press("enter")
+                        await pilot.pause(0.1)
+                        assert mock_seq.called
+                        log("test_ui_autotest_button PASSED")
+    except Exception as e:
+        log(f"test_ui_autotest_button FAILED: {e}")
         raise

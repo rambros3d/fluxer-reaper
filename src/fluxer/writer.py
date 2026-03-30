@@ -343,14 +343,18 @@ class FluxerWriter:
 
                 logger.debug(f"Fluxer: Sending message via bot for user '{author_name}'")
                 try:
+                    kwargs = {
+                        "channel_id": channel_id,
+                        "content": final_bot_content,
+                        "embeds": normalized_embeds
+                    }
+                    if fluxer_files:
+                        kwargs["files"] = fluxer_files
+                    if message_reference:
+                        kwargs["message_reference"] = message_reference
+
                     msg_data = await asyncio.wait_for(
-                        self.client.send_message(
-                            channel_id=channel_id,
-                            content=final_bot_content,
-                            files=fluxer_files,
-                            embeds=normalized_embeds,
-                            message_reference=message_reference
-                        ),
+                        self.client.send_message(**kwargs),
                         timeout=45.0
                     )
                     logger.debug(f"Fluxer: Bot send complete, msg_id={msg_data.get('id') if msg_data else 'None'}")
@@ -374,19 +378,23 @@ class FluxerWriter:
         
         fluxer_files = None
         if files:
-            fluxer_files = [File(io.BytesIO(f["data"]), filename=f["filename"]) for f in files]
+            fluxer_files = [f if hasattr(f, "filename") else File(io.BytesIO(f["data"]), filename=f["filename"]) for f in files]
         
         message_reference = None
         if reply_to_message_id:
             message_reference = {"message_id": str(reply_to_message_id), "channel_id": str(channel_id)}
 
         try:
-            msg_data = await self.client.send_message(
-                channel_id=channel_id,
-                content=content,
-                files=fluxer_files,
-                message_reference=message_reference
-            )
+            kwargs = {
+                "channel_id": channel_id,
+                "content": content
+            }
+            if fluxer_files:
+                kwargs["files"] = fluxer_files
+            if message_reference:
+                kwargs["message_reference"] = message_reference
+
+            msg_data = await self.client.send_message(**kwargs)
             return str(msg_data["id"]) if msg_data else None
         except Exception as e:
             print(f"Failed to send marker: {e}")

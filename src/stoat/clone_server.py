@@ -16,41 +16,52 @@ async def sync_channel_state(context: MigrationContext):
     channels = await context.discord_reader.get_channels()
     target_channels = await context.writer.get_channels()
     
-    # Build name -> id map and ID set for Stoat for fast lookup
-    target_name_map = {c.get("name"): str(c.get("id")) for c in target_channels if c.get("name")}
+    # Build maps for Stoat lookup
+    # {name: id} for categories (type 4)
+    target_cats = {c.get("name"): str(c.get("id")) for c in target_channels if c.get("type") == 4}
+    # {parent_id: {name: id}} for channels
+    target_structure = {}
+    for c in target_channels:
+        if c.get("type") == 4: continue
+        p_id = str(c.get("parent_id")) if c.get("parent_id") else "root"
+        if p_id not in target_structure: target_structure[p_id] = {}
+        target_structure[p_id][c.get("name")] = str(c.get("id"))
+        
     target_id_set = {str(c.get("id")) for c in target_channels}
-    
     updates = 0
     removals = 0
     
-    # 1. Verify and Sync Categories
+    # 1. Sync Categories
     for cat in categories:
         discord_id = str(cat.id)
         target_id = context.state.get_target_category_id(discord_id)
-        
         if target_id:
             if target_id not in target_id_set:
                 context.state.remove_category_mapping(discord_id)
                 removals += 1
-        elif cat.name in target_name_map:
-            context.state.set_target_category_mapping(discord_id, target_name_map[cat.name])
+        elif cat.name in target_cats:
+            context.state.set_target_category_mapping(discord_id, target_cats[cat.name])
             updates += 1
                 
-    # 2. Verify and Sync Channels
+    # 2. Sync Channels (parent-aware)
     for ch in channels:
         discord_id = str(ch.id)
         target_id = context.state.get_target_channel_id(discord_id)
-        
         if target_id:
             if target_id not in target_id_set:
                 context.state.remove_channel_mapping(discord_id)
                 removals += 1
-        elif ch.name in target_name_map:
-            context.state.set_target_channel_mapping(discord_id, target_name_map[ch.name])
-            updates += 1
+        else:
+            # Try to match by name within the mapped parent category
+            p_discord_id = str(ch.category_id) if ch.category_id else "root"
+            p_target_id = context.state.get_target_category_id(p_discord_id) if p_discord_id != "root" else "root"
+            
+            if p_target_id in target_structure and ch.name in target_structure[p_target_id]:
+                context.state.set_target_channel_mapping(discord_id, target_structure[p_target_id][ch.name])
+                updates += 1
     
     if updates > 0 or removals > 0:
-        logger.info(f"Channel sync: {updates} mapped, {removals} stale mappings removed")
+        logger.info(f"Stoat Channel sync: {updates} mapped, {removals} stale mappings removed")
 
 
 async def migrate_channels(context: MigrationContext, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, force: bool = False) -> dict:
@@ -107,7 +118,22 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
     if total == 0:
         return cloned_info
 
-    # 1. Create missing channels (unparented for now)
+    # 1. Create missing categories first
+    for cat in missing_categories:
+        if not context.is_running: break
+        
+        state_key = str(cat.id)
+        target_id = await context.writer.create_channel(cat.name, type=4)
+        if target_id:
+            context.state.set_target_category_id(state_key, target_id)
+            cloned_info["categories_created"].append(cat.name)
+            if cat.name not in cloned_info["structure"]:
+                cloned_info["structure"][cat.name] = []
+        
+        current_idx += 1
+        if progress_callback: await progress_callback(cat.name, "Copying", current_idx, total)
+
+    # 2. Create missing channels (now with parent_id available)
     for channel in channels_to_create:
         if not context.is_running: break
             
@@ -119,7 +145,6 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         logger.debug(f"Creating channel {channel.name}: topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
         # Map Discord-specific types to target-supported types
-        # 5 (News) -> 0 (Text), and fallback any unknown non-voice types to text
         raw_type = channel.type.value if hasattr(channel.type, 'value') else 0
         if raw_type == context.discord_reader.CHANNEL_TYPE_VOICE.value:
             ch_type = 2
@@ -128,20 +153,22 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
             ch_type = 0
             is_voice = False
         else:
-            # Fallback for Stage channels (13) etc. to Text for safety
             ch_type = 0
             is_voice = False
+        
+        # Resolve parent category
+        parent_id = context.state.get_target_category_id(str(channel.category_id)) if channel.category_id else None
         
         target_id = await context.writer.create_channel(
             name=channel.name, 
             topic=topic if not is_voice else "", 
             type=ch_type, 
-            parent_id=None,
+            parent_id=parent_id,
             nsfw=nsfw if not is_voice else False,
             slowmode_delay=slowmode if not is_voice else 0
         )
         if target_id:
-            context.state.set_target_channel_mapping(state_key, target_id)
+            context.state.set_target_channel_id(state_key, target_id)
             cloned_info["channels_created"].append(channel.name)
             
             parent_name = cat_name_map.get(str(channel.category_id), "No Category") if channel.category_id else "No Category"
@@ -156,7 +183,8 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
                     name=channel.name,
                     topic=topic,
                     nsfw=nsfw,
-                    slowmode_delay=slowmode
+                    slowmode_delay=slowmode,
+                    parent_id=parent_id
                 )
         
         current_idx += 1
@@ -172,32 +200,21 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         
         logger.debug(f"Syncing existing channel {channel.name} ({target_id}): topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
+        parent_id = context.state.get_target_category_id(str(channel.category_id)) if channel.category_id else None
+        
         await context.writer.modify_channel(
             channel_id=target_id, 
             name=channel.name,
             topic=topic,
             nsfw=nsfw,
-            slowmode_delay=slowmode
+            slowmode_delay=slowmode,
+            parent_id=parent_id
         )
         
-        cloned_info["channels_synced"].append(channel.name)
+        cloned_info["cloned_info" if "cloned_info" in locals() else "channels_synced"].append(channel.name)
         
         current_idx += 1
         if progress_callback: await progress_callback(channel.name, "Syncing", current_idx, total)
-
-    # 3. Create missing categories
-    for cat in missing_categories:
-        if not context.is_running: break
-        
-        state_key = str(cat.id)
-        target_id = await context.writer.create_channel(cat.name, type=4)
-        if target_id:
-            context.state.set_target_category_mapping(state_key, target_id)
-            cloned_info["categories_created"].append(cat.name)
-            if cat.name not in cloned_info["structure"]:
-                cloned_info["structure"][cat.name] = []
-        
-        current_idx += 1
         if progress_callback: await progress_callback(f"Cat: {cat.name}", "Copying", current_idx, total)
 
     # 4. Final step: Parent the channels into categories via mass server.edit()

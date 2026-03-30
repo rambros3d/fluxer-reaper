@@ -163,6 +163,9 @@ class OperationPane(Container):
                     yield Button("Waterfall Migration", id="op_waterfall", disabled=True, variant="primary", tooltip="Migrate all messages globally in chronological order to prevent broken links.\n(Available for Local Backups)")
                     yield Rule(id="footer_rule")
                     yield Button("Danger Zone ⚠", id="op_danger", variant="error", disabled=True, flat=True, tooltip="Dangerous operations:\ndelete channels, roles, emojis on target\n(use with caution)")
+                
+                if self.cfg_name == "AutoTest":
+                    yield Button("RUN AUTO TEST", id="op_autotest", variant="warning", flat="false", disabled=True, tooltip="Execute automated test sequence for the AutoTest profile")
 
     def on_mount(self) -> None:
         self._rebuild_engine()
@@ -395,7 +398,7 @@ class OperationPane(Container):
                 lbl.update(f"{t_status}")
 
             # Buttons
-            for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_waterfall", "#op_danger"):
+            for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_waterfall", "#op_danger", "#op_autotest"):
                 for btn in self.query(bid): btn.disabled = not self.tokens_valid
 
     # ── validation ────────────────────────────────────────────────────────
@@ -416,10 +419,10 @@ class OperationPane(Container):
             
             # Disable all operation buttons while validation is in progress
             if self.view_mode == "shuttle":
-                for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_waterfall", "#op_danger"):
+                for bid in ("#op_clone", "#op_sync", "#op_messages", "#op_waterfall", "#op_danger", "#op_autotest"):
                     for btn in self.query(bid): btn.disabled = True
             elif self.view_mode == "backup":
-                for bid in ("#op_backup_msgs", "#op_backup_sync"):
+                for bid in ("#op_backup_msgs", "#op_backup_sync", "#op_autotest"):
                     for btn in self.query(bid): btn.disabled = True
         except Exception as e:
             logger.error(f"Error in run_validate setup: {e}")
@@ -590,6 +593,136 @@ class OperationPane(Container):
             from src.ui.backup_stats import BackupStatsScreen
             target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
             self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
+        elif bid == "op_autotest":
+            self.run_autotest_sequence()
+
+    @work(exclusive=True)
+    async def run_autotest_sequence(self) -> None:
+        """Entry point for the AUTO TEST sequence."""
+        if not self.tokens_valid:
+            return
+
+        modal = ProgressScreen(log_level=self.config.log_level)
+        self.app.push_screen(modal)
+        await asyncio.sleep(0.1)
+
+        try:
+            if self.view_mode == "shuttle":
+                await self._run_migration_autotest_logic(modal)
+            elif self.view_mode == "backup":
+                await self._run_backup_autotest_logic(modal)
+            
+            modal.phase_report("AUTO TEST Complete", show_back=False)
+            modal.write("[bold green]Full automated test sequence finished successfully![/bold green]")
+        except Exception as e:
+            logger.error(f"Auto-Test Error: {e}\n{traceback.format_exc()}")
+            modal.write(f"[bold red]Error: {e}[/bold red]")
+            modal.phase_report("Auto-Test", "error", show_back=False)
+        finally:
+            self.engine.is_running = False
+            await self.engine.close_connections()
+
+    async def _run_migration_autotest_logic(self, modal: ProgressScreen) -> None:
+        """Executes the full migration test sequence."""
+        modal.set_status("AUTO TEST: Launching Migration Sequence...")
+        modal.write("[bold yellow]Starting Migration Auto-Test...[/bold yellow]")
+        
+        migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
+        
+        # 1. Connect and initialize state
+        modal.set_status("Connecting and Initializing State...")
+        await self.engine.start_connections()
+        self.engine.is_running = True
+        
+        # Initialize state database early to avoid Warnings
+        tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
+        tgt_info = await self.engine.writer.validate()
+        self.engine.ensure_state_initialized(str(tid or ""), tgt_info.get("community_name", "Target"))
+        
+        # 2. Danger Zone Clean
+        modal.write("\n[bold red]Phase 1: Danger Zone Cleanup[/bold red]")
+        await self._logic_dz_delete_channels(modal)
+        await self._logic_dz_reset_perms(modal)
+        await self._logic_dz_delete_roles(modal)
+        await self._logic_dz_delete_assets(modal)
+        
+        # 3. Clone Roles & Permissions
+        modal.write("\n[bold cyan]Phase 2: Cloning Roles & Permissions[/bold cyan]")
+        await self._logic_clone_roles(modal, force=True)
+        
+        # 4. Clone Assets (Logo, Banner, Emojis, Stickers)
+        modal.write("\n[bold cyan]Phase 3: Syncing Metadata & Assets[/bold cyan]")
+        await self._logic_copy_assets(modal, ["Emoji", "Sticker"], force=True)
+        await self._logic_sync_metadata(modal, ["name", "icon", "banner"])
+        
+        # 5. Clone Template (Structure)
+        modal.write("\n[bold cyan]Phase 4: Cloning Server Structure (1/2)[/bold cyan]")
+        await self._logic_clone_channels(modal, force=True)
+        await self._logic_sync_permissions(modal)
+        
+        # 6. Waterfall Migration (Only for backups)
+        if self.engine.source_mode == "backup" :
+            modal.write("\n[bold cyan]Phase 5: Waterfall Message Migration[/bold cyan]")
+            await self._logic_waterfall_migration(modal=modal, is_autotest=True)
+        else:
+            modal.write("\n[bold yellow]Phase 5: Skipping Waterfall (Live mode selected)[/bold yellow]")
+        
+        
+        # 7. Individual Channel Migration (Automated)
+        modal.write("\n[bold cyan]Phase 7: Individual Channel Migration[/bold cyan]")
+        await self._logic_autotest_migrate_all_channels(modal=modal)
+    async def _run_backup_autotest_logic(self, modal: ProgressScreen) -> None:
+        """Executes the full backup test sequence."""
+        modal.set_status("AUTO TEST: Launching Backup Sequence...")
+        modal.write("[bold yellow]Starting Backup Auto-Test...[/bold yellow]")
+        
+        # 1. Clear old backup
+        modal.set_status("Clearing old backup database...")
+        db_path = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}" / "backup.db"
+        if db_path.exists():
+            modal.write(f"[yellow]Deleting existing database: {db_path.name}[/yellow]")
+            db_path.unlink()
+        
+        # 2. Setup exporter
+        await self.engine.discord_reader.start()
+        await self.exporter.setup()
+        self.exporter.is_running = True
+        
+        # 3. Full Backup
+        modal.write("\n[bold cyan]Phase 1: Full Server Backup[/bold cyan]")
+        modal.show_stats()
+        
+        await self.exporter.export_metadata()
+        await self.exporter.download_server_assets()
+        await self.exporter.export_channels_structure()
+        await self.exporter.export_roles()
+        await self.exporter.export_assets()
+        
+        eligible_channels = [
+            c for c in await self.engine.discord_reader.get_channels()
+            if c.type in [
+                self.engine.discord_reader.CHANNEL_TYPE_TEXT,
+                self.engine.discord_reader.CHANNEL_TYPE_NEWS,
+                self.engine.discord_reader.CHANNEL_TYPE_FORUM
+            ]
+        ]
+        
+        total_chans = len(eligible_channels)
+        for i, chan in enumerate(eligible_channels):
+            if not self.exporter.is_running: break
+            
+            modal.set_item_status(f"Backing up ({i+1}/{total_chans}): #{chan.name}")
+            modal.set_progress(i, total_chans)
+            
+            async def update_backup(name, count, author=None, preview=None, threads=0, files=0):
+                modal.update_stats(messages=str(count), threads=str(threads), files=str(files))
+            
+            await self.exporter.export_channel_messages(
+                chan.id, progress_callback=update_backup, force=True
+            )
+            modal.write(f"[green]Completed: #{chan.name}[/green]")
+
+        modal.set_progress(total_chans, total_chans)
 
     # ── (1) clone server template (combined) ─────────────────────────────
 
@@ -1012,16 +1145,67 @@ class OperationPane(Container):
     # ── (5) message migration ─────────────────────────────────────────────
 
     @work(exclusive=True)
-    async def run_migrate_messages(self) -> None:
+    async def run_migrate_messages(self, modal: ProgressScreen | None = None) -> None:
+        await self._logic_migrate_messages(modal)
+
+    async def _logic_autotest_migrate_all_channels(self, modal: ProgressScreen) -> None:
+        """Automated name-based channel migration for Auto-Test."""
+        migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
+        
+        # 1. Matching
+        modal.set_status("Auto-matching channels by name...")
+        await self._perform_auto_matching()
+        
+        # 2. Get channels
+        d_channels = await self.engine.discord_reader.get_channels()
+        text_channels = [c for c in d_channels if c.type in [
+            self.engine.discord_reader.CHANNEL_TYPE_TEXT, 
+            self.engine.discord_reader.CHANNEL_TYPE_NEWS
+        ]]
+        
+        modal.write(f"[bold cyan]Auto-Test: Found {len(text_channels)} channels to migrate.[/bold cyan]")
+        
+        # 3. Migrate loop
+        for i, ch in enumerate(text_channels):
+            if not self.engine.is_running: break
+            
+            tgt_id = self.engine.state.get_target_channel_id(str(ch.id))
+            if not tgt_id:
+                modal.write(f"[yellow]Skipping #{ch.name} (no target mapping found)[/yellow]")
+                continue
+                
+            modal.write(f"\n[bold]Migrating #{ch.name} ({i+1}/{len(text_channels)}) -> Target ID {tgt_id}[/bold]")
+            
+            # Analyze (silent)
+            stats = await migrate_mod.analyze_migration(self.engine, source_channel_id=ch.id, after_message_id=None)
+            ch_total = stats["messages"]
+            
+            async def update_indiv(curr):
+                c = curr["messages"]
+                modal.set_progress(c, ch_total or 100)
+                modal.set_item_status(f"#{ch.name}: {c}/{ch_total} messages")
+            
+            await migrate_mod.migrate_messages(
+                self.engine,
+                source_channel_id=ch.id,
+                target_channel_id=tgt_id,
+                after_message_id=None,
+                progress_callback=update_indiv
+            )
+            
+        modal.write("\n[bold green]Automated channel migration complete.[/bold green]")
+
+    async def _logic_migrate_messages(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
 
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
 
-        modal = ProgressScreen(log_level=self.config.log_level)
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
+        if not modal:
+            modal = ProgressScreen(log_level=self.config.log_level)
+            self.app.push_screen(modal)
+            await asyncio.sleep(0.1)
 
         try:
             # Show info container
@@ -1418,22 +1602,29 @@ class OperationPane(Container):
             await self.engine.close_connections()
 
     @work(exclusive=True)
-    async def run_waterfall_migration(self) -> None:
+    async def run_waterfall_migration(self, modal: ProgressScreen | None = None) -> None:
+        await self._logic_waterfall_migration(modal)
+
+    async def _logic_waterfall_migration(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
 
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
-
-        modal = ProgressScreen(log_level=self.config.log_level)
-        self.app.push_screen(modal)
-        await asyncio.sleep(0.1)
+        
+        if not modal:
+            modal = ProgressScreen(log_level=self.config.log_level)
+            self.app.push_screen(modal)
+            await asyncio.sleep(0.1)
 
         try:
             modal.show_info("[bold cyan]Waterfall Migration Ready[/bold cyan]", "Checking mapping and missing channels...")
             modal.set_status("Connecting to Servers...")
             await self.engine.start_connections()
             
+            # Ensure writer is validated before auto-matching (fixes NoneType role fetch error)
+            await self.engine.writer.validate()
+
             modal.set_status("Synchronizing entity mappings...")
             await self._perform_auto_matching()
 
@@ -1460,15 +1651,19 @@ class OperationPane(Container):
                     prefix = "[bold cyan]📁[/bold cyan] " if mc.type == 4 else "[bold white]#[/bold white] "
                     modal.write(f"  {prefix}{mc.name}")
                 
-                choice = await modal.phase_wait_confirm(
-                    show_continue=False,
-                    show_id=True,
-                    btn_start_label="Clone missing channels",
-                    btn_id_label="Skip missing channels",
-                    btn_start_variant="primary",
-                    btn_start_tooltip=f"Automatically create {len(missing_channels)} entities on target",
-                    btn_id_tooltip="Start migration without these channels"
-                )
+                if is_autotest:
+                    choice = "btn_start_first"
+                    modal.write("[bold cyan]Auto-Test: Automatically cloning missing channels.[/bold cyan]")
+                else:
+                    choice = await modal.phase_wait_confirm(
+                        show_continue=False,
+                        show_id=True,
+                        btn_start_label="Clone missing channels",
+                        btn_id_label="Skip missing channels",
+                        btn_start_variant="primary",
+                        btn_start_tooltip=f"Automatically create {len(missing_channels)} entities on target",
+                        btn_id_tooltip="Start migration without these channels"
+                    )
                 
                 if choice == "btn_back":
                     modal.dismiss()
@@ -1550,7 +1745,7 @@ class OperationPane(Container):
                 
                 if filtered_tgt_ids:
                     all_mapped_tgt_ids = filtered_tgt_ids
-
+                
             # 2.6 Resume Point: Calculate from global channel minimums
             min_last_id = self.engine.state.get_global_min_last_message_id(all_mapped_tgt_ids)
             
@@ -1560,15 +1755,19 @@ class OperationPane(Container):
             else:
                 modal.write("No previous migration state found. Starting from the beginning.")
             
-            choice = await modal.phase_wait_confirm(
-                show_continue=min_last_id is not None,
-                show_id=False,
-                btn_start_label="Start From Beginning",
-                btn_start_tooltip="Wipes migration progress and restarts from the beginning; may create duplicates",
-                btn_start_variant="default" if min_last_id is not None else "primary",
-                btn_continue_label=f"Continue from ID {min_last_id if min_last_id is not None else 0}" if min_last_id is not None else "Continue Migration",
-                btn_continue_tooltip="Fastest"
-            )
+            if is_autotest:
+                choice = "btn_continue" if min_last_id is not None else "btn_start_first"
+                modal.write(f"[bold cyan]Auto-Test: Automatically choosing {choice.replace('btn_', '').replace('_', ' ')}.[/bold cyan]")
+            else:
+                choice = await modal.phase_wait_confirm(
+                    show_continue=min_last_id is not None,
+                    show_id=False,
+                    btn_start_label="Start From Beginning",
+                    btn_start_tooltip="Wipes migration progress and restarts from the beginning; may create duplicates",
+                    btn_start_variant="default" if min_last_id is not None else "primary",
+                    btn_continue_label=f"Continue from ID {min_last_id if min_last_id is not None else 0}" if min_last_id is not None else "Continue Migration",
+                    btn_continue_tooltip="Fastest"
+                )
             
             if choice == "btn_back":
                 modal.dismiss()

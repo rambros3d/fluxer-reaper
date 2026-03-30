@@ -12,7 +12,7 @@ def setup_logging():
     except Exception:
         level = logging.INFO
         
-    handlers = [RotatingFileHandler('.reaper.log', mode='a', maxBytes=10*1024*1024, backupCount=3)]
+    handlers = [RotatingFileHandler('.reaper.log', mode='w', maxBytes=10*1024*1024, backupCount=3)]
     logging.basicConfig(
         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
         datefmt='%H:%M:%S',
