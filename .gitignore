@@ -41,8 +41,8 @@ reaper_config.yaml
 *.log
 
 # Temporary Test Scripts
+#test_*.py
 tmp/
-test_*.py
 test_release.zip
 test_release/
 DiscoReaper

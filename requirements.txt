@@ -9,3 +9,6 @@ lottie # Lottie file manipulation and conversion
 Pillow # Image processing (required for GIF rendering)
 cairosvg # SVG rendering (required for Lottie conversion)
 psutil # System information (CPU, RAM, etc.)
+pytest # Testing framework
+pytest-asyncio # Async testing for pytest
+pytest-mock # Mocking for pytest
