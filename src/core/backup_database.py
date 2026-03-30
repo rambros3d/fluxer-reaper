@@ -114,7 +114,7 @@ class BackupDatabase:
                     elif table == "forum_tags":
                         conn.execute("CREATE TABLE forum_tags (id INTEGER PRIMARY KEY, forum_id INTEGER, name TEXT, moderated INTEGER, emoji_id INTEGER, emoji_name TEXT)")
                     elif table == "server_assets":
-                        conn.execute("CREATE TABLE server_assets (id INTEGER PRIMARY KEY, name TEXT, type TEXT, filename TEXT, url TEXT, content_type INTEGER)")
+                        conn.execute("CREATE TABLE server_assets (id INTEGER PRIMARY KEY, name TEXT, type TEXT, filename TEXT, url TEXT, content_type TEXT)")
                     
                     old_cols = [c[1] for c in conn.execute(f"PRAGMA table_info({table}_old)").fetchall()]
                     new_cols = [c[1] for c in conn.execute(f"PRAGMA table_info({table})").fetchall()]
@@ -944,6 +944,60 @@ class BackupDatabase:
             logger.info(f"Purged {purged_count} unused media files")
         
         return purged_count
+
+    def get_backed_up_channel_ids(self) -> List[int]:
+        """Returns a list of distinct channel IDs that have messages in the database."""
+        with self._lock:
+            rows = self._conn.execute("SELECT DISTINCT channel_id FROM messages").fetchall()
+            return [parse_snowflake(r[0]) for r in rows if parse_snowflake(r[0])]
+
+    def get_message_with_relations(self, message_id) -> Optional[Dict[str, Any]]:
+        """Fetches a single message with its attachments, embeds, reactions, and stickers."""
+        with self._lock:
+            mid = parse_snowflake(message_id)
+            row = self._conn.execute("SELECT * FROM messages WHERE id = ?", (mid,)).fetchone()
+            if not row:
+                return None
+            data = dict(row)
+
+            # Attachments
+            atts = self._conn.execute("SELECT * FROM attachments WHERE message_id = ?", (mid,)).fetchall()
+            data["attachments"] = [dict(a) for a in atts]
+
+            # Embeds
+            embs = self._conn.execute("SELECT * FROM embeds WHERE message_id = ?", (mid,)).fetchall()
+            data["embeds"] = []
+            for er in embs:
+                e_dict = {
+                    "title": er["title"],
+                    "description": er["description"],
+                    "url": er["url"],
+                    "color": er["color"],
+                    "timestamp": er["timestamp"],
+                    "thumbnail": {"url": er["thumbnail_url"]} if er["thumbnail_url"] else None,
+                    "image": {"url": er["image_url"]} if er["image_url"] else None,
+                    "author": {
+                        "name": er["author_name"],
+                        "url": er["author_url"],
+                        "icon_url": er["author_icon_url"]
+                    } if er["author_name"] else None,
+                    "footer": {
+                        "text": er["footer_text"],
+                        "icon_url": er["footer_icon_url"]
+                    } if er["footer_text"] else None,
+                    "fields": json.loads(er["fields"]) if er["fields"] else []
+                }
+                data["embeds"].append(e_dict)
+
+            # Reactions
+            reas = self._conn.execute("SELECT * FROM reactions WHERE message_id = ?", (mid,)).fetchall()
+            data["reactions"] = [dict(r) for r in reas]
+
+            # Stickers
+            sts = self._conn.execute("SELECT * FROM message_stickers WHERE message_id = ?", (mid,)).fetchall()
+            data["stickers"] = [dict(s) for s in sts]
+
+            return data
 
     def close(self):
         """Commits any pending writes and closes the connection."""

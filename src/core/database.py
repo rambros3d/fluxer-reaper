@@ -4,7 +4,7 @@ import logging
 import json
 import random
 from pathlib import Path
-from typing import Optional, Dict, Any, Union
+from typing import Optional, Dict, Any, List, Union
 import threading
 import sys
 from src.core.utils import parse_snowflake
@@ -560,6 +560,15 @@ class MigrationDatabase:
         conn.execute("DELETE FROM thread_tracking WHERE channel_id = ?", (str(channel_id),))
         conn.commit()
         logger.info(f"Cleared all tracking and mapping data for channel: {channel_id}")
+    def clear_all_migration_data(self):
+        """Purge all mappings and tracking data for ALL channels and threads."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM message_mappings")
+        conn.execute("DELETE FROM thread_mappings")
+        conn.execute("DELETE FROM channel_tracking")
+        conn.execute("DELETE FROM thread_tracking")
+        conn.commit()
+        logger.info("Cleared ALL tracking and message mapping data globally.")
 
     def close(self):
         if hasattr(self._local, "conn"):

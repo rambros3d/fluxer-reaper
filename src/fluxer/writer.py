@@ -36,6 +36,7 @@ class FluxerWriter:
                     guilds_list.append((label, str(g.id)))
                 return guilds_list
             except Exception as e:
+                print(f"Failed to fetch Fluxer communities via HTTP: {e}")
                 logger.error(f"Failed to fetch Fluxer communities via HTTP: {e}")
                 raise
 
@@ -61,6 +62,7 @@ class FluxerWriter:
             return w
         except Exception as e:
             print(f"Failed to manage webhook for channel {channel_id}: {e}")
+            logger.error(f"Failed to manage webhook for channel {channel_id}: {e}")
             return None
 
     async def start(self):
@@ -322,6 +324,7 @@ class FluxerWriter:
                     logger.debug(f"Fluxer: Webhook send complete, msg_id={msg.id if msg else 'None'}")
                     return str(msg.id) if msg else None
                 except asyncio.TimeoutError:
+                    print(f"Fluxer: Webhook send timed out after 45s for channel {channel_id}")
                     logger.error(f"Fluxer: Webhook send timed out after 45s for channel {channel_id}")
                     return None
             else:
@@ -353,6 +356,7 @@ class FluxerWriter:
                     logger.debug(f"Fluxer: Bot send complete, msg_id={msg_data.get('id') if msg_data else 'None'}")
                     return str(msg_data["id"]) if msg_data else None
                 except asyncio.TimeoutError:
+                    print(f"Fluxer: Bot send timed out after 45s for channel {channel_id}")
                     logger.error(f"Fluxer: Bot send timed out after 45s for channel {channel_id}")
                     return None
         except Exception as e:
@@ -386,6 +390,7 @@ class FluxerWriter:
             return str(msg_data["id"]) if msg_data else None
         except Exception as e:
             print(f"Failed to send marker: {e}")
+            logger.error(f"Failed to send marker: {e}")
             return None
 
     async def create_role(self, name: str, color: int, hoist: bool, mentionable: bool, permissions: int, position: Optional[int] = None) -> str:
@@ -408,6 +413,7 @@ class FluxerWriter:
             return str(role["id"])
         except Exception as e:
             print(f"Failed to copy role {name}: {e}")
+            logger.error(f"Failed to copy role {name}: {e}")
             return ""
 
     async def create_emoji(self, name: str, image_bytes: bytes) -> str:
@@ -473,6 +479,7 @@ class FluxerWriter:
             )
         except Exception as e:
             print(f"Failed to update community metadata: {e}")
+            logger.error(f"Failed to update community metadata: {e}")
 
     async def remove_community_logo_and_banner(self) -> dict:
         """
@@ -503,6 +510,7 @@ class FluxerWriter:
                 )
             except Exception as e:
                 print(f"Failed to remove community icon: {e}")
+                logger.error(f"Failed to remove community icon: {e}")
 
         # 3. Remove banner if set
         if has_banner:
@@ -513,6 +521,7 @@ class FluxerWriter:
                 )
             except Exception as e:
                 print(f"Failed to remove community banner: {e}")
+                logger.error(f"Failed to remove community banner: {e}")
 
         return {
             "icon": "REMOVED" if has_icon else "SKIP",
@@ -544,6 +553,7 @@ class FluxerWriter:
                     await progress_callback(ch.get("name", "Unknown"), deleted, total)
             except Exception as e:
                 print(f"Failed to delete channel {ch.get('name')}: {e}")
+                logger.error(f"Failed to delete channel {ch.get('name')}: {e}")
         return deleted
 
     async def reset_channel_permissions(self, progress_callback=None) -> int:
@@ -576,12 +586,14 @@ class FluxerWriter:
                             )
                         )
                     except Exception as e:
+                        print(f"Failed to delete overwrite {ow['id']} for channel {ch['id']}: {e}")
                         logger.error(f"Failed to delete overwrite {ow['id']} for channel {ch['id']}: {e}")
                 processed += 1
                 if progress_callback:
                     await progress_callback(ch.get("name", "Unknown"), processed, total)
             except Exception as e:
                 print(f"Failed to reset permissions for channel {ch.get('name')}: {e}")
+                logger.error(f"Failed to reset permissions for channel {ch.get('name')}: {e}")
         return processed
 
     async def set_channel_permission(self, channel_id: str, overwrite_id: str, allow: int, deny: int, is_role: bool = True):
@@ -603,6 +615,7 @@ class FluxerWriter:
                 type=0 if is_role else 1
             )
         except Exception as e:
+            print(f"Failed to set permission on channel {channel_id} for overwrite {overwrite_id}: {e}")
             logger.error(f"Failed to set permission on channel {channel_id} for overwrite {overwrite_id}: {e}")
 
 
@@ -644,6 +657,7 @@ class FluxerWriter:
                     await progress_callback(role.get("name", "Unknown"), deleted, total)
             except Exception as e:
                 print(f"Failed to delete role {role.get('name')}: {e}")
+                logger.error(f"Failed to delete role {role.get('name')}: {e}")
         return deleted
 
     async def delete_all_emojis_and_stickers(self, progress_callback=None) -> dict:
@@ -667,8 +681,10 @@ class FluxerWriter:
                         await progress_callback(emoji.get("name", "Unknown"), "Emoji", emoji_deleted, emoji_total)
                 except Exception as e:
                     print(f"Failed to delete emoji {emoji.get('name')}: {e}")
+                    logger.error(f"Failed to delete emoji {emoji.get('name')}: {e}")
         except Exception as e:
             print(f"Failed to fetch emojis: {e}")
+            logger.error(f"Failed to fetch emojis: {e}")
 
         # Delete stickers
         try:
@@ -682,8 +698,10 @@ class FluxerWriter:
                         await progress_callback(sticker.get("name", "Unknown"), "Sticker", sticker_deleted, sticker_total)
                 except Exception as e:
                     print(f"Failed to delete sticker {sticker.get('name')}: {e}")
+                    logger.error(f"Failed to delete sticker {sticker.get('name')}: {e}")
         except Exception as e:
             print(f"Failed to fetch stickers: {e}")
+            logger.error(f"Failed to fetch stickers: {e}")
 
         return {"emojis": emoji_deleted, "stickers": sticker_deleted}
 

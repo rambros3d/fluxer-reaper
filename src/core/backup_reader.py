@@ -393,6 +393,20 @@ class BackupMember:
             # Fallback for unexpected data format
             self.id = 0
             self.name = "Unknown"
+            self.display_name = "Unknown"
+            self.global_name = "Unknown"
+            self.bot = False
+            self.system = False
+            self.discriminator = "0000"
+            self.color = BackupColor(0)
+            self.roles = sorted(role_objects or [], key=lambda r: r.position, reverse=True)
+            self.guild_permissions = BackupPermissions(0)
+            self.created_at = datetime.now(timezone.utc)
+            self.joined_at = datetime.now(timezone.utc)
+            self.status = type("Status", (), {"value": "offline"})()
+            self.activity = None
+            self._avatar_url = None
+            self.avatar = BackupAsset(None)
             return
         self.id = parse_snowflake(data["id"])
         self.name = data.get("username", "Unknown")
@@ -516,12 +530,13 @@ class BackupEmoji:
 class BackupSticker:
     """Minimal stand-in for discord.GuildSticker."""
 
-    __slots__ = ("id", "name", "url", "format", "_backup_root", "_file_path")
+    __slots__ = ("id", "name", "url", "format", "_backup_root", "_file_path", "local_hash")
 
     def __init__(self, data: dict, backup_root: Path | None = None, media_pool: dict | None = None):
         if not isinstance(data, dict):
             self.id = 0
             self.name = "Sticker"
+            self.local_hash = None
             return
         self.id = parse_snowflake(data.get("id") or data.get("sticker_id", 0)) or 0
         self.name = data.get("name", "Sticker")
@@ -536,14 +551,14 @@ class BackupSticker:
         self._backup_root = backup_root
         
         # 1. Check if it's a CAS-based sticker (from message_stickers table)
-        local_hash = data.get("local_hash")
-        if local_hash and backup_root:
+        self.local_hash = data.get("local_hash")
+        if self.local_hash and backup_root:
             ext = ".png"
             if self.format == StickerFormatType.lottie: ext = ".json"
             elif self.format == StickerFormatType.apng: ext = ".png"
             elif self.format == StickerFormatType.gif: ext = ".gif"
             
-            self._file_path = backup_root / "attachments" / f"{local_hash}{ext}"
+            self._file_path = backup_root / "attachments" / f"{self.local_hash}{ext}"
         # 2. Check if it's a server asset sticker (legacy or manual save)
         elif data.get("filename") and backup_root:
             self._file_path = backup_root / "server_assets" / data["filename"]
@@ -1266,11 +1281,7 @@ class BackupReader:
     async def get_backed_up_channel_ids(self) -> List[int]:
         """Returns a list of channel IDs that have messages in the database."""
         if not self.db: return []
-        import sqlite3
-        conn = sqlite3.connect(self.db.db_path)
-        rows = conn.execute("SELECT DISTINCT channel_id FROM messages").fetchall()
-        conn.close()
-        return [parse_snowflake(r[0]) for r in rows if parse_snowflake(r[0])]
+        return self.db.get_backed_up_channel_ids()
 
     async def get_channel(self, channel_id: int) -> BackupChannel | BackupThread | None:
         for c in self.channels:
@@ -1351,23 +1362,9 @@ class BackupReader:
     async def get_message(self, channel_id: int, message_id: int) -> BackupMessage | None:
         """Fetch a specific message from SQLite."""
         if not self.db: return None
-        import sqlite3
-        conn = sqlite3.connect(self.db.db_path)
-        conn.row_factory = sqlite3.Row
-        row = conn.execute("SELECT * FROM messages WHERE id = ?", (str(message_id),)).fetchone()
-        if row:
-            data = dict(row)
-            # Fetch attachments
-            atts = conn.execute("SELECT * FROM attachments WHERE message_id = ?", (str(message_id),)).fetchall()
-            data["attachments"] = [dict(a) for a in atts]
-            
-            # Fetch stickers
-            sts = conn.execute("SELECT * FROM message_stickers WHERE message_id = ?", (str(message_id),)).fetchall()
-            data["stickers"] = [dict(s) for s in sts]
-            
-            conn.close()
+        data = self.db.get_message_with_relations(message_id)
+        if data:
             return self._hydrate_message(data)
-        conn.close()
         return None
 
     async def get_first_message(self, channel_id: int) -> BackupMessage | None:

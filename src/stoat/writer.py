@@ -58,6 +58,7 @@ class StoatWriter:
                 else:
                     raise asyncio.TimeoutError("Timed out waiting for Stoat to be ready")
         except Exception as e:
+            print(f"Failed to fetch Stoat servers: {e}")
             logger.error(f"Failed to fetch Stoat servers: {e}")
             raise
         finally:
@@ -88,6 +89,7 @@ class StoatWriter:
         try:
             self._me = await self.client.fetch_user("@me")
         except Exception as e:
+            print(f"Failed to fetch bot user in StoatWriter: {e}")
             logger.error(f"Failed to fetch bot user in StoatWriter: {e}")
             self.client = None # Reset if we can't even fetch @me
 
@@ -235,6 +237,7 @@ class StoatWriter:
             
             return results
         except Exception as e:
+            print(f"Failed to fetch Stoat channels: {e}")
             logger.error(f"Failed to fetch Stoat channels: {e}")
             return []
 
@@ -272,6 +275,7 @@ class StoatWriter:
                 self._server = None # Clear cache
                 return str(ch.id)
         except Exception as e:
+            print(f"Failed to create Stoat channel {name}: {e}")
             logger.error(f"Failed to create Stoat channel {name}: {e}")
             return ""
 
@@ -297,6 +301,7 @@ class StoatWriter:
             # clone_server.py now handles all parenting bulk logic
             return True
         except Exception as e:
+            print(f"Failed to modify Stoat channel {channel_id}: {e}")
             logger.error(f"Failed to modify Stoat channel {channel_id}: {e}")
             return False
 
@@ -419,6 +424,7 @@ class StoatWriter:
                     return str(msg.id) if msg else None
                 raise  # Re-raise MissingPermission and other errors
         except Exception as e:
+            print(f"Failed to send Stoat message to {channel_id}: {e}")
             logger.error(f"Failed to send Stoat message to {channel_id}: {e}")
             raise  # Let caller handle (migration loop will stop for permission errors)
 
@@ -442,6 +448,7 @@ class StoatWriter:
             )
             return str(msg.id)
         except Exception as e:
+            print(f"Failed to send Stoat marker to {channel_id}: {e}")
             logger.error(f"Failed to send Stoat marker to {channel_id}: {e}")
             return None
 
@@ -470,6 +477,7 @@ class StoatWriter:
                 
             return str(role.id)
         except Exception as e:
+            print(f"Failed to create Stoat role {name}: {e}")
             logger.error(f"Failed to create Stoat role {name}: {e}")
             return ""
 
@@ -526,6 +534,7 @@ class StoatWriter:
             await server.set_default_permissions(s_perms)
             return True
         except Exception as e:
+            print(f"Failed to update Stoat default permissions: {e}")
             logger.error(f"Failed to update Stoat default permissions: {e}")
             return False
 
@@ -536,6 +545,7 @@ class StoatWriter:
             emoji = await server.create_server_emoji(name=name, image=image_bytes)
             return str(emoji.id)
         except Exception as e:
+            print(f"Failed to create Stoat emoji {name}: {e}")
             logger.error(f"Failed to create Stoat emoji {name}: {e}")
             return ""
 
@@ -551,6 +561,7 @@ class StoatWriter:
                 banner=banner if banner is not None else stoat.UNDEFINED
             )
         except Exception as e:
+            print(f"Failed to update Stoat guild metadata: {e}")
             logger.error(f"Failed to update Stoat guild metadata: {e}")
 
     async def remove_community_logo_and_banner(self) -> dict:
@@ -562,12 +573,14 @@ class StoatWriter:
             try:
                 await server.edit(icon=None)
             except Exception as e:
+                print(f"Failed to remove Stoat community icon: {e}")
                 logger.error(f"Failed to remove Stoat community icon: {e}")
 
         if has_banner:
             try:
                 await server.edit(banner=None)
             except Exception as e:
+                print(f"Failed to remove Stoat community banner: {e}")
                 logger.error(f"Failed to remove Stoat community banner: {e}")
 
         return {
@@ -594,6 +607,7 @@ class StoatWriter:
                 if progress_callback:
                     await progress_callback(name, i, total)
             except Exception as e:
+                print(f"Failed to delete Stoat channel {ch.id}: {e}")
                 logger.error(f"Failed to delete Stoat channel {ch.id}: {e}")
                 
         # To delete categories, we can wipe the categories array via server.edit to avoid 404 endpoint
@@ -618,6 +632,7 @@ class StoatWriter:
                         await progress_callback(name, j, total)
                     j += 1
         except Exception as e:
+             print(f"Failed to wipe Stoat categories via edit: {e}")
              logger.error(f"Failed to wipe Stoat categories via edit: {e}")
 
         return count
@@ -634,17 +649,23 @@ class StoatWriter:
                     logger.info(f"Danger Zone: Skipping permission reset for audit channel {name}")
                     total -= 1
                     continue
-                # In Stoat, clearing overrides might involve setting them to default or explicitly removing the role_permissions/default_permissions
-                # Since we don't know an explicit "clear_overrides" method, we'll wipe them by setting empty/none if possible.
-                # Actually Stoat allows overwriting. Setting allow=0 deny=0 for role overrides isn't explicitly clear.
-                # For safety, we will just pass. If the user expects it, we'd iterate over roles and set empty.
-                # A quick way is to edit the channel permissions to empty state if possible.
-                # Let's count them anyway. 
-                # (Fluxer writer does a loop over existing overrides, we can just return 0 for now until we inspect Stoat `PermissionOverride` deletion)
+                
+                # Fetch fresh channel to get current role_permissions
+                fresh_ch = await self.client.fetch_channel(ch.id)
+                # Clear default permissions
+                if hasattr(fresh_ch, "default_permissions") and fresh_ch.default_permissions is not None:
+                    await fresh_ch.set_default_permissions(None)
+                
+                # Clear all role overrides
+                if hasattr(fresh_ch, "role_permissions"):
+                    for role_id in list(fresh_ch.role_permissions.keys()):
+                        await fresh_ch.set_role_permissions(str(role_id), allow=stoat.Permissions.none(), deny=stoat.Permissions.none())
+
                 count += 1
                 if progress_callback:
                     await progress_callback(name, i, total)
             except Exception as e:
+                print(f"Failed to reset Stoat channel permissions for {ch.id}: {e}")
                 logger.error(f"Failed to reset Stoat channel permissions for {ch.id}: {e}")
         return count
 
@@ -671,6 +692,7 @@ class StoatWriter:
              if "MissingPermission" in err_msg and "ViewChannel" in err_msg:
                  logger.error(f"Stoat LOCKOUT: Bot lacks 'ViewChannel' to edit {channel_id}. "
                              "Ensure the bot has 'Manage Server' or a role with 'Allow View Channel' rank higher than @everyone.")
+             print(f"Failed to set Stoat channel permission for {overwrite_id} on {channel_id}: {e}")
              logger.error(f"Failed to set Stoat channel permission for {overwrite_id} on {channel_id}: {e}")
 
 
@@ -712,6 +734,7 @@ class StoatWriter:
                 await emoji.delete()
                 count += 1
             except Exception as e:
+                print(f"Failed to delete Stoat emoji {emoji.name}: {e}")
                 logger.error(f"Failed to delete Stoat emoji {emoji.name}: {e}")
         
         return {"emojis": count, "stickers": 0}

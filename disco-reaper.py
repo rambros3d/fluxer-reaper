@@ -1,17 +1,18 @@
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 from src.ui.main_app import run_disco_reaper_tui
 from src.core.configuration import load_config
 
 def setup_logging():
     try:
         config = load_config(create_if_missing=False)
-        log_level_str = config.migration.log_level.upper()
+        log_level_str = config.log_level.upper()
         level = getattr(logging, log_level_str, logging.INFO)
     except Exception:
         level = logging.INFO
         
-    handlers = [logging.FileHandler('.reaper.log', mode='a')]
+    handlers = [RotatingFileHandler('.reaper.log', mode='a', maxBytes=10*1024*1024, backupCount=3)]
     logging.basicConfig(
         format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
         datefmt='%H:%M:%S',
@@ -92,18 +93,21 @@ def cleanup_old_update():
     """Removes the .old executable left behind by a Windows update."""
     import os
     import sys
+    from pathlib import Path
     
     if sys.platform != "win32":
         return
-        
-    current_exe = sys.executable if getattr(sys, 'frozen', False) else sys.argv[0]
-    old_exe = current_exe + ".old"
     
-    if os.path.exists(old_exe):
+    # In frozen (PyInstaller) builds, sys.executable points to the temp _MEIxxxxx dir.
+    # sys.argv[0] always points to the real .exe on disk, so use that and resolve() it.
+    current_exe = Path(sys.argv[0]).resolve()
+    old_exe = current_exe.with_suffix(current_exe.suffix + ".old")
+    
+    if old_exe.exists():
         try:
-            os.remove(old_exe)
-        except Exception:
-            pass
+            old_exe.unlink()
+        except Exception as e:
+            logging.getLogger(__name__).debug(f"Could not remove old update file {old_exe}: {e}")
 
 def main():
     import os

@@ -1551,10 +1551,8 @@ class OperationPane(Container):
                 if filtered_tgt_ids:
                     all_mapped_tgt_ids = filtered_tgt_ids
 
-            # 2.6 Resume Point: Prioritize Global waterfall tracker, fallback to channel minimums
-            min_last_id = self.engine.state.get_waterfall_last_id()
-            if min_last_id is None:
-                min_last_id = self.engine.state.get_global_min_last_message_id(all_mapped_tgt_ids)
+            # 2.6 Resume Point: Calculate from global channel minimums
+            min_last_id = self.engine.state.get_global_min_last_message_id(all_mapped_tgt_ids)
             
             modal.write(f"\n[bold cyan]Waterfall Migration Resume Point:[/bold cyan]")
             if min_last_id is not None:
@@ -1566,7 +1564,7 @@ class OperationPane(Container):
                 show_continue=min_last_id is not None,
                 show_id=False,
                 btn_start_label="Start From Beginning",
-                btn_start_tooltip="Safe, skips duplicates automatically",
+                btn_start_tooltip="Wipes migration progress and restarts from the beginning; may create duplicates",
                 btn_start_variant="default" if min_last_id is not None else "primary",
                 btn_continue_label=f"Continue from ID {min_last_id if min_last_id is not None else 0}" if min_last_id is not None else "Continue Migration",
                 btn_continue_tooltip="Fastest"
@@ -1582,7 +1580,11 @@ class OperationPane(Container):
                 return
                 
             after_id = None
-            if choice == "btn_continue" and min_last_id is not None:
+            if choice == "btn_start_first":
+                logger.info("Proceeding with 'Start from Beginning' (global clean sink).")
+                self.engine.state.clear_all_migration_data()
+                after_id = None
+            elif choice == "btn_continue" and min_last_id is not None:
                 after_id = int(min_last_id)
             
             # Phase 3: Progress
@@ -1599,6 +1601,7 @@ class OperationPane(Container):
                 tid = self.config.fluxer_server_id
             self.engine.ensure_state_initialized(str(tid or ""), platform_name)
 
+            modal.show_stats()
             modal.write("Scanning global footprint for totals ...")
             stats_analysis = await migrate_mod.analyze_global_migration(self.engine, after_message_id=after_id)
             total_messages = stats_analysis["messages"]
