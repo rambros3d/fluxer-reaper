@@ -2348,6 +2348,9 @@ class OperationPane(Container):
                 modal_confirm.dismiss()
                 return
 
+            modal_confirm.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
+            modal_confirm.phase_progress()
+
             await self._logic_full_backup(
                 modal=modal_confirm,
                 selected_channels=selected_channels,
