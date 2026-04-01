@@ -18,6 +18,7 @@ class DiscordExporter:
         self.server_name = ""
         self.server_id = ""
         self.user_cache = {}
+        self.member_cache: Dict[int, Any] = {}  # Pre-fetched member objects (id -> Member)
         self.base_dir = Path(base_dir) if base_dir else Path(".")
         self.is_running = True
         self.db: Optional[BackupDatabase] = None
@@ -61,6 +62,20 @@ class DiscordExporter:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_sha256.update(chunk)
         return hash_sha256.hexdigest()
+
+    async def prefetch_members(self):
+        """Pre-fetches all guild members into a local cache for role resolution.
+        
+        msg.author is a discord.User (no roles). This cache allows us to
+        resolve roles without an API call per message during message export.
+        """
+        try:
+            members = await self.reader.get_members()
+            self.member_cache = {m.id: m for m in members}
+            logger.info(f"Pre-fetched {len(self.member_cache)} members for role resolution.")
+        except Exception as e:
+            logger.warning(f"Could not pre-fetch members (roles will be empty): {e}")
+            self.member_cache = {}
 
     async def export_metadata(self):
         """Saves server metadata to the SQLite database."""
@@ -476,6 +491,10 @@ class DiscordExporter:
                 # Queue for deferred download
                 self._pending_avatars.append((user_id, avatar, av_target))
 
+        roles = []
+        if hasattr(user, "roles"):
+            roles = [str(r.id) for r in user.roles if not r.is_default()]
+
         # Determine user type
         # 0: Regular User, 1: Bot, 2: Webhook, 3: System
         u_type = 0
@@ -519,12 +538,19 @@ class DiscordExporter:
 
         # 1. Author handling
         is_webhook = bool(getattr(msg, "webhook_id", None))
-        u_data = await self._format_user(msg.author, is_webhook=is_webhook)
+        author = msg.author
+        # msg.author is discord.User (no roles). Resolve to Member for role data.
+        if not is_webhook:
+            member = self.member_cache.get(msg.author.id)
+            if member:
+                author = member
+        u_data = await self._format_user(author, is_webhook=is_webhook)
         if u_data: new_users.append(u_data)
 
         # 1.5 Mentions handling (ensure all mentioned users are saved)
         if msg.mentions:
             for mention in msg.mentions:
+                # Mentions can be Member objects already, so roles work naturally
                 u_ment = await self._format_user(mention, is_webhook=False)
                 if u_ment: new_users.append(u_ment)
 
