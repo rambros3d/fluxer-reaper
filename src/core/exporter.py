@@ -18,6 +18,7 @@ class DiscordExporter:
         self.server_name = ""
         self.server_id = ""
         self.user_cache = {}
+        self.member_cache: Dict[int, Any] = {}  # Pre-fetched member objects (id -> Member)
         self.base_dir = Path(base_dir) if base_dir else Path(".")
         self.is_running = True
         self.db: Optional[BackupDatabase] = None
@@ -61,6 +62,20 @@ class DiscordExporter:
             for chunk in iter(lambda: f.read(4096), b""):
                 hash_sha256.update(chunk)
         return hash_sha256.hexdigest()
+
+    async def prefetch_members(self):
+        """Pre-fetches all guild members into a local cache for role resolution.
+        
+        msg.author is a discord.User (no roles). This cache allows us to
+        resolve roles without an API call per message during message export.
+        """
+        try:
+            members = await self.reader.get_members()
+            self.member_cache = {m.id: m for m in members}
+            logger.info(f"Pre-fetched {len(self.member_cache)} members for role resolution.")
+        except Exception as e:
+            logger.warning(f"Could not pre-fetch members (roles will be empty): {e}")
+            self.member_cache = {}
 
     async def export_metadata(self):
         """Saves server metadata to the SQLite database."""
@@ -439,37 +454,65 @@ class DiscordExporter:
 
         return accumulated_count, accumulated_threads, accumulated_files
 
-    async def _format_user(self, user):
+    async def _format_user(self, user, is_webhook=False):
         """Formats user data for the author or a mention.
         
-        Avatar downloads are intentionally deferred to keep this off the hot
-        message-formatting path.  Call _flush_pending_avatars() after each batch.
+        For Webhooks, we use a generic name and the default Discord avatar system 
+        for the base profile in the user cache.
         """
-        user_id = str(user.id)
+        user_id_int = int(user.id)
+        user_id = str(user_id_int)
+        
         if user_id in self.user_cache:
             return None
 
+        username = user.name
+        display_name = getattr(user, "display_name", user.name)
+        avatar = user.avatar
+        avatar_url = str(user.display_avatar.url) if user.display_avatar else None
+
+        if is_webhook:
+            # For webhooks, we use the ID as the username for technical clarity,
+            # and the current name as the display name.
+            username = user_id
+            display_name = user.name
+            # Discord default avatar formula: (ID >> 22) % 5
+            default_index = (user_id_int >> 22) % 5
+            avatar_url = f"https://cdn.discordapp.com/embed/avatars/{default_index}.png"
+            avatar = None # Don't download character avatar as the "base" webhook avatar
+
         # New user discovered — schedule avatar download but don't block here
         avatar_file = None
-        if user.avatar:
+        if avatar:
             av_name = f"{user_id}.png"
             av_target = self.users_path / av_name
             avatar_file = f"users/{av_name}"
             if not av_target.exists():
                 # Queue for deferred download
-                self._pending_avatars.append((user_id, user.avatar, av_target))
+                self._pending_avatars.append((user_id, avatar, av_target))
 
         roles = []
         if hasattr(user, "roles"):
             roles = [str(r.id) for r in user.roles if not r.is_default()]
 
+        # Determine user type
+        # 0: Regular User, 1: Bot, 2: Webhook, 3: System
+        u_type = 0
+        if is_webhook:
+            u_type = 2
+        elif getattr(user, "system", False):
+            u_type = 3
+        elif getattr(user, "bot", False):
+            u_type = 1
+
         user_data = {
             "id": user_id,
-            "username": user.name,
-            "display_name": getattr(user, "display_name", user.name),
+            "username": username,
+            "display_name": display_name,
             "avatar_file": avatar_file,
-            "avatar_url": str(user.display_avatar.url) if user.avatar else None,
-            "roles": json.dumps(roles)
+            "avatar_url": avatar_url,
+            "roles": json.dumps(roles),
+            "type": u_type
         }
         self.user_cache[user_id] = user_data
         return user_data
@@ -494,13 +537,21 @@ class DiscordExporter:
         new_users = []
 
         # 1. Author handling
-        u_data = await self._format_user(msg.author)
+        is_webhook = bool(getattr(msg, "webhook_id", None))
+        author = msg.author
+        # msg.author is discord.User (no roles). Resolve to Member for role data.
+        if not is_webhook:
+            member = self.member_cache.get(msg.author.id)
+            if member:
+                author = member
+        u_data = await self._format_user(author, is_webhook=is_webhook)
         if u_data: new_users.append(u_data)
 
         # 1.5 Mentions handling (ensure all mentioned users are saved)
         if msg.mentions:
             for mention in msg.mentions:
-                u_ment = await self._format_user(mention)
+                # Mentions can be Member objects already, so roles work naturally
+                u_ment = await self._format_user(mention, is_webhook=False)
                 if u_ment: new_users.append(u_ment)
 
         # 2. Attachments handling (Content-Addressable Storage)
@@ -603,6 +654,15 @@ class DiscordExporter:
             for s_emb in snapshot.embeds:
                 embeds.append(s_emb.to_dict())
 
+        # 5.6 Author Overrides (Webhooks / Masquerade)
+        custom_display_name = None
+        custom_avatar_url = None
+        
+        # Webhooks or bots with masquerade often use per-message names/avatars
+        if getattr(msg, "webhook_id", None) or (msg.author and msg.author.bot):
+            custom_display_name = msg.author.name
+            custom_avatar_url = str(msg.author.display_avatar.url) if msg.author.display_avatar else None
+
         m_data = {
             "id": str(msg.id),
             "channel_id": str(msg.channel.id),
@@ -616,7 +676,9 @@ class DiscordExporter:
             "stickers": stickers,
             "embeds": embeds,
             "reactions": reactions,
-            "extra_data": None
+            "extra_data": None,
+            "custom_display_name": custom_display_name,
+            "custom_avatar_url": custom_avatar_url
         }
 
         return m_data, new_users

@@ -98,9 +98,9 @@ class BackupDatabase:
                     elif table == "permissions":
                         conn.execute("CREATE TABLE permissions (id INTEGER PRIMARY KEY AUTOINCREMENT, channel_id INTEGER, target_id INTEGER, target_type TEXT, allow INTEGER, deny INTEGER)")
                     elif table == "users":
-                        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, avatar_file TEXT, avatar_url TEXT, roles TEXT)")
+                        conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT, display_name TEXT, avatar_file TEXT, avatar_url TEXT, roles TEXT, type INTEGER DEFAULT 0)")
                     elif table == "messages":
-                        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, content TEXT, timestamp TEXT, type INTEGER, message_reference INTEGER, is_pinned INTEGER, extra_data TEXT)")
+                        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, channel_id INTEGER, author_id INTEGER, content TEXT, timestamp TEXT, type INTEGER, message_reference INTEGER, is_pinned INTEGER, extra_data TEXT, custom_display_name TEXT, custom_avatar_url TEXT)")
                     elif table == "attachments":
                         conn.execute("CREATE TABLE attachments (id INTEGER PRIMARY KEY, message_id INTEGER, filename TEXT, size INTEGER, url TEXT, content_type TEXT, local_hash TEXT)")
                     elif table == "embeds":
@@ -123,6 +123,25 @@ class BackupDatabase:
                     
                     conn.execute(f"INSERT INTO {table} ({col_str}) SELECT {col_str} FROM {table}_old")
                     conn.execute(f"DROP TABLE {table}_old")
+
+            # 3. Custom Author Profile Migration
+            res = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='messages'").fetchone()
+            if res and res[0] > 0:
+                cols = conn.execute("PRAGMA table_info(messages)").fetchall()
+                col_names = [c["name"] for c in cols]
+                if "custom_display_name" not in col_names:
+                    logger.info("Migrating messages: adding custom author profile columns")
+                    conn.execute("ALTER TABLE messages ADD COLUMN custom_display_name TEXT")
+                    conn.execute("ALTER TABLE messages ADD COLUMN custom_avatar_url TEXT")
+
+            # 4. User Type Categorization Migration
+            res = conn.execute("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+            if res and res[0] > 0:
+                cols = conn.execute("PRAGMA table_info(users)").fetchall()
+                col_names = [c["name"] for c in cols]
+                if "type" not in col_names:
+                    logger.info("Migrating users: adding type column")
+                    conn.execute("ALTER TABLE users ADD COLUMN type INTEGER DEFAULT 0")
             
             conn.commit()
 
@@ -196,7 +215,8 @@ class BackupDatabase:
                         display_name TEXT,
                         avatar_file TEXT,
                         avatar_url TEXT,
-                        roles TEXT
+                        roles TEXT,
+                        type INTEGER DEFAULT 0
                     )
                 """)
 
@@ -211,7 +231,9 @@ class BackupDatabase:
                         type INTEGER,
                         message_reference INTEGER,
                         is_pinned INTEGER,
-                        extra_data TEXT
+                        extra_data TEXT,
+                        custom_display_name TEXT,
+                        custom_avatar_url TEXT
                     )
                 """)
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id)")
@@ -405,8 +427,8 @@ class BackupDatabase:
         """Saves users to the author cache."""
         with self._lock:
             self._conn.executemany("""
-                INSERT OR REPLACE INTO users (id, username, display_name, avatar_file, avatar_url, roles)
-                VALUES (:id, :username, :display_name, :avatar_file, :avatar_url, :roles)
+                INSERT OR REPLACE INTO users (id, username, display_name, avatar_file, avatar_url, roles, type)
+                VALUES (:id, :username, :display_name, :avatar_file, :avatar_url, :roles, :type)
             """, users)
             self._conn.commit()
 
@@ -454,8 +476,8 @@ class BackupDatabase:
             conn = self._conn
             # Insert messages
             conn.executemany("""
-                INSERT OR REPLACE INTO messages (id, channel_id, author_id, content, timestamp, type, message_reference, is_pinned, extra_data)
-                VALUES (:id, :channel_id, :author_id, :content, :timestamp, :type, :message_reference, :is_pinned, :extra_data)
+                INSERT OR REPLACE INTO messages (id, channel_id, author_id, content, timestamp, type, message_reference, is_pinned, extra_data, custom_display_name, custom_avatar_url)
+                VALUES (:id, :channel_id, :author_id, :content, :timestamp, :type, :message_reference, :is_pinned, :extra_data, :custom_display_name, :custom_avatar_url)
             """, messages)
             
             # Extract attachments, reactions, and stickers

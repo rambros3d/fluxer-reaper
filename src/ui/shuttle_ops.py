@@ -329,8 +329,13 @@ class OperationPane(Container):
             for pne in self.query("#op_target_pane"): pne.display = False
             
             enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
-            for bid in ("#op_backup_msgs", "#op_backup_sync", "#op_autotest"):
-                for btn in self.query(bid): btn.disabled = not enabled
+            for btn in self.query("#op_backup_msgs"):
+                btn.disabled = not enabled
+            for btn in self.query("#op_backup_sync"):
+                btn.display = self.has_backup
+                btn.disabled = not (enabled and self.has_backup)
+            for btn in self.query("#op_autotest"):
+                btn.disabled = not enabled
                 
             for btn in self.query("#op_backup_stats"):
                 btn.display = self.has_backup
@@ -2348,6 +2353,9 @@ class OperationPane(Container):
                 modal_confirm.dismiss()
                 return
 
+            modal_confirm.cancel_callback = lambda: setattr(self.exporter, "is_running", False)
+            modal_confirm.phase_progress()
+
             await self._logic_full_backup(
                 modal=modal_confirm,
                 selected_channels=selected_channels,
@@ -2375,6 +2383,10 @@ class OperationPane(Container):
             await self.exporter.export_channels_structure()
             await self.exporter.export_roles()
             await self.exporter.export_assets()
+
+            # Pre-fetch all members once for role resolution during message export
+            modal.set_status("Pre-fetching server members...")
+            await self.exporter.prefetch_members()
 
             # 2. Channel Messages
             total_chans = len(selected_channels)

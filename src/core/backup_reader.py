@@ -1339,6 +1339,18 @@ class BackupReader:
         user_id = parse_snowflake(msg_data.get("author_id", 0)) or 0
         author = self._resolve_author(user_id)
         
+        # Check for custom author profile (Webhooks / Masquerade)
+        over_name = msg_data.get("custom_display_name")
+        over_avatar = msg_data.get("custom_avatar_url")
+        if over_name:
+            # Create an ephemeral author object for this message
+            author = BackupMember({
+                "id": str(user_id),
+                "username": over_name,
+                "display_name": over_name,
+                "avatar_url": over_avatar
+            })
+
         self._ensure_media_pool_loaded()
         
         channel_id = parse_snowflake(msg_data["channel_id"])
