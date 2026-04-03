@@ -22,6 +22,13 @@ class MigrationContext:
         self.target_platform = target_platform or config.target_platform or "fluxer"
         self.state = MigrationState()
         
+        # Apply config-based log level dynamically to the root logger
+        if hasattr(self.config, "log_level") and self.config.log_level:
+            import logging
+            level = getattr(logging, self.config.log_level.upper(), logging.INFO)
+            logging.getLogger().setLevel(level)
+            logger.info(f"Log level updated to {self.config.log_level.upper()}")
+        
         # Select the appropriate source reader
         if source_mode == "backup":
             from src.core.backup_reader import BackupReader
@@ -37,8 +44,8 @@ class MigrationContext:
         
         # Build the writer for the active target platform only
         if self.target_platform == "stoat":
-            token = config.stoat_bot_token or ""
-            community_id = config.stoat_server_id or ""
+            token = config.stoat_bot_token
+            community_id = config.stoat_server_id
             api_url = config.stoat_api_url or "default"
             self.writer = StoatWriter(token=token, community_id=community_id, api_url=api_url)
             self.stoat_writer = self.writer
