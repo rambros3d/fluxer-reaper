@@ -337,7 +337,37 @@ async def _process_and_send_message(
         stats["messages"] += 1
         stats["last_message_content"] = content
         stats["last_message_author"] = msg.author.display_name
-        
+    else:
+        # Send failed (e.g. server 500 / timeout). Surface exactly which message
+        # was dropped so the offending content can be identified.
+        file_summary = ", ".join(
+            f"{f['filename']} ({len(f['data'])} bytes)" for f in files
+        ) if files else "none"
+
+        # Dump the embeds too — for bot messages with no attachments these are the
+        # likely culprit for a server-side 500 (e.g. an image/thumbnail URL the
+        # server tries to proxy, or fields it can't parse).
+        embed_dicts = []
+        for e in (msg.embeds or []):
+            try:
+                embed_dicts.append(e.to_dict() if hasattr(e, "to_dict") else e)
+            except Exception:
+                embed_dicts.append("<unserializable embed>")
+
+        logger.warning(
+            "Fluxer: DROPPED message %s (author=%s, jump_url=%s) on channel %s — "
+            "send returned no id. content_len=%d, attachments=[%s], embeds=%d",
+            msg.id,
+            author_name,
+            getattr(msg, "jump_url", "?"),
+            target_channel_id,
+            len(content) if content else 0,
+            file_summary,
+            len(embed_dicts),
+        )
+        if embed_dicts:
+            logger.warning("Fluxer: DROPPED message %s embed payload: %s", msg.id, embed_dicts)
+
     return fluxer_msg_id
 
 async def analyze_migration(context: MigrationContext, source_channel_id: int, after_message_id: int | None = None, inclusive: bool = False, progress_callback: Callable[[Dict[str, Any]], Awaitable[None]] | None = None, processed_threads: set | None = None) -> Dict[str, int]:

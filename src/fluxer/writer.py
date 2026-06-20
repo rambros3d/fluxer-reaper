@@ -65,6 +65,84 @@ class FluxerWriter:
             logger.error(f"Failed to manage webhook for channel {channel_id}: {e}")
             return None
 
+    # Embed sub-objects whose URLs the Fluxer server fetches/proxies server-side
+    # during webhook execution. A dead URL here makes the server hang then return
+    # 500, which fails (and drops) the whole message. Format: (section, url_field).
+    _EMBED_MEDIA_PATHS = (
+        ("thumbnail", "url"),
+        ("image", "url"),
+        ("video", "url"),
+        ("footer", "icon_url"),
+        ("author", "icon_url"),
+    )
+
+    async def _is_url_reachable(self, session, url: str) -> bool:
+        """Quick liveness probe with a short timeout.
+
+        Returns False only for the cases that make the server-side media proxy
+        hang or error: connection failures, timeouts, and 5xx. A fast 4xx still
+        counts as reachable (the proxy gets a prompt answer and won't stall).
+        """
+        import aiohttp
+        for method in ("head", "get"):
+            try:
+                async with getattr(session, method)(
+                    url,
+                    timeout=aiohttp.ClientTimeout(total=3),
+                    allow_redirects=True,
+                ) as resp:
+                    # Some hosts reject HEAD — retry once with GET before judging.
+                    if method == "head" and resp.status in (403, 405, 501):
+                        continue
+                    return resp.status < 500
+            except (aiohttp.ClientError, asyncio.TimeoutError):
+                return False
+        return False
+
+    async def _sanitize_embed_media(self, embeds: List[dict]) -> List[dict]:
+        """Strip embed media URLs that point at dead/unreachable hosts.
+
+        Probes every proxied media URL across the given embeds concurrently and
+        removes only the ones that fail, preserving live thumbnails/images. This
+        prevents a single dead embed URL from hanging the Fluxer server and
+        dropping the message (see _is_url_reachable)."""
+        if not embeds:
+            return embeds
+        import aiohttp
+
+        targets = []  # (embed_dict, section, field, url)
+        for emb in embeds:
+            for section, field in self._EMBED_MEDIA_PATHS:
+                sec = emb.get(section)
+                if isinstance(sec, dict):
+                    url = sec.get(field)
+                    if isinstance(url, str) and url.startswith(("http://", "https://")):
+                        targets.append((emb, section, field, url))
+
+        if not targets:
+            return embeds
+
+        async with aiohttp.ClientSession() as session:
+            results = await asyncio.gather(
+                *(self._is_url_reachable(session, t[3]) for t in targets),
+                return_exceptions=True,
+            )
+
+        for (emb, section, field, url), ok in zip(targets, results):
+            if ok is True:
+                continue  # reachable — leave it alone
+            sec = emb.get(section)
+            if isinstance(sec, dict):
+                sec.pop(field, None)
+                sec.pop("proxy_url", None)  # Discord mirrors the dead URL here too
+                if not sec:
+                    emb.pop(section, None)  # drop now-empty media container
+            logger.warning(
+                "Fluxer: stripped unreachable embed %s.%s (%s) before send",
+                section, field, url,
+            )
+        return embeds
+
     async def start(self):
         # ... (lines 14-35)
         # (I will use multi_replace or just replace_file_content carefully)
@@ -304,6 +382,11 @@ class FluxerWriter:
                 normalized_embeds.append(d)
         if not normalized_embeds: normalized_embeds = None
 
+        # Strip embed media URLs pointing at dead hosts — the server proxies these
+        # during webhook execution and a hung fetch causes a 500 that drops the message.
+        if normalized_embeds:
+            normalized_embeds = await self._sanitize_embed_media(normalized_embeds)
+
         try:
             # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
             # So if we have a reply, we MUST use the bot's direct send method.
@@ -324,8 +407,16 @@ class FluxerWriter:
                     logger.debug(f"Fluxer: Webhook send complete, msg_id={msg.id if msg else 'None'}")
                     return str(msg.id) if msg else None
                 except asyncio.TimeoutError:
-                    print(f"Fluxer: Webhook send timed out after 45s for channel {channel_id}")
-                    logger.error(f"Fluxer: Webhook send timed out after 45s for channel {channel_id}")
+                    file_info = (
+                        ", ".join(f"{f['filename']} ({len(f['data'])} bytes)" for f in files)
+                        if files else "none"
+                    )
+                    msg = (
+                        f"Fluxer: Webhook send timed out after 45s for channel {channel_id} "
+                        f"(author='{author_name}', files=[{file_info}])"
+                    )
+                    print(msg)
+                    logger.error(msg)
                     return None
             else:
                 # Use bot direct message (supports files and message_reference)
