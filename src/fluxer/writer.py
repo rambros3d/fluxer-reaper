@@ -4,7 +4,14 @@ import logging
 from typing import Optional, List, Dict, Any
 from fluxer import Bot, Webhook, Forbidden, File
 
+from src.fluxer._lib_patches import apply_fluxer_patches
+
 logger = logging.getLogger(__name__)
+
+# Fix fluxer.py's sticker methods (wrong base_url on self-hosted instances)
+# before any HTTPClient is created. See _lib_patches for details.
+apply_fluxer_patches()
+
 
 class FluxerWriter:
     def __init__(self, token: str, community_id: str, api_url: str = "default"):
