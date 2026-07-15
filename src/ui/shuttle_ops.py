@@ -114,7 +114,7 @@ class OperationPane(Container):
         self.engine: MigrationContext | None = None
         self.exporter: DiscordExporter | None = None
         self.validation_results: dict = {
-            "discord_validating": True,
+            "source_validating": True,
             "target_validating": True,
         }
         self.tokens_valid = False
@@ -126,7 +126,7 @@ class OperationPane(Container):
             with Vertical(id="op_info"):
                 with Horizontal(id="op_info_split"):
                     with Vertical(classes="info_pane"):
-                        yield Label("Discord", classes="pane_header")
+                        yield Label({f"{self.config.source_platform}"}, classes="pane_header")
                         yield Label("Server: [yellow]Loading...[/yellow]", id="op_lbl_d_server")
                         if self.view_mode == "backup":
                             yield Label("Source: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
@@ -242,7 +242,7 @@ class OperationPane(Container):
         d_name = v.get("source_server_name")
         d_bot = v.get("discord_bot_name")
         
-        is_val_d = v.get("discord_validating") or v.get("source_token") is None
+        is_val_d = v.get("source_validating") or v.get("source_token") is None
         if is_val_d:
             s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
         elif v.get("discord_timeout"):
@@ -434,7 +434,7 @@ class OperationPane(Container):
 
         info = self._get_backup_info()
         self.validation_results = {
-            "discord_validating": True,
+            "source_validating": True,
             "target_validating": True,
             "source_token": None, "discord_bot_name": None,
             "source_server": None, "source_server_name": None,
@@ -463,19 +463,19 @@ class OperationPane(Container):
             has_t_server = bool(self.config.fluxer_server_id)
 
         # Flag which operations are being validated
-        validating_discord = False
+        validating_source = False
         validating_target = False
 
         # 1. Determine Discord validating status
         if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
             if has_d_server: 
-                validating_discord = True
+                validating_source = True
             else:
                 self.validation_results["source_token"] = False
                 self.validation_results["source_server"] = False
         else:
             if has_d_token:
-                validating_discord = True
+                validating_source = True
             else:
                 self.validation_results["source_token"] = False
 
@@ -485,7 +485,7 @@ class OperationPane(Container):
         elif self.view_mode == "shuttle":
             self.validation_results["target_token"] = False
 
-        self.validation_results["discord_validating"] = validating_discord
+        self.validation_results["source_validating"] = validating_source
         self.validation_results["target_validating"] = validating_target
         
         # Trigger the UI spinners instantly
@@ -509,7 +509,7 @@ class OperationPane(Container):
             except Exception as e:
                 self.validation_results["discord_error"] = str(e)
             finally:
-                self.validation_results["discord_validating"] = False
+                self.validation_results["source_validating"] = False
                 self._check_and_update()
 
         async def check_target():
@@ -533,7 +533,7 @@ class OperationPane(Container):
                 self._check_and_update()
 
         coros = []
-        if validating_discord: coros.append(check_discord())
+        if validating_source: coros.append(check_discord())
         if validating_target: coros.append(check_target())
         
         try:
