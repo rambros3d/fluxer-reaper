@@ -75,7 +75,7 @@ async def test_backup_reader_interaction(backup_reader, reaper_config):
     await backup_reader.start()
     assert backup_reader.guild is not None
     # Verify ID from config (or mock default)
-    assert str(backup_reader.guild.id) == reaper_config.get("discord_server_id")
+    assert str(backup_reader.guild.id) == reaper_config.get("source_server_id")
     
     channels = await backup_reader.fetch_channels()
     assert len(channels) > 0
@@ -86,8 +86,8 @@ async def test_backup_reader_interaction(backup_reader, reaper_config):
 @pytest.mark.parametrize("platform", get_platforms())
 async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platform, request):
     config = AppConfig(
-        discord_bot_token=reaper_config["discord_bot_token"],
-        discord_server_id=reaper_config["discord_server_id"],
+        source_bot_token=reaper_config["source_bot_token"],
+        source_server_id=reaper_config["source_server_id"],
         target_platform=platform,
         fluxer_bot_token=reaper_config.get("fluxer_bot_token"),
         fluxer_server_id=reaper_config.get("fluxer_server_id"),

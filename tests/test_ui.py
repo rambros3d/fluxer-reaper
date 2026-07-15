@@ -16,11 +16,11 @@ from textual.widgets import ListItem, ListView, Input, Button, Label
 def mock_configs(tmp_path, log):
     reaper_dir = tmp_path / "ReaperFiles-TestConfig"
     reaper_dir.mkdir()
-    (reaper_dir / "reaper_config.yaml").write_text("discord_bot_token: 'fake'\ndiscord_server_id: '123'\ntool_mode: 'backup_only'")
+    (reaper_dir / "reaper_config.yaml").write_text("source_bot_token: 'fake'\nsource_server_id: '123'\ntool_mode: 'backup_only'")
     
     autotest_dir = tmp_path / "ReaperFiles-AutoTest"
     autotest_dir.mkdir()
-    (autotest_dir / "reaper_config.yaml").write_text("discord_bot_token: 'fake'\ndiscord_server_id: '123'\ntool_mode: 'backup_transfer'")
+    (autotest_dir / "reaper_config.yaml").write_text("source_bot_token: 'fake'\nsource_server_id: '123'\ntool_mode: 'backup_transfer'")
     
     old_cwd = os.getcwd()
     os.chdir(tmp_path)
@@ -71,7 +71,7 @@ async def test_ui_config_wizard_save(mock_configs, log):
                 await wait_for_screen(app, ConfigScreen)
                 
                 screen = app.screen
-                inp = screen.query_one("#inp_discord_token", Input)
+                inp = screen.query_one("#inp_source_token", Input)
                 inp.value = "new_fake_token"
                 
                 with patch("src.ui.main_app.save_config") as mock_save:

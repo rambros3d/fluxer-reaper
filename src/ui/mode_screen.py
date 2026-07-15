@@ -136,6 +136,7 @@ class ModeScreen(Screen):
                         if mode == "backup_transfer":
                             yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")
                         yield Button("Configuration", id="btn_config", variant="success", tooltip="Change Bot tokens\nand Reaper Mode")
+                        yield Button("Back to Config Selection", id="btn_back", variant="warning", tooltip="Return to the configuration selection screen")
                         yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()
@@ -146,6 +147,10 @@ class ModeScreen(Screen):
         bid = event.button.id
         if bid == "btn_exit":
             self.app.exit()
+        elif bid == "btn_back":
+            self.app.pop_screen()
+            from src.ui.main_app import ConfigSelectionScreen
+            self.app.push_screen(ConfigSelectionScreen())
         elif bid == "btn_config":
             from src.ui.main_app import ConfigScreen
             def reload_screen(saved: bool = False):

@@ -69,7 +69,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
             if type(target).__name__ == "Role":
                 discord_role_id = str(target.id)
                 # Handle @everyone role special case
-                if discord_role_id == context.config.discord_server_id:
+                if discord_role_id == context.config.source_server_id:
                     fluxer_role_id = context.config.fluxer_server_id
                 else:
                     fluxer_role_id = context.state.get_fluxer_role_id(discord_role_id)

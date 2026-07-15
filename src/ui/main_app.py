@@ -70,7 +70,8 @@ class NewConfigModal(ModalScreen[str]):
         width: 50; height: auto;
         border: thick $background 80%; background: $surface; padding: 1 2;
     }
-    #new_config_title { text-style: bold; margin-bottom: 1; }
+    #new_config_title { text-style: bold; margin-bottom: 1; padding-bottom: 1; border-bottom: solid $primary; }
+    #new_config_source { text-style: bold; margin-top: 1; padding-top: 1; border-bottom: solid $primary; }
     #new_config_buttons { height: auto; margin-top: 1; }
     #new_config_buttons Button { width: 1fr; margin: 0 1; }
     """
@@ -79,6 +80,10 @@ class NewConfigModal(ModalScreen[str]):
         with Vertical(id="new_config_dialog"):
             yield Label("Enter new configuration name:", id="new_config_title")
             yield Input(placeholder="e.g. MyServer", id="new_config_input", tooltip="Enter a unique name for this config")
+            yield Label("Choose a SOURCE PLATFORM. Discord is \n the default.", id="new_config_source")
+            with RadioSet(id="new_config_platform"):
+                yield RadioButton("Discord", id="src_discord", value=True)   # default
+                yield RadioButton("Fluxer", id="src_fluxer")
             with Horizontal(id="new_config_buttons"):
                 yield Button("Create", variant="success", id="btn_create", tooltip="Create config and launch setup")
                 yield Button("Cancel", variant="primary", id="btn_cancel")
@@ -91,7 +96,16 @@ class NewConfigModal(ModalScreen[str]):
         if event.button.id == "btn_create":
             name = self._get_sanitized_name()
             if name:
-                self.dismiss(name)
+                # Get selected platform
+                source_platform = "discord"  # default
+                for rb in self.query("#new_config_platform RadioButton"):
+                    if rb.value:
+                        if rb.id == "src_discord":
+                            source_platform = "discord"
+                        elif rb.id == "src_fluxer":
+                            source_platform = "fluxer"
+                        break
+                self.dismiss((name, source_platform))
         elif event.button.id == "btn_cancel":
             self.dismiss(None)
 
@@ -217,19 +231,28 @@ class ConfigSelectionScreen(Screen):
         self.app.push_screen(ModeScreen(display_name, cfg_path))
 
     def action_new_config(self) -> None:
-        def cb(name: str | None):
-            if name:
-                create_new_config(name)
-                self.refresh_configs()
-                # Immediately open the ConfigScreen for the new config
-                cfg_path = Path(f"ReaperFiles-{name}") / "reaper_config.yaml"
-                def on_config_saved(saved: bool = False):
-                    if saved:
-                        self.refresh_configs()
-                        # Navigate into the ModeScreen
-                        from src.ui.mode_screen import ModeScreen
-                        self.app.push_screen(ModeScreen(name, cfg_path))
-                self.app.push_screen(ConfigScreen(name, cfg_path), on_config_saved)
+        def cb(result):
+            if result is None:
+                return
+            name, source_platform = result
+
+            create_new_config(name)
+            self.refresh_configs()
+            # Immediately open the ConfigScreen for the new config
+            cfg_path = Path(f"ReaperFiles-{name}") / "reaper_config.yaml"
+
+            def on_config_saved(saved: bool = False):
+                if saved:
+                    self.refresh_configs()
+                    # Navigate into the ModeScreen
+                    from src.ui.mode_screen import ModeScreen
+                    self.app.push_screen(ModeScreen(name, cfg_path))
+
+            self.app.push_screen(
+                ConfigScreen(name, cfg_path, source_platform=source_platform),
+                on_config_saved
+                )
+            
         self.app.push_screen(NewConfigModal(), cb)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
@@ -281,7 +304,7 @@ _PLAT_LABELS = {
 
 
 class ConfigScreen(Screen):
-    """Configuration screen — Discord config, tool mode, and target platform."""
+    """Configuration screen — Source config, tool mode, and target platform."""
 
     DEFAULT_CSS = """
     ConfigScreen { align: center middle; }
@@ -310,18 +333,48 @@ class ConfigScreen(Screen):
     .fetch_row { height: auto; align: left middle; margin-bottom: 1; }
     .fetch_row Input { width: 1fr; }
     .fetch_row Button { width: auto; margin-left: 1; }
-    #inp_discord_server { margin-bottom: 1; }
+    #inp_source_server { margin-bottom: 1; }
     .switch_row { height: auto; align: left middle; margin-top: 1; margin-bottom: 1; }
     #lbl_anonymize { margin-right: 2; margin-top: 0; }
     """
 
     BINDINGS = [("escape", "go_back", "Back")]
 
-    def __init__(self, cfg_name: str, cfg_path: Path, *args, **kwargs):
+    FETCH_CONFIGS = {
+        "source_discord": {
+            "btn_id": "#btn_fetch_source",
+            "select_id": "#inp_source_server",
+            "error_msg": "No Discord servers found.",
+            "saved_id_attr": "source_server_id",  # attribute on self.config
+        },
+        "source_fluxer": {
+            "btn_id": "#btn_fetch_source",
+            "select_id": "#inp_source_server",
+            "error_msg": "No Fluxer servers found.",
+            "saved_id_attr": "source_server_id",
+        },
+        "target_fluxer": {
+            "btn_id": "#btn_fetch_target",
+            "select_id": "#inp_target_server",
+            "error_msg": "No Fluxer servers found.",
+            "saved_id_attr": "fluxer_server_id",
+        },
+        "target_stoat": {
+            "btn_id": "#btn_fetch_target",
+            "select_id": "#inp_target_server",
+            "error_msg": "No Stoat servers found.",
+            "saved_id_attr": "stoat_server_id",
+        },
+    }
+
+    def __init__(self, cfg_name: str, cfg_path: Path, source_platform: str = "discord", *args, **kwargs):
         super().__init__(*args, **kwargs)
+
         self.cfg_name = cfg_name
         self.cfg_path = cfg_path
         self.config = load_config(cfg_path)
+        self.source_platform = source_platform
+        self.config.source_platform = source_platform
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -330,24 +383,52 @@ class ConfigScreen(Screen):
                 yield Label(f"Configuration — {self.cfg_name}", id="cfg_title")
 
                 with VerticalScroll(id="cfg_scroll"):
-                    # ── Discord ──────────────────────────────────────────────
-                    yield Label("Discord Bot Token:", classes="field_label")
-                    with Horizontal(classes="fetch_row"):
-                        yield Input(
-                            value=self.config.discord_bot_token or "",
-                            id="inp_discord_token",
-                            password=True,
-                            placeholder="Paste Bot Token here",
-                            tooltip="Enter your Discord BOT token from the Developer Portal"
+                    # -- Source Platform (Discord or Fluxer) --
+                    yield Label(f"[{self.source_platform}] Source Platform", classes="section_title")
+                    if self.source_platform == "discord":
+                        # ── Discord ──────────────────────────────────────────────
+                        yield Label("Discord Bot Token:", classes="field_label")
+                        with Horizontal(classes="fetch_row"):
+                            yield Input(
+                                value=self.config.source_bot_token or "",
+                                id="inp_source_token",
+                                password=True,
+                                placeholder="Paste Bot Token here",
+                                tooltip="Enter your Discord BOT token from the Developer Portal"
+                            )
+                            yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Discord servers")
+                        
+                        yield Label("Server ID:", classes="field_label")
+                        yield Select(
+                            options=[],
+                            id="inp_source_server",
+                            prompt="Validate Bot Token"
                         )
-                        yield Button("Validate", id="btn_fetch_guilds", variant="primary", tooltip="Verify token and fetch available Discord servers")
-                    
-                    yield Label("Server ID:", classes="field_label")
-                    yield Select(
-                        options=[],
-                        id="inp_discord_server",
-                        prompt="Validate Bot Token"
-                    )
+                    elif self.source_platform == "fluxer":
+                        # ── Fluxer ───────────────────────────────────────────────
+                        yield Label("Fluxer Bot Token:", classes="field_label")
+                        with Horizontal(classes="fetch_row"):
+                            yield Input(
+                                value=self.config.source_bot_token or "",
+                                id="inp_source_token",
+                                password=True,
+                                placeholder="Paste Fluxer Bot Token here",
+                                tooltip="Enter your Fluxer BOT token from the Developer Portal"
+                            )
+                            yield Input(
+                                value=self.config.source_api_url or "",
+                                id="inp_source_api_url",
+                                placeholder="Leave empty for official Fluxer app/instance.",
+                                tooltip="Enter the custom API url for self hosted instances"
+                            )
+                            yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Fluxer communities")
+                        
+                        yield Label("Source Server ID:", classes="field_label")
+                        yield Select(
+                            options=[],
+                            id="inp_source_server",
+                            prompt="Validate Bot Token"
+                        )
 
                     # ── Reaper Mode ──────────────────────────────────────────
                     yield Label("Reaper Mode", classes="section_title")
@@ -395,7 +476,7 @@ class ConfigScreen(Screen):
                                 placeholder="Paste Target Bot Token",
                                 tooltip="Enter the Bot token for the target platform"
                             )
-                            yield Button("Validate", id="btn_fetch_target_servers", variant="primary", tooltip="Verify token and fetch available communities")
+                            yield Button("Validate", id="btn_fetch_target", variant="primary", tooltip="Verify token and fetch available communities")
                         
                         yield Label("Community / Server ID:", classes="field_label")
                         yield Select(
@@ -429,14 +510,26 @@ class ConfigScreen(Screen):
 
     def on_mount(self) -> None:
         self._toggle_target_section()
+        
         # If we have a token, try to populate the select widget on mount
-        if self.config.discord_bot_token:
-            self.run_worker(self._do_fetch_guilds(self.config.discord_bot_token, initial=True))
+        if self.config.source_bot_token:
+            if self.source_platform == "discord":
+                self.run_worker(self._do_fetch_source_discord(self.config.source_bot_token, initial=True))
+            else:
+                api_url = self.config.source_api_url or "default"
+                self.run_worker(self._do_fetch_source_fluxer(self.config.source_bot_token, api_url, initial=True))
         
         # Also auto-fetch target servers if mode is not backup_only
         if self._get_selected_mode() != "backup_only":
             platform = self.config.target_platform
-            t_token = self.config.stoat_bot_token if platform == "stoat" else self.config.fluxer_bot_token
+            
+            if platform == "fluxer":
+                t_token = self.config.fluxer_bot_token
+            elif platform == "stoat":
+                t_token = self.config.stoat_bot_token
+            else:
+                t_token = None
+            
             if t_token:
                 if platform != "none":
                     t_api = self.config.stoat_api_url if platform == "stoat" else self.config.fluxer_api_url
@@ -450,50 +543,106 @@ class ConfigScreen(Screen):
     async def _fetch_and_populate(
         self, 
         fetch_coro, 
-        btn_id: str, 
-        select_id: str, 
-        error_msg: str, 
+        config: dict, 
         saved_id: str | None = None,
         initial: bool = False
     ) -> None:
         """Generic helper to fetch data and update a Select widget."""
         try:
             results = await fetch_coro
+            btn = self.query_one(config["btn_id"], Button)
+            select = self.query_one(config["select_id"], Select)
+
             if not results:
-                try:
-                    self.query_one(btn_id, Button).variant = "warning"
-                    self.query_one(select_id, Select).prompt = "No results found"
-                except Exception: pass
+                btn.variant = "warning"
+                select.prompt = "No results found"
                 if not initial:
-                    self.notify(error_msg, severity="warning")
+                    self.notify(config["error_msg"], severity="warning")
                 return
 
-            try:
-                self.query_one(btn_id, Button).variant = "success"
-                options = [(label, sid) for label, sid in results]
-                select_widget = self.query_one(select_id, Select)
-                select_widget.prompt = "Select an item"
-                select_widget.set_options(options)
+            btn.variant = "success"
+            options = [(label, sid) for label, sid in results]
+            select.prompt = "Select an item"
+            select.set_options(options)
+
+            if saved_id and any(sid == saved_id for _, sid in results):
+                select.value = saved_id
                 
-                if saved_id and any(sid == saved_id for _, sid in results):
-                    select_widget.value = saved_id
-            except Exception: pass
         except Exception as e:
             try:
-                self.query_one(btn_id, Button).variant = "warning"
-                self.query_one(select_id, Select).prompt = "Invalid token"
-            except Exception: pass
+                self.query_one(config["btn_id"], Button).variant = "warning"
+                self.query_one(config["select_id"], Select).prompt = "Invalid token"
+            except Exception:
+                pass
             if not initial:
                 self.notify(f"Fetch failed: {e}", severity="error")
+    
+    async def _do_fetch_source_platform(self, token: str, api_url: str = None, platform: str = None, initial: bool = False) -> None:
+        if not platform: platform = self.source_platform
+        try:
+            if not token: token = self.query_one("#inp_source_token", Input).value.strip()
+            if not api_url: api_url = self.query_one("#inp_source_api_url", Input).value.strip() or "default"
+        except Exception: return
+        if not token: return
+
+        if platform == "fluxer":
+            await self._do_fetch_target_servers(token, api_url, platform, initial)
+        elif platform == "discord":
+            await self._do_fetch_guilds(token, initial)
+        else: return
+
+    async def _do_fetch_source_discord(self, token: str, initial: bool = False) -> None:
+        from src.core.discord_reader import DiscordReader
+        config = self.FETCH_CONFIGS["source_discord"]
+        saved_id = getattr(self.config, config["saved_id_attr"])
+        await self._fetch_and_populate(
+            DiscordReader.fetch_guilds(token),
+            config,
+            saved_id,
+            initial
+        )
+
+    async def _do_fetch_source_fluxer(self, token: str, api_url: str = None, initial: bool = False) -> None:
+        from src.fluxer.writer import FluxerWriter
+        config = self.FETCH_CONFIGS["source_fluxer"]
+        saved_id = getattr(self.config, config["saved_id_attr"])
+        await self._fetch_and_populate(
+            FluxerWriter.fetch_guilds(token, api_url or "default"),
+            config,
+            saved_id,
+            initial
+        )
+
+    async def _do_fetch_target_fluxer(self, token: str, api_url: str = None, initial: bool = False) -> None:
+        from src.fluxer.writer import FluxerWriter
+        config = self.FETCH_CONFIGS["target_fluxer"]
+        saved_id = getattr(self.config, config["saved_id_attr"])
+        await self._fetch_and_populate(
+            FluxerWriter.fetch_guilds(token, api_url or "default"),
+            config,
+            saved_id,
+            initial
+        )
+
+    async def _do_fetch_target_stoat(self, token: str, api_url: str = None, initial: bool = False) -> None:
+        from src.stoat.writer import StoatWriter
+        config = self.FETCH_CONFIGS["target_stoat"]
+        saved_id = getattr(self.config, config["saved_id_attr"])
+        await self._fetch_and_populate(
+            StoatWriter.fetch_guilds(token, api_url or "default"),
+            config,
+            saved_id,
+            initial
+        )
 
     async def _do_fetch_guilds(self, token: str, initial: bool = False) -> None:
         from src.core.discord_reader import DiscordReader
+        config = self.FETCH_CONFIGS["source_discord"]
+        saved_id = getattr(self.config, config["saved_id_attr"])
         await self._fetch_and_populate(
             DiscordReader.fetch_guilds(token),
-            "#btn_fetch_guilds",
-            "#inp_discord_server",
-            "No Discord servers found.",
-            self.config.discord_server_id,
+            config,
+            saved_id,
             initial
         )
 
@@ -544,20 +693,33 @@ class ConfigScreen(Screen):
 
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn_fetch_guilds":
-            token = self.query_one("#inp_discord_token", Input).value.strip()
+        if event.button.id == "btn_fetch_source":
+            token = self.query_one("#inp_source_token", Input).value.strip()
             if not token:
-                self.notify("Please enter a valid Bot Token first.", severity="error")
+                self.notify("Please enter a valid Source Bot Token first.", severity="error")
                 return
-            self.run_worker(self._do_fetch_guilds(token))
-        elif event.button.id == "btn_fetch_target_servers":
+
+            if self.source_platform == "discord":
+                self.run_worker(self._do_fetch_source_discord(token))
+            elif self.source_platform == "fluxer":  
+                api_url = self.query_one("#inp_source_api_url", Input).value.strip() or "default"
+                self.run_worker(self._do_fetch_source_fluxer(token, api_url))
+
+        elif event.button.id == "btn_fetch_target":
             token = self.query_one("#inp_target_token", Input).value.strip()
             if not token:
-                self.notify("Please enter a valid Target Platform Token first.", severity="error")
+                self.notify("Please enter a valid Target Bot Token first.", severity="error")
                 return
-            self.run_worker(self._do_fetch_target_servers())
+            platform = self._get_selected_platform()
+            api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
+            if platform == "fluxer":
+                self.run_worker(self._do_fetch_target_fluxer(token, api_url))
+            elif platform == "stoat":
+                self.run_worker(self._do_fetch_target_stoat(token, api_url))
+
         elif event.button.id == "btn_back":
             self.app.pop_screen()
+
         elif event.button.id == "btn_save":
             self._collect_and_save()
             self.notify("Configuration saved.", severity="information")
@@ -610,12 +772,14 @@ class ConfigScreen(Screen):
     # ── save / start ─────────────────────────────────────────────────────
 
     def _collect_and_save(self) -> None:
-        # 1. Discord Section
-        self.config.discord_bot_token = self.query_one("#inp_discord_token", Input).value.strip() or None
+        # 1. Source Section
+        self.config.source_bot_token = self.query_one("#inp_source_token", Input).value.strip() or None
+        if self.source_platform == "fluxer":
+            self.config.source_api_url = self.query_one("#inp_source_api_url", Input).value.strip() or None
         
-        d_select = self.query_one("#inp_discord_server", Select)
+        d_select = self.query_one("#inp_source_server", Select)
         if d_select.value not in (Select.BLANK, Select.NULL):
-            self.config.discord_server_id = str(d_select.value)
+            self.config.source_server_id = str(d_select.value)
 
         # 2. Mode
         self.config.tool_mode = self._get_selected_mode()

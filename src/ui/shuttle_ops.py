@@ -206,10 +206,10 @@ class OperationPane(Container):
             self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
 
     def _get_backup_info(self) -> str | None:
-        if not self.config or not self.config.discord_server_id:
+        if not self.config or not self.config.source_server_id:
             return None
             
-        target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
         if not target_dir.exists():
             return None
             
@@ -239,27 +239,27 @@ class OperationPane(Container):
         v = self.validation_results
 
         # Discord
-        d_name = v.get("discord_server_name")
+        d_name = v.get("source_server_name")
         d_bot = v.get("discord_bot_name")
         
-        is_val_d = v.get("discord_validating") or v.get("discord_token") is None
+        is_val_d = v.get("discord_validating") or v.get("source_token") is None
         if is_val_d:
             s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
         elif v.get("discord_timeout"):
             s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
-        elif v.get("discord_token") and v.get("discord_server"):
+        elif v.get("source_token") and v.get("source_server"):
             s_disp = f'[cyan]"{d_name}"[/cyan]'
             b_disp = f'[green]{d_bot}[/green]'
-        elif v.get("discord_token") and not v.get("discord_server"):
+        elif v.get("source_token") and not v.get("source_server"):
             s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", f"[green]{d_bot}[/green]"
-        elif v.get("discord_token") is False:
+        elif v.get("source_token") is False:
             if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-                if not self.config.discord_server_id:
+                if not self.config.source_server_id:
                     s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", "[red]SERVER NOT SELECTED[/red]"
                 else:
                     s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
             else:
-                if not self.config.discord_bot_token:
+                if not self.config.source_bot_token:
                     s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
                 else:
                     s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
@@ -280,7 +280,7 @@ class OperationPane(Container):
         dp = v.get("discord_permissions", {})
         
         d_missing = []
-        if d_err is None and v.get("discord_token") and v.get("discord_server"):
+        if d_err is None and v.get("source_token") and v.get("source_server"):
             if not di.get("message_content"): d_missing.append("Message Content Intent")
             if not di.get("members"): d_missing.append("Server Members Intent")
             
@@ -296,9 +296,9 @@ class OperationPane(Container):
             for ldr in self.query("#op_d_loader"): ldr.display = False
             for lbl in self.query("#op_lbl_d_status"): lbl.display = True
             
-            if v.get("discord_token") and v.get("discord_server") and not d_missing:
+            if v.get("source_token") and v.get("source_server") and not d_missing:
                 d_status = "STATUS: [green]VALID[/green]"
-            elif v.get("discord_token") and not v.get("discord_server"):
+            elif v.get("source_token") and not v.get("source_server"):
                 d_status = "[red]SERVER NOT SET[/red]"
             elif v.get("discord_timeout"):
                 d_status = "[red]TIMEOUT[/red]"
@@ -306,7 +306,7 @@ class OperationPane(Container):
                 d_status = f"[red]{d_err}[/red]"
             elif d_missing:
                 d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
-            elif v.get("discord_token") is False:
+            elif v.get("source_token") is False:
                 if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
                     d_status = "[yellow]Local Backup[/yellow] [red]Not Found[/red]"
                 else:
@@ -328,7 +328,7 @@ class OperationPane(Container):
             for rle in self.query("#op_vrule"): rle.display = False
             for pne in self.query("#op_target_pane"): pne.display = False
             
-            enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
+            enabled = (v.get("source_token") and v.get("source_server") and not d_missing)
             for btn in self.query("#op_backup_msgs"):
                 btn.disabled = not enabled
             for btn in self.query("#op_backup_sync"):
@@ -436,8 +436,8 @@ class OperationPane(Container):
         self.validation_results = {
             "discord_validating": True,
             "target_validating": True,
-            "discord_token": None, "discord_bot_name": None,
-            "discord_server": None, "discord_server_name": None,
+            "source_token": None, "discord_bot_name": None,
+            "source_server": None, "source_server_name": None,
             "discord_intents": {}, "discord_permissions": {},
             "discord_error": None,
             "target_token": None, "target_bot_name": None,
@@ -452,8 +452,8 @@ class OperationPane(Container):
         self.has_backup = bool(info)
 
         # Check what we have
-        has_d_token = bool(self.config.discord_bot_token)
-        has_d_server = bool(self.config.discord_server_id)
+        has_d_token = bool(self.config.source_bot_token)
+        has_d_server = bool(self.config.source_server_id)
         
         if self.target_platform == "stoat":
             has_t_token = bool(self.config.stoat_bot_token)
@@ -471,13 +471,13 @@ class OperationPane(Container):
             if has_d_server: 
                 validating_discord = True
             else:
-                self.validation_results["discord_token"] = False
-                self.validation_results["discord_server"] = False
+                self.validation_results["source_token"] = False
+                self.validation_results["source_server"] = False
         else:
             if has_d_token:
                 validating_discord = True
             else:
-                self.validation_results["discord_token"] = False
+                self.validation_results["source_token"] = False
 
         # 2. Determine Target validating status
         if self.view_mode == "shuttle" and has_t_token:
@@ -495,10 +495,10 @@ class OperationPane(Container):
             try:
                 import asyncio
                 res = await asyncio.wait_for(self.engine.discord_reader.validate(), timeout=10.0)
-                self.validation_results["discord_token"] = res.get("token", False)
+                self.validation_results["source_token"] = res.get("token", False)
                 self.validation_results["discord_bot_name"] = res.get("bot_name")
-                self.validation_results["discord_server"] = res.get("server", False)
-                self.validation_results["discord_server_name"] = res.get("server_name")
+                self.validation_results["source_server"] = res.get("server", False)
+                self.validation_results["source_server_name"] = res.get("server_name")
                 self.validation_results["discord_intents"] = res.get("intents", {})
                 self.validation_results["discord_permissions"] = res.get("permissions", {})
                 self.validation_results["discord_error"] = res.get("error_reason")
@@ -548,7 +548,7 @@ class OperationPane(Container):
     def _check_and_update(self) -> None:
         """Called safely on the main thread after any validation task finishes."""
         v = self.validation_results
-        discord_ok = v.get("discord_token") and v.get("discord_server")
+        discord_ok = v.get("source_token") and v.get("source_server")
         
         if self.view_mode == "backup":
             self.tokens_valid = bool(discord_ok)
@@ -596,7 +596,7 @@ class OperationPane(Container):
             self.run_backup_sync()
         elif bid == "op_backup_stats":
             from src.ui.backup_stats import BackupStatsScreen
-            target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+            target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
             self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
         elif bid == "op_autotest" or bid == "btn_autotest":
             self.run_autotest_sequence()
@@ -683,7 +683,7 @@ class OperationPane(Container):
         modal.write("[bold yellow]Starting Backup Auto-Test...[/bold yellow]")
         
         # 1. Clear old backup directory completely
-        server_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        server_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
         if server_dir.exists():
             modal.write(f"[yellow]Deleting existing backup directory: {server_dir}[/yellow]")
             try:

@@ -32,13 +32,13 @@ class MigrationContext:
         # Select the appropriate source reader
         if source_mode == "backup":
             from src.core.backup_reader import BackupReader
-            backup_path = self._find_backup_path(config.discord_server_id, base_dir)
+            backup_path = self._find_backup_path(config.source_server_id, base_dir)
             self.discord_reader = BackupReader(backup_path)
             logger.info(f"Source mode: BACKUP — reading from {backup_path}")
         else:
             self.discord_reader = DiscordReader(
-                token=config.discord_bot_token,
-                server_id=config.discord_server_id
+                token=config.source_bot_token,
+                server_id=config.source_server_id
             )
             logger.info("Source mode: LIVE — using Discord API")
         
@@ -90,10 +90,10 @@ class MigrationContext:
             d_valid = await self.discord_reader.validate()
             t_valid = await self.writer.validate()
             results = {
-                "discord_token": d_valid.get("token", False),
+                "source_token": d_valid.get("token", False),
                 "discord_bot_name": d_valid.get("bot_name"),
-                "discord_server": d_valid.get("server", False),
-                "discord_server_name": d_valid.get("server_name"),
+                "source_server": d_valid.get("server", False),
+                "source_server_name": d_valid.get("server_name"),
                 "discord_intents": d_valid.get("intents", {}),
                 "discord_permissions": d_valid.get("permissions", {}),
                 "target_token": t_valid.get("token", False),
@@ -108,7 +108,7 @@ class MigrationContext:
                 tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
                 
                 # Prefer the original discord community name for the DB file if available (e.g. from live load or backup)
-                db_name = results.get("discord_server_name")
+                db_name = results.get("source_server_name")
                 if not db_name or db_name == "Not Found" or db_name == "Unknown":
                     db_name = results.get("target_community_name") or "Unknown"
 
@@ -121,8 +121,8 @@ class MigrationContext:
         except Exception as e:
             logger.error(f"Validation failed with exception: {e}")
             return {
-                "discord_token": False,
-                "discord_server": False,
+                "source_token": False,
+                "source_server": False,
                 "target_token": False,
                 "target_community": False
             }

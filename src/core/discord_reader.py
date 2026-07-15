@@ -62,7 +62,7 @@ class DiscordReader:
         try:
             self.server_id = int(server_id)
         except (ValueError, TypeError):
-            # Fallback for placeholder strings like 'DISCORD_SERVER_ID'
+            # Fallback for placeholder strings like 'source_server_id'
             self.server_id = 0
         
         self.guild: discord.Guild | None = None

@@ -4,8 +4,10 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 class AppConfig(BaseModel):
-    discord_bot_token: Optional[str] = Field(default=None)
-    discord_server_id: Optional[str] = Field(default=None)
+    source_platform: str = Field(default="discord")  # discord | fluxer | none
+    source_bot_token: Optional[str] = Field(default=None)  
+    source_server_id: Optional[str] = Field(default=None)  
+    source_api_url: Optional[str] = Field(default=None)     # If self-hostable like fluxer
     tool_mode: str = Field(default="direct_transfer")  # direct_transfer | backup_transfer | backup_only
     target_platform: str = Field(default="fluxer")       # fluxer | stoat | none
     fluxer_bot_token: Optional[str] = Field(default=None)

@@ -5,7 +5,7 @@
 - Windows 10 has been known to be problematic, it seems to use a separate clipboard for the terminal.
 - As a workaround, you can directly paste tokens in **config.yaml** file inside the ReaperFiles-XXX folder
 ```
-discord_bot_token: YOUR_DISCORD_BOT_TOKEN
+source_bot_token: YOUR_SOURCE_BOT_TOKEN
 fluxer_bot_token: YOUR_FLUXER_BOT_TOKEN
 stoat_bot_token: YOUR_STOAT_BOT_TOKEN
 ```

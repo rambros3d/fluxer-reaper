@@ -78,8 +78,8 @@ def reaper_config(test_data_dir):
         return data
     # Fallback mock config
     return {
-        "discord_bot_token": "mock_discord_token",
-        "discord_server_id": "123456789012345678",
+        "source_bot_token": "mock_source_token",
+        "source_server_id": "123456789012345678",
         "tool_mode": "backup_transfer",
         "target_platform": "fluxer",
         "fluxer_bot_token": "mock_fluxer_token",
@@ -123,7 +123,7 @@ def backup_db(temp_db):
 
 @pytest.fixture
 def backup_reader(test_data_dir, reaper_config, tmp_path):
-    sid = reaper_config.get("discord_server_id")
+    sid = reaper_config.get("source_server_id")
     backup_path = test_data_dir / f"DISCORD_BACKUP-{sid}"
     
     if not test_data_dir.exists() or not backup_path.exists():
