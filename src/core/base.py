@@ -91,11 +91,11 @@ class MigrationContext:
             t_valid = await self.writer.validate()
             results = {
                 "source_token": d_valid.get("token", False),
-                "discord_bot_name": d_valid.get("bot_name"),
+                "source_bot_name": d_valid.get("bot_name"),
                 "source_server": d_valid.get("server", False),
                 "source_server_name": d_valid.get("server_name"),
                 "discord_intents": d_valid.get("intents", {}),
-                "discord_permissions": d_valid.get("permissions", {}),
+                "source_permissions": d_valid.get("permissions", {}),
                 "target_token": t_valid.get("token", False),
                 "target_bot_name": t_valid.get("bot_name"),
                 "target_community": t_valid.get("community", False),

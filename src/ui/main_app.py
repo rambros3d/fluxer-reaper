@@ -384,8 +384,8 @@ class ConfigScreen(Screen):
 
                 with VerticalScroll(id="cfg_scroll"):
                     # -- Source Platform (Discord or Fluxer) --
-                    yield Label(f"[{self.source_platform}] Source Platform", classes="section_title")
-                    if self.source_platform == "discord":
+                    yield Label(f"[{self.config.source_platform.capitalize()}](Source Platform)", classes="section_title")
+                    if self.config.source_platform == "discord":
                         # ── Discord ──────────────────────────────────────────────
                         yield Label("Discord Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
@@ -404,7 +404,7 @@ class ConfigScreen(Screen):
                             id="inp_source_server",
                             prompt="Validate Bot Token"
                         )
-                    elif self.source_platform == "fluxer":
+                    elif self.config.source_platform == "fluxer":
                         # ── Fluxer ───────────────────────────────────────────────
                         yield Label("Fluxer Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
@@ -513,13 +513,13 @@ class ConfigScreen(Screen):
         
         # If we have a token, try to populate the select widget on mount
         if self.config.source_bot_token:
-            self._do_fetch(
+            self.run_worker(self._do_fetch(
                 "source", 
-                self.source_platform, 
+                self.config.source_platform, 
                 self.config.source_bot_token, 
                 self.config.source_api_url or "default", 
                 initial=True
-            )
+            ))
         
         # Also auto-fetch target servers if mode is not backup_only
         if self._get_selected_mode() != "backup_only":
@@ -596,6 +596,7 @@ class ConfigScreen(Screen):
             return
 
         # Get the saved ID from the config object
+        btn_id = self.query_one(config["btn_id"], Button)
         saved_id = getattr(self.config, config["saved_id_attr"], None)
 
         # Choose the correct coroutine
@@ -613,6 +614,19 @@ class ConfigScreen(Screen):
             return
 
         await self._fetch_and_populate(coro, config, saved_id, initial)
+
+
+        # Guard: if the user switched platforms while the fetch was in-flight,
+        # discard the stale results so they don't contaminate the wrong platform.
+        try:
+            if self._get_selected_platform() != platform:
+                select = self.query_one("#inp_target_server", Select)
+                select.set_options([])
+                select.value = Select.BLANK
+                select.prompt = "Validate Bot Token"
+                self.query_one("#btn_fetch_target", Button).variant = "primary"
+        except Exception:
+            pass
 
     async def _do_fetch_source_discord(self, token: str, initial: bool = False) -> None:
         from src.core.discord_reader import DiscordReader
@@ -658,62 +672,6 @@ class ConfigScreen(Screen):
             initial
         )
 
-    # async def _do_fetch_guilds(self, token: str, initial: bool = False) -> None:
-    #     from src.core.discord_reader import DiscordReader
-    #     config = self.FETCH_CONFIGS["source_discord"]
-    #     saved_id = getattr(self.config, config["saved_id_attr"])
-    #     await self._fetch_and_populate(
-    #         DiscordReader.fetch_guilds(token),
-    #         config,
-    #         saved_id,
-    #         initial
-    #     )
-
-    # async def _do_fetch_target_servers(self, token: str = None, api_url: str = None, platform: str = None, initial: bool = False) -> None:
-    #     if not platform: platform = self._get_selected_platform()
-    #     try:
-    #         if not token: token = self.query_one("#inp_target_token", Input).value.strip()
-    #         if not api_url: api_url = self.query_one("#inp_target_api", Input).value.strip() or "default"
-    #     except Exception: return
-    #     if not token: return
-
-    #     if platform == "fluxer":
-    #         from src.fluxer.writer import FluxerWriter
-    #         coro = FluxerWriter.fetch_guilds(token, api_url)
-    #     elif platform == "stoat":
-    #         from src.stoat.writer import StoatWriter
-    #         coro = StoatWriter.fetch_guilds(token, api_url)
-    #     else: return
-
-    #     # Use the platform-specific saved ID so we don't cross-contaminate
-    #     if platform == "fluxer":
-    #         saved_id = self.config.fluxer_server_id
-    #     elif platform == "stoat":
-    #         saved_id = self.config.stoat_server_id
-    #     else:
-    #         saved_id = None
-
-    #     await self._fetch_and_populate(
-    #         coro,
-    #         "#btn_fetch_target_servers",
-    #         "#inp_target_server",
-    #         f"No {platform} servers found.",
-    #         saved_id,
-    #         initial
-    #     )
-
-    #     # Guard: if the user switched platforms while the fetch was in-flight,
-    #     # discard the stale results so they don't contaminate the wrong platform.
-    #     try:
-    #         if self._get_selected_platform() != platform:
-    #             select = self.query_one("#inp_target_server", Select)
-    #             select.set_options([])
-    #             select.value = Select.BLANK
-    #             select.prompt = "Validate Bot Token"
-    #             self.query_one("#btn_fetch_target_servers", Button).variant = "primary"
-    #     except Exception:
-    #         pass
-
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_fetch_source":
@@ -723,7 +681,7 @@ class ConfigScreen(Screen):
                 return
             
             api_url = self.query_one("#inp_source_api_url", Input).value.strip() or "default"
-            self.run_worker(self._do_fetch("source", self.source_platform, token, api_url, initial=False))
+            self.run_worker(self._do_fetch("source", self.config.source_platform, token, api_url, initial=False))
 
         elif event.button.id == "btn_fetch_target":
             token = self.query_one("#inp_target_token", Input).value.strip()
@@ -780,7 +738,7 @@ class ConfigScreen(Screen):
                 select.set_options([])
                 select.value = Select.BLANK
                 select.prompt = "Validate Bot Token"
-                self.query_one("#btn_fetch_target_servers", Button).variant = "primary"
+                self.query_one("#btn_fetch_target", Button).variant = "primary"
                 
                 if inp_token.value:
                     self.run_worker(self._do_fetch("target", plat, inp_token.value, inp_api.value, initial=True))
@@ -791,7 +749,7 @@ class ConfigScreen(Screen):
     def _collect_and_save(self) -> None:
         # 1. Source Section
         self.config.source_bot_token = self.query_one("#inp_source_token", Input).value.strip() or None
-        if self.source_platform == "fluxer":
+        if self.config.source_platform == "fluxer":
             self.config.source_api_url = self.query_one("#inp_source_api_url", Input).value.strip() or None
         
         d_select = self.query_one("#inp_source_server", Select)

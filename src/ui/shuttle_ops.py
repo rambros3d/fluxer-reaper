@@ -126,7 +126,7 @@ class OperationPane(Container):
             with Vertical(id="op_info"):
                 with Horizontal(id="op_info_split"):
                     with Vertical(classes="info_pane"):
-                        yield Label({f"{self.config.source_platform}"}, classes="pane_header")
+                        yield Label(f"{self.config.source_platform.capitalize()} (Source)", classes="pane_header text-glow")
                         yield Label("Server: [yellow]Loading...[/yellow]", id="op_lbl_d_server")
                         if self.view_mode == "backup":
                             yield Label("Source: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
@@ -193,6 +193,8 @@ class OperationPane(Container):
             return "."
         return f"ReaperFiles-{self.cfg_name}"
 
+
+    # REDESIGN
     def _rebuild_engine(self):
         # In backup_transfer mode, the Backup tab reads from LIVE discord, 
         # while the Shuttle tab reads from the LOCAL BACKUP.
@@ -208,8 +210,12 @@ class OperationPane(Container):
     def _get_backup_info(self) -> str | None:
         if not self.config or not self.config.source_server_id:
             return None
-            
-        target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
+        
+        backup_str = (f"DISCORD_BACKUP-{self.config.source_server_id}" if self.config.source_platform == "discord" 
+                      else f"SOURCE_BACKUP-{self.config.source_server_id}"
+                      )
+                      
+        target_dir = Path(self._base_dir()) / backup_str
         if not target_dir.exists():
             return None
             
@@ -233,19 +239,21 @@ class OperationPane(Container):
     # ── labels ────────────────────────────────────────────────────────────
 
         # ── labels ────────────────────────────────────────────────────────────
+
+    # REDESIGN - DISCORD HEAVY
     def _update_info_labels(self):
         if not self.is_mounted:
             return
         v = self.validation_results
 
-        # Discord
+        # Source
         d_name = v.get("source_server_name")
-        d_bot = v.get("discord_bot_name")
+        d_bot = v.get("source_bot_name")
         
         is_val_d = v.get("source_validating") or v.get("source_token") is None
         if is_val_d:
             s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
-        elif v.get("discord_timeout"):
+        elif v.get("source_timeout"):
             s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
         elif v.get("source_token") and v.get("source_server"):
             s_disp = f'[cyan]"{d_name}"[/cyan]'
@@ -274,10 +282,10 @@ class OperationPane(Container):
         else:
             for lbl in self.query("#op_lbl_d_bot"): lbl.update(f"Bot: {b_disp}")
 
-        # Discord Side Status
-        d_err = v.get("discord_error")
+        # Source Side Status
+        d_err = v.get("source_error")
         di = v.get("discord_intents", {})
-        dp = v.get("discord_permissions", {})
+        dp = v.get("source_permissions", {})
         
         d_missing = []
         if d_err is None and v.get("source_token") and v.get("source_server"):
@@ -300,7 +308,7 @@ class OperationPane(Container):
                 d_status = "STATUS: [green]VALID[/green]"
             elif v.get("source_token") and not v.get("source_server"):
                 d_status = "[red]SERVER NOT SET[/red]"
-            elif v.get("discord_timeout"):
+            elif v.get("source_timeout"):
                 d_status = "[red]TIMEOUT[/red]"
             elif d_err:
                 d_status = f"[red]{d_err}[/red]"
@@ -436,15 +444,15 @@ class OperationPane(Container):
         self.validation_results = {
             "source_validating": True,
             "target_validating": True,
-            "source_token": None, "discord_bot_name": None,
+            "source_token": None, "source_bot_name": None,
             "source_server": None, "source_server_name": None,
-            "discord_intents": {}, "discord_permissions": {},
-            "discord_error": None,
+            "discord_intents": {}, "source_permissions": {},
+            "source_error": None,
             "target_token": None, "target_bot_name": None,
             "target_community": None, "target_community_name": None,
             "target_permissions": {},
             "target_error": None,
-            "discord_timeout": False, "target_timeout": False,
+            "source_timeout": False, "target_timeout": False,
             "backup_info_text": f"Last backup: [cyan]{info}[/cyan]" if info else "",
         }
         self.tokens_valid = False
@@ -466,7 +474,7 @@ class OperationPane(Container):
         validating_source = False
         validating_target = False
 
-        # 1. Determine Discord validating status
+        # 1. Determine Source validating status
         if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
             if has_d_server: 
                 validating_source = True
@@ -491,23 +499,47 @@ class OperationPane(Container):
         # Trigger the UI spinners instantly
         self._update_info_labels()
 
+        async def check_source():
+            if self.config.source_platform != "discord": 
+                try:
+                    import asyncio
+                    res = await asyncio.wait_for(self.engine.writer.validate(), timeout=10.0)
+                    self.validation_results["source_token"] = res.get("token", False)
+                    self.validation_results["source_bot_name"] = res.get("bot_name")
+                    self.validation_results["source_server"] = res.get("community", False)
+                    self.validation_results["source_server_name"] = res.get("community_name")
+                    self.validation_results["source_permissions"] = res.get("permissions", {})
+                    self.validation_results["source_error"] = res.get("error_reason")
+                except asyncio.TimeoutError:
+                    self.validation_results["source_timeout"] = True
+                except asyncio.CancelledError:
+                    pass
+                except Exception as e:
+                    self.validation_results["source_error"] = str(e)
+                finally:
+                    self.validation_results["source_validating"] = False
+                    self._check_and_update()
+            else: 
+                await check_discord()
+            
+
         async def check_discord():
             try:
                 import asyncio
                 res = await asyncio.wait_for(self.engine.discord_reader.validate(), timeout=10.0)
                 self.validation_results["source_token"] = res.get("token", False)
-                self.validation_results["discord_bot_name"] = res.get("bot_name")
+                self.validation_results["source_bot_name"] = res.get("bot_name")
                 self.validation_results["source_server"] = res.get("server", False)
                 self.validation_results["source_server_name"] = res.get("server_name")
                 self.validation_results["discord_intents"] = res.get("intents", {})
-                self.validation_results["discord_permissions"] = res.get("permissions", {})
-                self.validation_results["discord_error"] = res.get("error_reason")
+                self.validation_results["source_permissions"] = res.get("permissions", {})
+                self.validation_results["source_error"] = res.get("error_reason")
             except asyncio.TimeoutError:
-                self.validation_results["discord_timeout"] = True
+                self.validation_results["source_timeout"] = True
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                self.validation_results["discord_error"] = str(e)
+                self.validation_results["source_error"] = str(e)
             finally:
                 self.validation_results["source_validating"] = False
                 self._check_and_update()
@@ -533,7 +565,7 @@ class OperationPane(Container):
                 self._check_and_update()
 
         coros = []
-        if validating_source: coros.append(check_discord())
+        if validating_source: coros.append(check_source())
         if validating_target: coros.append(check_target())
         
         try:
@@ -548,10 +580,10 @@ class OperationPane(Container):
     def _check_and_update(self) -> None:
         """Called safely on the main thread after any validation task finishes."""
         v = self.validation_results
-        discord_ok = v.get("source_token") and v.get("source_server")
+        source_ok = v.get("source_token") and v.get("source_server")
         
         if self.view_mode == "backup":
-            self.tokens_valid = bool(discord_ok)
+            self.tokens_valid = bool(source_ok)
             # Check for backup regardless of token validity
             info = self._get_backup_info()
             if info:
@@ -559,7 +591,7 @@ class OperationPane(Container):
                 self.has_backup = True
         else:
             target_ok = v.get("target_token") and v.get("target_community")
-            self.tokens_valid = bool(discord_ok and target_ok)
+            self.tokens_valid = bool(source_ok and target_ok)
             
             # Post validation adjustments
             if self.tokens_valid:
@@ -601,6 +633,7 @@ class OperationPane(Container):
         elif bid == "op_autotest" or bid == "btn_autotest":
             self.run_autotest_sequence()
 
+    # REDESIGN - AUTO TEST LOGIC LIKELY DISCORD BOUND
     @work(exclusive=True)
     async def run_autotest_sequence(self) -> None:
         """Entry point for the AUTO TEST sequence."""
@@ -716,8 +749,9 @@ class OperationPane(Container):
             force_overwrite=True,
             is_autotest=True
         )
-    # ── (1) clone server template (combined) ─────────────────────────────
 
+    # REDESIGN - CLONE/SYNC MENUS 
+    # ── (1) clone server template (combined) ─────────────────────────────
     def _open_clone_menu(self):
         options = [
             ("sub_clone_roles", "Roles & Role Permissions"),
@@ -747,6 +781,7 @@ class OperationPane(Container):
         self.app.push_screen(OptionSelectModal("Sync Server Settings", options), on_result)
 
 
+    # REDESIGN - batch workers
     # ── batch workers ──────────────────────────────────────────────────
 
     @work(exclusive=True)
@@ -883,6 +918,7 @@ class OperationPane(Container):
             # Ensure we only close if we actually started them and no other task is inheriting
             await self.engine.close_connections()
 
+    # REDESIGN - sync server settings (combined)
     @work(exclusive=True)
     async def run_batch_sync(self, selections: list[str]) -> None:
         modal = ProgressScreen(log_level=self.config.log_level)
@@ -1134,8 +1170,8 @@ class OperationPane(Container):
 
         return "\n".join(lines)
 
+    # REDESIGN - migration operations
     # ── (5) message migration ─────────────────────────────────────────────
-
     @work(exclusive=True)
     async def run_migrate_messages(self, modal: ProgressScreen | None = None) -> None:
         await self._logic_migrate_messages(modal)
@@ -1187,6 +1223,7 @@ class OperationPane(Container):
             
         modal.write("\n[bold green]Automated channel migration complete.[/bold green]")
 
+    # REDESIGN - message migration logic
     async def _logic_migrate_messages(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
@@ -1597,6 +1634,8 @@ class OperationPane(Container):
     async def run_waterfall_migration(self, modal: ProgressScreen | None = None) -> None:
         await self._logic_waterfall_migration(modal)
 
+
+    # REDESIGN - waterfall migration logic
     async def _logic_waterfall_migration(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
@@ -2024,6 +2063,7 @@ class OperationPane(Container):
 
         return preview
 
+    # REDESIGN - matching logic for cloning confirmation
     async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
         """Fetches preview data from Discord (source server) for cloning confirmation,
         comparing with existing entities on the target server for presence highlighting."""
@@ -2276,9 +2316,10 @@ class OperationPane(Container):
         modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
         await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
 
+
+
+    # REDESIGN - backup workers
     # ── backup workers ───────────────────────────────────────────────────
-
-
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
         """UI entry point for full backup."""
@@ -2486,6 +2527,8 @@ class OperationPane(Container):
             await self.engine.close_connections()
             self.run_validate()
 
+
+    # REDESIGN - backup sync workers
     @work(exclusive=True)
     async def run_backup_sync(self) -> None:
         modal_prog = ProgressScreen(log_level=self.config.log_level)
