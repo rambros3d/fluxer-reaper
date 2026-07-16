@@ -11,8 +11,8 @@ async def sync_channel_state(context: MigrationContext):
     Scans Fluxer for channels matching Discord names and updates state file mappings.
     This prevents duplicate creation when the state file is empty but channels exist in Fluxer.
     """
-    categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    categories = await context.source_reader.get_categories()
+    channels = await context.source_reader.get_channels()
     fluxer_channels = await context.fluxer_writer.get_channels()
     
     # Build maps for Fluxer lookup
@@ -71,11 +71,11 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         force: If True, re-create channels even if they exist in state.
     """
     # Sort by position to respect Discord arrangement
-    categories = sorted(await context.discord_reader.get_categories(), key=lambda c: getattr(c, 'position', 0))
-    all_channels = sorted(await context.discord_reader.get_channels(), key=lambda c: getattr(c, 'position', 0))
+    categories = sorted(await context.source_reader.get_categories(), key=lambda c: getattr(c, 'position', 0))
+    all_channels = sorted(await context.source_reader.get_channels(), key=lambda c: getattr(c, 'position', 0))
 
     # Only migrate text-like and voice channels. Forum channels are not yet supported in Fluxer.
-    reader = context.discord_reader
+    reader = context.source_reader
     channels = [
         ch for ch in all_channels
         if ch.type != reader.CHANNEL_TYPE_FORUM
@@ -154,10 +154,10 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         # Map Discord-specific types to target-supported types
         # 5 (News) -> 0 (Text), and fallback any unknown non-voice types to text
         raw_type = channel.type.value if hasattr(channel.type, 'value') else 0
-        if raw_type == context.discord_reader.CHANNEL_TYPE_VOICE.value:
+        if raw_type == context.source_reader.CHANNEL_TYPE_VOICE.value:
             ch_type = 2
             is_voice = True
-        elif raw_type in [context.discord_reader.CHANNEL_TYPE_TEXT.value, context.discord_reader.CHANNEL_TYPE_NEWS.value]:
+        elif raw_type in [context.source_reader.CHANNEL_TYPE_TEXT.value, context.source_reader.CHANNEL_TYPE_NEWS.value]:
             ch_type = 0
             is_voice = False
         else:

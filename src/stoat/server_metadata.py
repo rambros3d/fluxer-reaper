@@ -7,7 +7,7 @@ logger = logging.getLogger(__name__)
 
 async def sync_server_metadata(context: MigrationContext, progress_callback: Callable[[str, str], Awaitable[None]], components: List[str] = ["name", "icon", "banner"]) -> dict:
     """Syncs the server name, logo and banner. Returns a dict of cloned attributes."""
-    metadata = await context.discord_reader.get_server_metadata()
+    metadata = await context.source_reader.get_server_metadata()
     cloned_data = {}
     
     # 1. Sync Name
@@ -26,8 +26,8 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
     if "icon" in components:
         try:
             icon_bytes = None
-            if context.discord_reader.guild and context.discord_reader.guild.icon:
-                icon_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.icon)
+            if context.source_reader.guild and context.source_reader.guild.icon:
+                icon_bytes = await context.source_reader.download_asset(context.source_reader.guild.icon)
             
             if icon_bytes:
                 logger.info(f"Uploading server icon to Stoat ({len(icon_bytes)} bytes)...")
@@ -45,8 +45,8 @@ async def sync_server_metadata(context: MigrationContext, progress_callback: Cal
     if "banner" in components:
         try:
             banner_bytes = None
-            if context.discord_reader.guild and context.discord_reader.guild.banner:
-                banner_bytes = await context.discord_reader.download_asset(context.discord_reader.guild.banner)
+            if context.source_reader.guild and context.source_reader.guild.banner:
+                banner_bytes = await context.source_reader.download_asset(context.source_reader.guild.banner)
             
             if banner_bytes:
                 logger.info(f"Uploading server banner to Stoat ({len(banner_bytes)} bytes)...")

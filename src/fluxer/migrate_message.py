@@ -190,7 +190,7 @@ async def _process_and_send_message(
     if hasattr(msg, 'stickers') and msg.stickers:
         for s in msg.stickers:
             try:
-                sticker_data = await context.discord_reader.download_sticker(s)
+                sticker_data = await context.source_reader.download_sticker(s)
                 if not sticker_data: continue
                 
                 format_val = getattr(s, 'format', 'png')
@@ -255,7 +255,7 @@ async def _process_and_send_message(
 
     for att in attachments_to_process:
         try:
-            att_data = await context.discord_reader.download_attachment(att)
+            att_data = await context.source_reader.download_attachment(att)
             files.append({"filename": att.filename, "data": att_data})
             stats["attachments"] += 1
         except Exception as e:
@@ -264,7 +264,7 @@ async def _process_and_send_message(
     # Clean Mentions
     content = clean_mentions(
         content=content,
-        guild=context.discord_reader.guild,
+        guild=context.source_reader.guild,
         user_mentions=msg.mentions,
         role_mentions=msg.role_mentions,
         channel_mentions=msg.channel_mentions,
@@ -287,7 +287,7 @@ async def _process_and_send_message(
         # Fallback author tagging for replies if mapping not found
         if not reply_to_fluxer_id:
             try:
-                source_ref_msg = await context.discord_reader.get_message(msg.channel.id, msg.reference.message_id)
+                source_ref_msg = await context.source_reader.get_message(msg.channel.id, msg.reference.message_id)
                 if source_ref_msg and source_ref_msg.author:
                     ref_name = context.state.get_user_alias(str(source_ref_msg.author.id)) if anonymize_users else source_ref_msg.author.display_name
                     content = f"`@{ref_name}`\n{content}"
@@ -350,7 +350,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
     if processed_threads is None:
         processed_threads = set()
 
-    async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
+    async for msg in context.source_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
         if not context.is_running:
             break
         
@@ -375,14 +375,14 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
 
         # Consistent filtering with migrate_messages
         if msg.type not in [
-            context.discord_reader.MESSAGE_TYPE_DEFAULT,
-            context.discord_reader.MESSAGE_TYPE_REPLY,
-            context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-            context.discord_reader.MESSAGE_TYPE_FORWARD,
-            context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
-            context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
-            context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
-            context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+            context.source_reader.MESSAGE_TYPE_DEFAULT,
+            context.source_reader.MESSAGE_TYPE_REPLY,
+            context.source_reader.MESSAGE_TYPE_THREAD_STARTER,
+            context.source_reader.MESSAGE_TYPE_FORWARD,
+            context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+            context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+            context.source_reader.MESSAGE_TYPE_POLL_RESULT,
+            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
         ]:
             logger.debug(f"Skipping message {msg.id} in analyze: type={msg.type} (not an allowed type)")
             continue
@@ -398,7 +398,7 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
     # Only do this at the top level (not in recursive thread calls)
     if after_message_id is not None or inclusive: # Usually top level calls have some start point
         # Optimization: We check all threads for the channel
-        all_threads = await get_channel_threads(context.discord_reader, source_channel_id)
+        all_threads = await get_channel_threads(context.source_reader, source_channel_id)
         for t in all_threads:
             if t.id not in processed_threads:
                 processed_threads.add(t.id)
@@ -449,14 +449,14 @@ async def migrate_messages(
     if not hasattr(context, 'channel_names'):
         context.channel_names = {}
         try:
-            logger.debug(f"Pre-fetching channel and thread names for guild {context.discord_reader.guild.id}...")
+            logger.debug(f"Pre-fetching channel and thread names for guild {context.source_reader.guild.id}...")
             # fetch_channels usually includes all non-thread channels
-            all_channels = await context.discord_reader.fetch_channels()
+            all_channels = await context.source_reader.fetch_channels()
             for c in all_channels:
                 context.channel_names[str(c.id)] = c.name
             
             # get_active_threads helps find threads that might be mentioned
-            threads = await context.discord_reader.get_active_threads()
+            threads = await context.source_reader.get_active_threads()
             for t in threads:
                 context.channel_names[str(t.id)] = t.name
             
@@ -473,7 +473,7 @@ async def migrate_messages(
         if not context.is_running:
             return
         logger.info(f"Checking for missed or pending threads in channel {source_channel_id}...")
-        all_threads = await get_channel_threads(context.discord_reader, source_channel_id)
+        all_threads = await get_channel_threads(context.source_reader, source_channel_id)
         for t in all_threads:
             if not context.is_running:
                 break
@@ -519,7 +519,7 @@ async def migrate_messages(
         if not thread_id and after_message_id is not None:
             await _process_missed_threads()
 
-        async for msg in context.discord_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
+        async for msg in context.source_reader.fetch_message_history(source_channel_id, after_id=after_message_id, inclusive=inclusive):
             if not context.is_running:
                 logger.warning("Migration interrupted by user (is_running=False)")
                 break
@@ -529,14 +529,14 @@ async def migrate_messages(
             # Skip system messages like "pinned a message", etc.
             logger.debug(f"Analyzing message {msg.id}: type={msg.type}, content_len={len(msg.content) if msg.content else 0}, attachments={len(msg.attachments)}, embeds={len(msg.embeds)}")
             if msg.type not in [
-                context.discord_reader.MESSAGE_TYPE_DEFAULT,
-                context.discord_reader.MESSAGE_TYPE_REPLY,
-                context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-                context.discord_reader.MESSAGE_TYPE_FORWARD,
-                context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
-                context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
-                context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
-                context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+                context.source_reader.MESSAGE_TYPE_DEFAULT,
+                context.source_reader.MESSAGE_TYPE_REPLY,
+                context.source_reader.MESSAGE_TYPE_THREAD_STARTER,
+                context.source_reader.MESSAGE_TYPE_FORWARD,
+                context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+                context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+                context.source_reader.MESSAGE_TYPE_POLL_RESULT,
+                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
             ]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
@@ -580,7 +580,7 @@ async def migrate_messages(
                 # Use custom clean_mentions with msg mentions for accuracy
                 content = clean_mentions(
                     msg.content, 
-                    context.discord_reader.guild, 
+                    context.source_reader.guild, 
                     msg.mentions, 
                     msg.role_mentions, 
                     msg.channel_mentions,
@@ -612,10 +612,10 @@ async def migrate_messages(
                     snapshot = msg.message_snapshots[0]
                     if not content: # Only update content if it wasn't already set (e.g., by thread_starter_message)
                         content = snapshot.content
-                        if context.discord_reader.guild:
+                        if context.source_reader.guild:
                             content = clean_mentions(
                                 content, 
-                                context.discord_reader.guild, 
+                                context.source_reader.guild, 
                                 snapshot.mentions if hasattr(snapshot, 'mentions') else None,
                                 snapshot.role_mentions if hasattr(snapshot, 'role_mentions') else None,
                                 snapshot.channel_mentions if hasattr(snapshot, 'channel_mentions') else None, # Changed this line
@@ -632,7 +632,7 @@ async def migrate_messages(
 
             for att in attachments_to_process:
                 try:
-                    att_data = await context.discord_reader.download_attachment(att)
+                    att_data = await context.source_reader.download_attachment(att)
                     files.append({"filename": att.filename, "data": att_data})
                     stats["attachments"] += 1
                 except Exception as e:
@@ -642,7 +642,7 @@ async def migrate_messages(
             if hasattr(msg, 'stickers') and msg.stickers:
                 for s in msg.stickers:
                     try:
-                        sticker_data = await context.discord_reader.download_sticker(s)
+                        sticker_data = await context.source_reader.download_sticker(s)
                         if sticker_data:
                             # Use format to determine extension
                             format_val = getattr(s, 'format', 'png')
@@ -805,7 +805,7 @@ async def analyze_global_migration(context: MigrationContext, after_message_id: 
     # Fetch global progress map to skip migrated messages efficiently
     progress_map = context.state.get_all_last_message_ids()
     
-    async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
+    async for msg in context.source_reader.fetch_global_message_history(after_id=after_message_id):
         if not context.is_running:
             break
             
@@ -824,14 +824,14 @@ async def analyze_global_migration(context: MigrationContext, after_message_id: 
             continue
             
         if msg.type not in [
-            context.discord_reader.MESSAGE_TYPE_DEFAULT,
-            context.discord_reader.MESSAGE_TYPE_REPLY,
-            context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-            context.discord_reader.MESSAGE_TYPE_FORWARD,
-            context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
-            context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
-            context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
-            context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+            context.source_reader.MESSAGE_TYPE_DEFAULT,
+            context.source_reader.MESSAGE_TYPE_REPLY,
+            context.source_reader.MESSAGE_TYPE_THREAD_STARTER,
+            context.source_reader.MESSAGE_TYPE_FORWARD,
+            context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+            context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+            context.source_reader.MESSAGE_TYPE_POLL_RESULT,
+            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
         ]:
             continue
             
@@ -877,20 +877,20 @@ async def migrate_global_messages(
     progress_map = context.state.get_all_last_message_ids()
 
     try:
-        async for msg in context.discord_reader.fetch_global_message_history(after_id=after_message_id):
+        async for msg in context.source_reader.fetch_global_message_history(after_id=after_message_id):
             if not context.is_running:
                 logger.warning("Global migration interrupted by user")
                 break
                 
             if msg.type not in [
-                context.discord_reader.MESSAGE_TYPE_DEFAULT,
-                context.discord_reader.MESSAGE_TYPE_REPLY,
-                context.discord_reader.MESSAGE_TYPE_THREAD_STARTER,
-                context.discord_reader.MESSAGE_TYPE_FORWARD,
-                context.discord_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
-                context.discord_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
-                context.discord_reader.MESSAGE_TYPE_POLL_RESULT,
-                context.discord_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+                context.source_reader.MESSAGE_TYPE_DEFAULT,
+                context.source_reader.MESSAGE_TYPE_REPLY,
+                context.source_reader.MESSAGE_TYPE_THREAD_STARTER,
+                context.source_reader.MESSAGE_TYPE_FORWARD,
+                context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
+                context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
+                context.source_reader.MESSAGE_TYPE_POLL_RESULT,
+                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
             ]:
                 continue
                 

@@ -3,7 +3,7 @@ import asyncio
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List, Union
 
-from fluxer import HTTPClient, Guild, Channel, Message, Role, Emoji, Sticker, Forbidden
+from fluxer import HTTPClient, Guild, Channel, Message, Role, Emoji, Forbidden
 
 logger = logging.getLogger(__name__)
 
@@ -150,6 +150,7 @@ class FluxerReader:
 
     async def get_stickers(self):
         """Returns list of custom stickers."""
+        return []  # Fluxer may not support stickers; return empty list for now
         await self._ensure_http()
         stickers_data = await self._http.get_guild_stickers(self.server_id)
         return [Sticker.from_data(s) for s in stickers_data]
@@ -293,15 +294,17 @@ class FluxerReader:
                 return await resp.read()
         return b""
 
-    async def download_sticker(self, sticker: Sticker) -> bytes:
-        """Download sticker from its URL."""
-        url = sticker.url
-        if not url:
-            return b""
-        async with self._http._session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.read()
-        return b""
+    async def download_sticker(self, sticker) -> bytes:
+        return b""  # Fluxer may not support stickers; return empty bytes
+    # async def download_sticker(self, sticker: Sticker) -> bytes:
+    #     """Download sticker from its URL."""
+    #     url = sticker.url
+    #     if not url:
+    #         return b""
+    #     async with self._http._session.get(url) as resp:
+    #         if resp.status == 200:
+    #             return await resp.read()
+    #     return b""
 
     async def download_attachment(self, attachment_url: str) -> bytes:
         """Download an attachment from a URL."""

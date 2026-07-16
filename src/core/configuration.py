@@ -4,7 +4,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 class AppConfig(BaseModel):
-    source_platform: str = Field(default="discord")  # discord | fluxer | none
+    source_platform: str = Field(default=None)  # discord | fluxer | none
     source_bot_token: Optional[str] = Field(default=None)  
     source_server_id: Optional[str] = Field(default=None)  
     source_api_url: Optional[str] = Field(default=None)     # If self-hostable like fluxer
@@ -32,7 +32,6 @@ def load_config(config_path: Union[str, Path] = "reaper_config.yaml", create_if_
     
     with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-        
     if not data:
         raise ValueError("Configuration file is empty or invalid YAML.")
 

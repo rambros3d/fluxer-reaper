@@ -11,7 +11,7 @@ async def sync_roles_state(context: MigrationContext):
     Scans Fluxer for roles matching Discord names and updates state file mappings.
     """
     logger.info("Synchronizing role mappings with Fluxer...")
-    discord_roles = await context.discord_reader.get_roles()
+    discord_roles = await context.source_reader.get_roles()
     fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
@@ -41,8 +41,8 @@ async def sync_roles_state(context: MigrationContext):
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
     logger.info("Starting permissions synchronization...")
-    categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    categories = await context.source_reader.get_categories()
+    channels = await context.source_reader.get_channels()
     
     # Only sync for items that are already mapped
     categories = [c for c in categories if context.state.get_fluxer_category_id(str(c.id))]
@@ -88,7 +88,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 
     # Dictionary to map category names to their synced channels
     # Categorize items as we sync them
-    cat_name_map = {str(cat.id): cat.name for cat in (await context.discord_reader.get_categories())}
+    cat_name_map = {str(cat.id): cat.name for cat in (await context.source_reader.get_categories())}
 
     # Sync Category Permissions (Role Overwrites)
     for cat in categories:
@@ -132,7 +132,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
     """Copies roles and their baseline permissions. Returns a list of cloned role names."""
     # Sort roles by position to respect Discord hierarchy
-    roles = sorted(await context.discord_reader.get_roles(), key=lambda r: r.position, reverse=True)
+    roles = sorted(await context.source_reader.get_roles(), key=lambda r: r.position, reverse=True)
 
     if not force:
         roles = [r for r in roles if not context.state.get_fluxer_role_id(str(r.id))]

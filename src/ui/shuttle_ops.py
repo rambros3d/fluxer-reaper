@@ -205,13 +205,13 @@ class OperationPane(Container):
             
         self.engine = MigrationContext(self.config, self.target_platform, source_mode=source, base_dir=self._base_dir())
         if self.view_mode == "backup":
-            self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
+            self.exporter = DiscordExporter(self.engine.source_reader, base_dir=self._base_dir())
 
     def _get_backup_info(self) -> str | None:
         if not self.config or not self.config.source_server_id:
             return None
         
-        backup_str = (f"DISCORD_BACKUP-{self.config.source_server_id}" if self.config.source_platform == "discord" 
+        backup_str = (f"SOURCE_BACKUP-{self.config.source_server_id}" if self.config.source_platform == "discord" 
                       else f"SOURCE_BACKUP-{self.config.source_server_id}"
                       )
                       
@@ -526,7 +526,7 @@ class OperationPane(Container):
         async def check_discord():
             try:
                 import asyncio
-                res = await asyncio.wait_for(self.engine.discord_reader.validate(), timeout=10.0)
+                res = await asyncio.wait_for(self.engine.source_reader.validate(), timeout=10.0)
                 self.validation_results["source_token"] = res.get("token", False)
                 self.validation_results["source_bot_name"] = res.get("bot_name")
                 self.validation_results["source_server"] = res.get("server", False)
@@ -628,7 +628,7 @@ class OperationPane(Container):
             self.run_backup_sync()
         elif bid == "op_backup_stats":
             from src.ui.backup_stats import BackupStatsScreen
-            target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
+            target_dir = Path(self._base_dir()) / f"SOURCE_BACKUP-{self.config.source_server_id}"
             self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
         elif bid == "op_autotest" or bid == "btn_autotest":
             self.run_autotest_sequence()
@@ -716,7 +716,7 @@ class OperationPane(Container):
         modal.write("[bold yellow]Starting Backup Auto-Test...[/bold yellow]")
         
         # 1. Clear old backup directory completely
-        server_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.source_server_id}"
+        server_dir = Path(self._base_dir()) / f"SOURCE_BACKUP-{self.config.source_server_id}"
         if server_dir.exists():
             modal.write(f"[yellow]Deleting existing backup directory: {server_dir}[/yellow]")
             try:
@@ -726,20 +726,20 @@ class OperationPane(Container):
         
         # 2. Setup & Metadata
         modal.set_status("Initializing Discord connection...")
-        await self.engine.discord_reader.start()
+        await self.engine.source_reader.start()
         await self.exporter.setup()
         self.exporter.is_running = True
         
         modal.write("\n[bold cyan]Phase 1: Full Server Backup[/bold cyan]")
         
         # 3. Use unified backup logic in autotest mode
-        all_channels = await self.engine.discord_reader.get_channels()
+        all_channels = await self.engine.source_reader.get_channels()
         eligible_channels = [
             c for c in all_channels
             if c.type in [
-                self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                self.engine.source_reader.CHANNEL_TYPE_FORUM
             ]
         ]
         
@@ -811,7 +811,7 @@ class OperationPane(Container):
             preview = await self._fetch_clone_preview(selections) if connections_started else {}
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -935,7 +935,7 @@ class OperationPane(Container):
                 logger.warning(f"Could not pre-connect for Sync preview: {e}")
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -1012,8 +1012,8 @@ class OperationPane(Container):
         
         modal.set_item_status("Processing Server Structure...")
         await sync_channel_state(self.engine)
-        categories = await self.engine.discord_reader.get_categories()
-        channels = await self.engine.discord_reader.get_channels()
+        categories = await self.engine.source_reader.get_categories()
+        channels = await self.engine.source_reader.get_channels()
         
         async def update_progress(item_name, status, current, total):
             color = "cyan" if status == "Copying" else "yellow"
@@ -1185,10 +1185,10 @@ class OperationPane(Container):
         await self._perform_auto_matching()
         
         # 2. Get channels
-        d_channels = await self.engine.discord_reader.get_channels()
+        d_channels = await self.engine.source_reader.get_channels()
         text_channels = [c for c in d_channels if c.type in [
-            self.engine.discord_reader.CHANNEL_TYPE_TEXT, 
-            self.engine.discord_reader.CHANNEL_TYPE_NEWS
+            self.engine.source_reader.CHANNEL_TYPE_TEXT, 
+            self.engine.source_reader.CHANNEL_TYPE_NEWS
         ]]
         
         modal.write(f"[bold cyan]Auto-Test: Found {len(text_channels)} channels to migrate.[/bold cyan]")
@@ -1247,15 +1247,15 @@ class OperationPane(Container):
             modal.set_status("Synchronizing entity mappings...")
             await self._perform_auto_matching()
 
-            full_d = await self.engine.discord_reader.get_channels()
+            full_d = await self.engine.source_reader.get_channels()
             
             # If reading from backup, only show channels that have actual message backup data
-            if getattr(self.engine, "source_mode", "live") == "backup" and hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
-                valid_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+            if getattr(self.engine, "source_mode", "live") == "backup" and hasattr(self.engine.source_reader, "get_backed_up_channel_ids"):
+                valid_ids = await self.engine.source_reader.get_backed_up_channel_ids()
                 full_d = [c for c in full_d if c.id in valid_ids]
                 
-            d_channels = [c for c in full_d if c.type in [self.engine.discord_reader.CHANNEL_TYPE_TEXT, self.engine.discord_reader.CHANNEL_TYPE_NEWS]]
-            d_cats = await self.engine.discord_reader.get_categories()
+            d_channels = [c for c in full_d if c.type in [self.engine.source_reader.CHANNEL_TYPE_TEXT, self.engine.source_reader.CHANNEL_TYPE_NEWS]]
+            d_cats = await self.engine.source_reader.get_categories()
             d_cat_map = {c.id: c.name for c in d_cats}
 
             if not d_channels:
@@ -1331,7 +1331,7 @@ class OperationPane(Container):
                     last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
                     has_previous = bool(last_migrated)
 
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -1379,10 +1379,10 @@ class OperationPane(Container):
                 # Fetch and display message previews as background tasks
                 async def fetch_previews():
                     try:
-                        first_msg_task = asyncio.create_task(self.engine.discord_reader.get_first_message(source_channel.id))
+                        first_msg_task = asyncio.create_task(self.engine.source_reader.get_first_message(source_channel.id))
                         prev_msg_task = None
                         if has_previous and last_migrated:
-                            prev_msg_task = asyncio.create_task(self.engine.discord_reader.get_message(source_channel.id, int(last_migrated)))
+                            prev_msg_task = asyncio.create_task(self.engine.source_reader.get_message(source_channel.id, int(last_migrated)))
                         
                         first_msg = await first_msg_task
                         if first_msg:
@@ -1477,7 +1477,7 @@ class OperationPane(Container):
                         if not future.done():
                             future.set_result(res)
                             
-                    id_modal = MessageIDInputModal(self.engine.discord_reader, source_channel.id)
+                    id_modal = MessageIDInputModal(self.engine.source_reader, source_channel.id)
                     self.app.push_screen(id_modal, id_callback)
                     verified_id = await future
                     
@@ -1660,12 +1660,12 @@ class OperationPane(Container):
             await self._perform_auto_matching()
 
             # 1. Missing channels check
-            if hasattr(self.engine.discord_reader, "get_all_channels"):
-                full_d = await self.engine.discord_reader.get_all_channels()
+            if hasattr(self.engine.source_reader, "get_all_channels"):
+                full_d = await self.engine.source_reader.get_all_channels()
                 # Include TEXT (0), CATEGORY (4), and NEWS (5)
                 d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             else:
-                full_d = await self.engine.discord_reader.get_channels()
+                full_d = await self.engine.source_reader.get_channels()
                 d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             missing_channels = []
             for d in d_channels:
@@ -1745,8 +1745,8 @@ class OperationPane(Container):
             
             # Also check threads (filtering to only include those belonging to active channels)
             active_channel_ids = {str(c.id) for c in d_channels}
-            if hasattr(self.engine.discord_reader, "get_active_threads"):
-                threads = await self.engine.discord_reader.get_active_threads()
+            if hasattr(self.engine.source_reader, "get_active_threads"):
+                threads = await self.engine.source_reader.get_active_threads()
                 for t in threads:
                     pid = str(getattr(t, 'parent_id', getattr(t, 'channel_id', None)))
                     if pid not in active_channel_ids: continue
@@ -1756,8 +1756,8 @@ class OperationPane(Container):
             # 2.5 Filter by actual content (Only for BackupReader)
             # If a channel has NO messages in the backup, it will always be at 0 progress.
             # We exclude those from the global MIN calculation to avoid pulling it to 0.
-            if hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
-                backed_up_src_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+            if hasattr(self.engine.source_reader, "get_backed_up_channel_ids"):
+                backed_up_src_ids = await self.engine.source_reader.get_backed_up_channel_ids()
                 backed_up_src_ids_str = {str(sid) for sid in backed_up_src_ids}
                 
                 filtered_tgt_ids = []
@@ -1768,8 +1768,8 @@ class OperationPane(Container):
                         if tid: filtered_tgt_ids.append(tid)
                 
                 # Also check threads
-                if hasattr(self.engine.discord_reader, "threads"):
-                    for t in self.engine.discord_reader.threads:
+                if hasattr(self.engine.source_reader, "threads"):
+                    for t in self.engine.source_reader.threads:
                         if str(t.id) in backed_up_src_ids_str:
                             tid = self.engine.state.get_target_channel_id(str(t.id))
                             if tid: filtered_tgt_ids.append(tid)
@@ -2072,7 +2072,7 @@ class OperationPane(Container):
         if not self.engine:
             return
         
-        reader = self.engine.discord_reader
+        reader = self.engine.source_reader
         writer = self.engine.writer
         is_fluxer = self.target_platform == "fluxer"
 
@@ -2214,7 +2214,7 @@ class OperationPane(Container):
         """Fetches preview data from Discord (source server) for cloning confirmation,
         comparing with existing mappings in SQLite for presence highlighting."""
         preview = {}
-        reader = self.engine.discord_reader
+        reader = self.engine.source_reader
         
         # We rely on the global auto-match that ran during connection
         mapping_ch = self.engine.state.channel_map
@@ -2329,19 +2329,19 @@ class OperationPane(Container):
 
         try:
             modal_prog.set_status("Fetching channels...")
-            await self.engine.discord_reader.start()
+            await self.engine.source_reader.start()
             await self.exporter.setup()
 
-            all_channels = await self.engine.discord_reader.get_channels()
-            all_categories = await self.engine.discord_reader.get_categories()
+            all_channels = await self.engine.source_reader.get_channels()
+            all_categories = await self.engine.source_reader.get_categories()
             cat_map = {c.id: c.name for c in all_categories}
 
             eligible_channels = [
                 c for c in all_channels
                 if c.type in [
-                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                    self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.source_reader.CHANNEL_TYPE_FORUM
                 ]
             ]
 
@@ -2538,11 +2538,11 @@ class OperationPane(Container):
 
         try:
             modal_prog.set_status("Starting sync...")
-            await self.engine.discord_reader.start()
+            await self.engine.source_reader.start()
             await self.exporter.setup()
 
             # Gather and print summary
-            server = getattr(self.engine.discord_reader, 'guild', None)
+            server = getattr(self.engine.source_reader, 'guild', None)
             if server:
                 modal_prog.write(f"[bold cyan]Server Profile to Sync:[/bold cyan]")
                 modal_prog.write(f"  Name: [green]{server.name}[/green]")
@@ -2590,13 +2590,13 @@ class OperationPane(Container):
             modal_prog.write(f"[bold green]Profile Sync Complete:[/bold green] {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
             modal_prog.write("")
 
-            all_channels = await self.engine.discord_reader.get_channels()
+            all_channels = await self.engine.source_reader.get_channels()
             eligible_channels = [
                 c for c in all_channels
                 if c.type in [
-                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                    self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.source_reader.CHANNEL_TYPE_FORUM
                 ]
             ]
 

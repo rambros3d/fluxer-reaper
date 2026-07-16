@@ -124,11 +124,11 @@ def backup_db(temp_db):
 @pytest.fixture
 def backup_reader(test_data_dir, reaper_config, tmp_path):
     sid = reaper_config.get("source_server_id")
-    backup_path = test_data_dir / f"DISCORD_BACKUP-{sid}"
+    backup_path = test_data_dir / f"SOURCE_BACKUP-{sid}"
     
     if not test_data_dir.exists() or not backup_path.exists():
         # Fallback: create mock backup structure
-        mock_path = tmp_path / f"DISCORD_BACKUP-{sid}"
+        mock_path = tmp_path / f"SOURCE_BACKUP-{sid}"
         print(f"[DATA_SOURCE] USE_MOCK_BACKUP: {mock_path.name}")
         _log(f"[DATA_SOURCE] USE_MOCK_BACKUP: {mock_path.name}")
         mock_path.mkdir(parents=True, exist_ok=True)
@@ -147,7 +147,7 @@ def backup_reader(test_data_dir, reaper_config, tmp_path):
     return BackupReader(backup_path)
 
 @pytest.fixture
-def mock_discord_reader():
+def mock_source_reader():
     reader = MagicMock()
     reader.guild = MagicMock()
     reader.fetch_message_history = AsyncMock()

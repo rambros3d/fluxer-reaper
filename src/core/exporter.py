@@ -33,8 +33,8 @@ class DiscordExporter:
         self.server_name = metadata.get("name", "Unknown Server")
         self.server_id = metadata.get("id", "0")
 
-        # Root export path: DISCORD_BACKUP-{id}
-        self.export_path = self.base_dir / f"DISCORD_BACKUP-{self.server_id}"
+        # Root export path: SOURCE_BACKUP-{id}
+        self.export_path = self.base_dir / f"SOURCE_BACKUP-{self.server_id}"
         self.export_path.mkdir(parents=True, exist_ok=True)
         
         # New directory structure

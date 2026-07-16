@@ -25,9 +25,9 @@ def get_platforms():
 # --- Unit Tests (Transformation Logic) ---
 
 @pytest.fixture
-def mock_context(mock_discord_reader, mock_fluxer_writer, mock_stoat_writer):
+def mock_context(mock_source_reader, mock_fluxer_writer, mock_stoat_writer):
     context = MagicMock(spec=MigrationContext)
-    context.discord_reader = mock_discord_reader
+    context.source_reader = mock_source_reader
     context.fluxer_writer = mock_fluxer_writer
     context.stoat_writer = mock_stoat_writer
     context.state = MagicMock()
@@ -121,8 +121,8 @@ async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platfo
     from src.core.database import MigrationDatabase
     context.state.db = MigrationDatabase(tmp_path / f"e2e_{platform}.db", platform=platform)
     
-    await context.discord_reader.start()
-    channels = await context.discord_reader.fetch_channels()
+    await context.source_reader.start()
+    channels = await context.source_reader.fetch_channels()
     text_channels = [c for c in channels if c.type == ChannelType.text]
     
     if text_channels:
@@ -135,4 +135,4 @@ async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platfo
         stats = await migrate_func(context=context, source_channel_id=source_channel_id, target_channel_id=target_channel_id)
         assert stats["messages"] >= 0
     
-    await context.discord_reader.close()
+    await context.source_reader.close()

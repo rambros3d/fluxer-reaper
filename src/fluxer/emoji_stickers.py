@@ -11,8 +11,8 @@ async def sync_assets_state(context: MigrationContext):
     Scans Fluxer for emojis and stickers matching Discord names and updates state file mappings.
     """
     logger.info("Synchronizing asset mappings (emojis/stickers) with Fluxer...")
-    discord_emojis = await context.discord_reader.get_emojis()
-    discord_stickers = await context.discord_reader.get_stickers()
+    discord_emojis = await context.source_reader.get_emojis()
+    discord_stickers = await context.source_reader.get_stickers()
     
     fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
     fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
@@ -67,10 +67,10 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
     """
     objs = []
     if "Emoji" in types_to_include:
-        emojis = await context.discord_reader.get_emojis()
+        emojis = await context.source_reader.get_emojis()
         objs.extend([(e, "Emoji") for e in emojis])
     if "Sticker" in types_to_include:
-        stickers = await context.discord_reader.get_stickers()
+        stickers = await context.source_reader.get_stickers()
         objs.extend([(s, "Sticker") for s in stickers])
         
     if not force:
@@ -91,7 +91,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
         try:
             if obj_type == "Emoji":
                 logger.debug(f"Migrating emoji: {obj.name}")
-                img_data = await context.discord_reader.download_emoji(obj)
+                img_data = await context.source_reader.download_emoji(obj)
                 fluxer_id = await context.fluxer_writer.create_emoji(
                     name=obj.name,
                     image_bytes=img_data
@@ -101,7 +101,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
                     cloned_assets["Emoji"][obj.name] = fluxer_id
             else:
                 logger.debug(f"Migrating sticker: {obj.name}")
-                img_data = await context.discord_reader.download_sticker(obj)
+                img_data = await context.source_reader.download_sticker(obj)
                 fluxer_id = await context.fluxer_writer.create_sticker(
                     name=obj.name,
                     image_bytes=img_data

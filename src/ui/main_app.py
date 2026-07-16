@@ -367,14 +367,17 @@ class ConfigScreen(Screen):
         },
     }
 
-    def __init__(self, cfg_name: str, cfg_path: Path, source_platform: str = "discord", *args, **kwargs):
+    def __init__(self, cfg_name: str, cfg_path: Path, source_platform: str = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.cfg_name = cfg_name
         self.cfg_path = cfg_path
         self.config = load_config(cfg_path)
-        self.source_platform = source_platform
-        self.config.source_platform = source_platform
+        if not self.config.source_platform:
+            self.source_platform = source_platform
+            self.config.source_platform = source_platform
+        else: 
+            source_platform = self.config.source_platform
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
