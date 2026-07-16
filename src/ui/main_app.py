@@ -326,6 +326,11 @@ class ConfigScreen(Screen):
     #mode_radio, #plat_radio {
         height: auto; margin: 0 0 0 2;
     }
+    .field_label2 { margin-top: 1; padding-left: 2;}
+    #cfg_container Input { margin-bottom: 0; }
+    #mode_radio, #plat_radio {
+        height: auto; margin: 0 0 0 2;
+    }
     #target_section { height: auto; }
     #cfg_actions { height: auto; margin-top: 0; margin-bottom: 0; dock: bottom; }
     #cfg_actions Button { width: 1fr; margin: 0 1; }
@@ -333,6 +338,11 @@ class ConfigScreen(Screen):
     .fetch_row { height: auto; align: left middle; margin-bottom: 1; }
     .fetch_row Input { width: 1fr; }
     .fetch_row Button { width: auto; margin-left: 1; }
+
+    #info_row { height: auto; align: center middle; margin-bottom: 1; }
+    #info_row Label { width: 50%; margin-left: 0; }
+    #target_validate_row { height: auto; align: center middle; margin-bottom: 1; }
+    #target_validate_row Button { width: 100%; margin-left: 0; }
     #inp_source_server { margin-bottom: 1; }
     .switch_row { height: auto; align: left middle; margin-top: 1; margin-bottom: 1; }
     #lbl_anonymize { margin-right: 2; margin-top: 0; }
@@ -373,11 +383,18 @@ class ConfigScreen(Screen):
         self.cfg_name = cfg_name
         self.cfg_path = cfg_path
         self.config = load_config(cfg_path)
+        
         if not self.config.source_platform:
             self.source_platform = source_platform
             self.config.source_platform = source_platform
         else: 
             source_platform = self.config.source_platform
+
+        if not self.config.source_api_url:
+            self.api_url = ""
+            self.config.source_api_url = ""
+        else:
+            self.config.source_api_url = self.config.source_api_url.strip() or ""
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -400,7 +417,6 @@ class ConfigScreen(Screen):
                                 tooltip="Enter your Discord BOT token from the Developer Portal"
                             )
                             yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Discord servers")
-                        
                         yield Label("Server ID:", classes="field_label")
                         yield Select(
                             options=[],
@@ -409,7 +425,9 @@ class ConfigScreen(Screen):
                         )
                     elif self.config.source_platform == "fluxer":
                         # ── Fluxer ───────────────────────────────────────────────
-                        yield Label("Fluxer Bot Token:", classes="field_label")
+                        with Horizontal(id="info_row", classes="fetch_row"):
+                            yield Label("Fluxer Bot Token:", classes="field_label")
+                            yield Label("API URL:", classes="field_label2")
                         with Horizontal(classes="fetch_row"):
                             yield Input(
                                 value=self.config.source_bot_token or "",
@@ -418,14 +436,17 @@ class ConfigScreen(Screen):
                                 placeholder="Paste Fluxer Bot Token here",
                                 tooltip="Enter your Fluxer BOT token from the Developer Portal"
                             )
+
                             yield Input(
                                 value=self.config.source_api_url or "",
                                 id="inp_source_api_url",
                                 placeholder="Leave empty for official Fluxer app/instance.",
                                 tooltip="Enter the custom API url for self hosted instances"
                             )
-                            yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Fluxer communities")
                         
+                        with Horizontal(id="target_validate_row"):
+                            yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Fluxer communities")
+
                         yield Label("Source Server ID:", classes="field_label")
                         yield Select(
                             options=[],
@@ -468,7 +489,9 @@ class ConfigScreen(Screen):
                                 id="radio_stoat",
                                 value=(cur_plat == "stoat")
                             )
-                        yield Label("Bot Token:", classes="field_label")
+                        with Horizontal(id="info_row", classes="fetch_row"):
+                            yield Label("Bot Token:", classes="field_label")
+                            yield Label("API URL:", classes="field_label2")
                         with Horizontal(classes="fetch_row"):
                             cur_plat = self.config.target_platform or "fluxer"
                             t_token = self.config.stoat_bot_token if cur_plat == "stoat" else self.config.fluxer_bot_token
@@ -479,22 +502,22 @@ class ConfigScreen(Screen):
                                 placeholder="Paste Target Bot Token",
                                 tooltip="Enter the Bot token for the target platform"
                             )
+                            
+                            t_api = self.config.stoat_api_url if cur_plat == "stoat" else self.config.fluxer_api_url
+                            yield Input(
+                                value=t_api if (t_api and t_api != "default") else "",
+                                id="inp_target_api",
+                                placeholder="Leave this Empty for official instance",
+                                tooltip="Enter the custom API url\nfor self hosted instances"
+                            )
+                        with Horizontal(id="target_validate_row"):
                             yield Button("Validate", id="btn_fetch_target", variant="primary", tooltip="Verify token and fetch available communities")
-                        
+
                         yield Label("Community / Server ID:", classes="field_label")
                         yield Select(
                             options=[],
                             id="inp_target_server",
                             prompt="Validate Bot Token"
-                        )
-                        
-                        yield Label("Target API URL:", classes="field_label")
-                        t_api = self.config.stoat_api_url if cur_plat == "stoat" else self.config.fluxer_api_url
-                        yield Input(
-                            value=t_api if (t_api and t_api != "default") else "",
-                            id="inp_target_api",
-                            placeholder="Leave this Empty for official instance",
-                            tooltip="Enter the custom API url\nfor self hosted instances"
                         )
                         
                         yield Horizontal(
@@ -683,7 +706,9 @@ class ConfigScreen(Screen):
                 self.notify("Please enter a valid Source Bot Token.", severity="error")
                 return
             
-            api_url = self.query_one("#inp_source_api_url", Input).value.strip() or "default"
+            api_url = None
+            if self.config.source_platform != "discord":
+                api_url = self.query_one("#inp_source_api_url", Input).value.strip() or "default"
             self.run_worker(self._do_fetch("source", self.config.source_platform, token, api_url, initial=False))
 
         elif event.button.id == "btn_fetch_target":

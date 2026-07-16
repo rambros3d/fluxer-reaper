@@ -141,7 +141,7 @@ class OperationPane(Container):
 
                     with Vertical(classes="info_pane", id="op_target_pane"):
                         yield Label("Target", id="op_lbl_t_header", classes="pane_header")
-                        yield Label("Community: [yellow]Loading...[/yellow]", id="op_lbl_t_comm")
+                        yield Label("Community: [yellow]Loading...[/yellow] ", id="op_lbl_t_comm")
                         yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_t_bot")
                         
                         with Horizontal(classes="status_row"):
@@ -355,7 +355,7 @@ class OperationPane(Container):
             for pne in self.query("#op_target_pane"): pne.display = True
             
             # Target
-            plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
+            plat = "Fluxer (target)" if self.target_platform == "fluxer" else "Stoat (target)" 
             t_name = v.get("target_community_name")
             t_bot = v.get("target_bot_name")
             
