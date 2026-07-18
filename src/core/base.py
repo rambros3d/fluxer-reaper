@@ -97,23 +97,85 @@ class MigrationContext:
         logger.info(f"Using lazy backup path (not yet existing): {new_path}")
         return new_path
 
-    async def validate_all(self) -> Dict[str, Any]:
-        """
-        Returns connection validation status.
-        Keys: source_* and target_*.
-        """
-        try:
-            # Validate source
-            s_valid = await self.source_reader.validate()
-            # Validate target
-            t_valid = await self.writer.validate()
+    # async def validate_all(self) -> Dict[str, Any]:
+    #     """
+    #     Returns connection validation status.
+    #     Keys: source_* and target_*.
+    #     """
+    #     try:
+    #         # Validate source
+    #         s_valid = await self.source_reader.validate()
+    #         # Validate target
+    #         t_valid = await self.writer.validate()
             
+    #         results = {
+    #             "source_token": s_valid.get("token", False),
+    #             "source_bot_name": s_valid.get("bot_name"),
+    #             "source_server": s_valid.get("server", False),
+    #             "source_server_name": s_valid.get("server_name"),
+    #             "discord_intents": s_valid.get("intents", {}),       # only meaningful for Discord
+    #             "source_permissions": s_valid.get("permissions", {}),
+    #             "target_token": t_valid.get("token", False),
+    #             "target_bot_name": t_valid.get("bot_name"),
+    #             "target_community": t_valid.get("community", False),
+    #             "target_community_name": t_valid.get("community_name"),
+    #             "target_permissions": t_valid.get("permissions", {})
+    #         }
+            
+    #         # Initialise the state database if target is valid
+    #         if results["target_community"]:
+    #             tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
+    #             # Prefer source server name for the DB file
+    #             db_name = results.get("source_server_name")
+    #             if not db_name or db_name in ("Not Found", "Unknown"):
+    #                 db_name = results.get("target_community_name") or "Unknown"
+    #             self.ensure_state_initialized(str(tid or ""), db_name)
+                
+    #         return results
+    #     except Exception as e:
+    #         logger.error(f"Validation failed with exception: {e}")
+    #         return {
+    #             "source_token": False,
+    #             "source_server": False,
+    #             "target_token": False,
+    #             "target_community": False
+    #         }
+
+    async def validate_all(self) -> Dict[str, Any]:
+        """Returns connection validation status for both source and target."""
+        try:
+            # Run both validations concurrently
+            s_task = asyncio.create_task(self.source_reader.validate())
+            t_task = asyncio.create_task(self.writer.validate())
+            s_valid, t_valid = await asyncio.gather(s_task, t_task, return_exceptions=True)
+
+            # Unpack exceptions (if any)
+            if isinstance(s_valid, Exception):
+                s_valid = {
+                    "token": False,
+                    "server": False,
+                    "bot_name": None,
+                    "server_name": None,
+                    "error_reason": f"Exception: {s_valid}",
+                    "intents": {},
+                    "permissions": {}
+                }
+            if isinstance(t_valid, Exception):
+                t_valid = {
+                    "token": False,
+                    "community": False,
+                    "bot_name": None,
+                    "community_name": None,
+                    "error_reason": f"Exception: {t_valid}",
+                    "permissions": {}
+                }
+
             results = {
                 "source_token": s_valid.get("token", False),
                 "source_bot_name": s_valid.get("bot_name"),
                 "source_server": s_valid.get("server", False),
                 "source_server_name": s_valid.get("server_name"),
-                "discord_intents": s_valid.get("intents", {}),       # only meaningful for Discord
+                "source_intents": s_valid.get("intents", {}),
                 "source_permissions": s_valid.get("permissions", {}),
                 "target_token": t_valid.get("token", False),
                 "target_bot_name": t_valid.get("bot_name"),
@@ -121,17 +183,17 @@ class MigrationContext:
                 "target_community_name": t_valid.get("community_name"),
                 "target_permissions": t_valid.get("permissions", {})
             }
-            
-            # Initialise the state database if target is valid
+
+            # Initialise state if target is valid
             if results["target_community"]:
                 tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
-                # Prefer source server name for the DB file
                 db_name = results.get("source_server_name")
                 if not db_name or db_name in ("Not Found", "Unknown"):
                     db_name = results.get("target_community_name") or "Unknown"
                 self.ensure_state_initialized(str(tid or ""), db_name)
-                
+
             return results
+
         except Exception as e:
             logger.error(f"Validation failed with exception: {e}")
             return {

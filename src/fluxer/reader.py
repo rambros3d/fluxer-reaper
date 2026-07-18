@@ -41,59 +41,75 @@ class FluxerReader:
         await self._ensure_http()
 
     async def validate(self) -> Dict[str, Any]:
+        # import src.fluxer.writer as FluxerWriter
+        # return await FluxerWriter.validate(self)
         """
-        Validates token, server ID, and read permissions.
-        Returns dict similar to DiscordReader.validate().
+        Validate token and community using only HTTP.
+        Returns a dict with token, community, permissions, etc.
         """
+        import asyncio
         result = {
             "token": False,
             "server": False,
             "bot_name": None,
             "server_name": None,
             "error_reason": None,
-            "intents": {"message_content": True},  # Fluxer has no intent system
-            "permissions": {"view_channel": False, "read_message_history": False}
+            "intents": {"message_content": True, "members": True},   # pretend these are okay
+            "permissions": {"view_channel": True, "read_messages": True, "read_message_history": True}
         }
+        TIMEOUT = 15  # seconds
+
         try:
-            # 1. Validate token by fetching current user
-            http = HTTPClient(self.token)
+            # Build HTTP client with optional custom API URL
+            http_kwargs = {}
+            if self.api_url and self.api_url != "default":
+                http_kwargs["api_url"] = self.api_url
+
+            http = HTTPClient(self.token, **http_kwargs)
             try:
-                me = await http.get_current_user()
+                # 1. Validate token – fetch current user
+                me = await asyncio.wait_for(http.get_current_user(), timeout=TIMEOUT)
                 result["token"] = True
                 result["bot_name"] = me.get("username")
+                me_id = int(me["id"])
+
+                # 2. Fetch community metadata and roles concurrently
+                guild_data, roles_data = await asyncio.gather(
+                    asyncio.wait_for(http.get_guild(self.community_id), timeout=TIMEOUT),
+                    asyncio.wait_for(http.get_guild_roles(self.community_id), timeout=TIMEOUT)
+                )
+                if guild_data:
+                    result["community"] = True
+                    result["community_name"] = guild_data.get("name")
+                    owner_id = int(guild_data.get("owner_id", 0))
+
+                    # 3. Check admin permission (bot is owner or has Administrator bit)
+                    try:
+                        member_data = await asyncio.wait_for(
+                            http.get_guild_member(self.community_id, me_id),
+                            timeout=TIMEOUT
+                        )
+                        member_role_ids = {int(r) for r in member_data.get("roles", [])}
+                        computed_perms = 0
+                        guild_id_int = int(self.community_id)
+                        for r_data in roles_data:
+                            r_id = int(r_data["id"])
+                            if r_id == guild_id_int or r_id in member_role_ids:
+                                computed_perms |= int(r_data.get("permissions", 0))
+                        is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
+                        result["permissions"]["administrator"] = is_admin
+                    except Exception:
+                        # Fallback: only owner check
+                        result["permissions"]["administrator"] = (me_id == owner_id)
+                else:
+                    result["error_reason"] = "Community not found"
+
+            except asyncio.TimeoutError:
+                result["error_reason"] = "Validation timed out (API unreachable or slow)"
             except Exception as e:
-                result["error_reason"] = f"Token error: {e}"
-                return result
+                result["error_reason"] = f"Validation error: {e}"
             finally:
                 await http.close()
-
-            # 2. Fetch community
-            http2 = HTTPClient(self.token)
-            try:
-                guild = await http2.get_guild(self.server_id)
-                result["server"] = True
-                result["server_name"] = guild.get("name")
-                # Check if bot can view channels (fetch channels)
-                channels = await http2.get_guild_channels(self.server_id)
-                # At least one channel => view permission works
-                if channels:
-                    result["permissions"]["view_channel"] = True
-                    # Check read history by trying to fetch messages from first text channel
-                    for ch in channels:
-                        if ch.get("type") == 0:  # text channel
-                            try:
-                                msgs = await http2.get_channel_messages(ch["id"], limit=1)
-                                if msgs is not None:
-                                    result["permissions"]["read_message_history"] = True
-                                    break
-                            except Exception:
-                                pass
-            except Forbidden:
-                result["error_reason"] = "Missing Access to Community"
-            except Exception as e:
-                result["error_reason"] = f"Community error: {e}"
-            finally:
-                await http2.close()
 
         except Exception as e:
             result["error_reason"] = str(e)

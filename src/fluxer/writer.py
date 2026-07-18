@@ -2,7 +2,7 @@ import asyncio
 import io
 import logging
 from typing import Optional, List, Dict, Any
-from fluxer import Bot, Webhook, Forbidden, File
+from fluxer import HTTPClient, Bot, Webhook, Forbidden, File
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,7 @@ class FluxerWriter:
     @staticmethod
     async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
         """Fetches the list of Fluxer communities the bot is in. Returns list of (label, id)."""
+        import asyncio
         from fluxer import HTTPClient, Guild
         
         http_kwargs = {}
@@ -28,13 +29,15 @@ class FluxerWriter:
             
         async with HTTPClient(token, **http_kwargs) as http:
             try:
-                guilds_data = await http.get_current_user_guilds()
+                guilds_data = await asyncio.wait_for(http.get_current_user_guilds(), timeout=15)
                 guilds_list = []
                 for g_data in guilds_data:
                     g = Guild.from_data(g_data)
                     label = f"{g.id}-{g.name}"
                     guilds_list.append((label, str(g.id)))
                 return guilds_list
+            except asyncio.TimeoutError:
+                raise RuntimeError("Fetching guilds timed out")
             except Exception as e:
                 print(f"Failed to fetch Fluxer communities via HTTP: {e}")
                 logger.error(f"Failed to fetch Fluxer communities via HTTP: {e}")
@@ -99,89 +102,78 @@ class FluxerWriter:
         return self.bot._http if self.bot else None
 
     async def validate(self) -> dict:
-        """Validates the token, community ID, and permissions."""
-        if not self.bot or not self._ready_event.is_set():
-            await self.start()
-        
-        is_token_valid = False
-        is_community_valid = False
-        bot_name = None
-        community_name = None
-        error_reason = None
-        permissions = {
-            "administrator": False
+        """
+        Validate token and community using only HTTP.
+        Returns a dict with token, community, permissions, etc.
+        """
+        import asyncio
+        result = {
+            "token": False,
+            "community": False,
+            "bot_name": None,
+            "community_name": None,
+            "error_reason": None,
+            "permissions": {"administrator": False}
         }
+        TIMEOUT = 15  # seconds
 
         try:
-            # Check token by fetching me
-            me_id = None
-            try:
-                if self.bot and self.bot.user:
-                    is_token_valid = True
-                    bot_name = self.bot.user.username
-                    me_id = self.bot.user.id
-                else:
-                    me = await self.client.get_current_user()
-                    if me:
-                        is_token_valid = True
-                        bot_name = me.get("username")
-                        me_id = int(me["id"])
-            except Exception as e:
-                error_reason = f"Token Error: {str(e)}"
-                return {
-                    "token": False,
-                    "community": False,
-                    "bot_name": None,
-                    "community_name": None,
-                    "error_reason": error_reason,
-                    "permissions": permissions
-                }
-            
-            # Check community and permissions concurrently
-            try:
-                # 1. Fetch data concurrently
-                guild_data, member_data, roles_data = await asyncio.gather(
-                    self.client.get_guild(self.community_id),
-                    self.client.get_guild_member(self.community_id, me_id),
-                    self.client.get_guild_roles(self.community_id)
-                )
+            # Build HTTP client with optional custom API URL
+            http_kwargs = {}
+            if self.api_url and self.api_url != "default":
+                http_kwargs["api_url"] = self.api_url
 
+            http = HTTPClient(self.token, **http_kwargs)
+            try:
+                # 1. Validate token – fetch current user
+                me = await asyncio.wait_for(http.get_current_user(), timeout=TIMEOUT)
+                result["token"] = True
+                result["bot_name"] = me.get("username")
+                me_id = int(me["id"])
+
+                # 2. Fetch community metadata and roles concurrently
+                guild_data, roles_data = await asyncio.gather(
+                    asyncio.wait_for(http.get_guild(self.community_id), timeout=TIMEOUT),
+                    asyncio.wait_for(http.get_guild_roles(self.community_id), timeout=TIMEOUT)
+                )
                 if guild_data:
-                    is_community_valid = True
-                    community_name = guild_data.get("name")
+                    result["community"] = True
+                    result["community_name"] = guild_data.get("name")
                     owner_id = int(guild_data.get("owner_id", 0))
-                    
-                    # 2. Compute effective permissions
-                    member_role_ids = {int(r) for r in member_data.get("roles", [])}
-                    computed_perms = 0
-                    guild_id_int = int(self.community_id)
-                    
-                    for r_data in roles_data:
-                        r_id = int(r_data["id"])
-                        # Add permissions for @everyone (role ID == guild ID) or roles the bot has
-                        if r_id == guild_id_int or r_id in member_role_ids:
-                            computed_perms |= int(r_data.get("permissions", 0))
-                    
-                    # 3. Check for Administrator bypass (Guild Owner or Administrator bit 1<<3)
-                    is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
-                    
-                    # 4. Map permissions dictionary
-                    permissions["administrator"] = is_admin
+
+                    # 3. Check admin permission (bot is owner or has Administrator bit)
+                    try:
+                        member_data = await asyncio.wait_for(
+                            http.get_guild_member(self.community_id, me_id),
+                            timeout=TIMEOUT
+                        )
+                        member_role_ids = {int(r) for r in member_data.get("roles", [])}
+                        computed_perms = 0
+                        guild_id_int = int(self.community_id)
+                        for r_data in roles_data:
+                            r_id = int(r_data["id"])
+                            if r_id == guild_id_int or r_id in member_role_ids:
+                                computed_perms |= int(r_data.get("permissions", 0))
+                        is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
+                        result["permissions"]["administrator"] = is_admin
+                    except Exception:
+                        # Fallback: only owner check
+                        result["permissions"]["administrator"] = (me_id == owner_id)
                 else:
-                    error_reason = "Community not found"
+                    result["error_reason"] = "Community not found"
+
+            except asyncio.TimeoutError:
+                result["error_reason"] = "Validation timed out (API unreachable or slow)"
             except Exception as e:
-                error_reason = f"Community/Permission Error: {str(e)}"
+                result["error_reason"] = f"Validation error: {e}"
+            finally:
+                await http.close()
+
         except Exception as e:
-            error_reason = str(e)
-            
-        return {
-            "token": is_token_valid,
-            "community": is_community_valid,
-            "bot_name": bot_name,
-            "community_name": community_name,
-            "error_reason": error_reason,
-            "permissions": permissions
-        }
+            result["error_reason"] = str(e)
+
+        return result
+    
 
     async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0, position: Optional[int] = None) -> str:
         """

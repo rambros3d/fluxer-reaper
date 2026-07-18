@@ -346,6 +346,13 @@ class ConfigScreen(Screen):
     #inp_source_server { margin-bottom: 1; }
     .switch_row { height: auto; align: left middle; margin-top: 1; margin-bottom: 1; }
     #lbl_anonymize { margin-right: 2; margin-top: 0; }
+    .api_warning {
+        color: red;
+        margin-top: 0;
+        padding-left: 2;
+        height: 1;
+        text-style: bold;
+    }
     """
 
     BINDINGS = [("escape", "go_back", "Back")]
@@ -396,6 +403,26 @@ class ConfigScreen(Screen):
         else:
             self.config.source_api_url = self.config.source_api_url.strip() or ""
 
+    def _validate_api_url(self, input_widget: Input, label_id: str, base_text: str, platform: str) -> None:
+        """Update the label to show a warning if the URL doesn't end with /api."""
+        url = input_widget.value.strip()
+        label = self.query_one(f"#{label_id}", Label)
+        if platform is not None and platform == "fluxer":
+            if url and not url.endswith("/api"):
+                label.update(f"{base_text} ⚠️ must end with /api")
+                label.add_class("api_warning")
+            else:
+                label.update(base_text)
+                label.remove_class("api_warning")
+
+
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "inp_source_api_url":
+            self._validate_api_url(event.input, "lbl_source_api", "Source API URL:", self.config.source_platform)
+        elif event.input.id == "inp_target_api":
+            self._validate_api_url(event.input, "lbl_target_api", "Target API URL:", self.config.target_platform)
+
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         with Container(id="cfg_outer"):
@@ -427,7 +454,7 @@ class ConfigScreen(Screen):
                         # ── Fluxer ───────────────────────────────────────────────
                         with Horizontal(id="info_row", classes="fetch_row"):
                             yield Label("Fluxer Bot Token:", classes="field_label")
-                            yield Label("API URL:", classes="field_label2")
+                            yield Label("API URL:", id="lbl_source_api", classes="field_label2")
                         with Horizontal(classes="fetch_row"):
                             yield Input(
                                 value=self.config.source_bot_token or "",
@@ -443,6 +470,7 @@ class ConfigScreen(Screen):
                                 placeholder="Leave empty for official Fluxer app/instance.",
                                 tooltip="Enter the custom API url for self hosted instances"
                             )
+
                         
                         with Horizontal(id="target_validate_row"):
                             yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Fluxer communities")
@@ -491,7 +519,8 @@ class ConfigScreen(Screen):
                             )
                         with Horizontal(id="info_row", classes="fetch_row"):
                             yield Label("Bot Token:", classes="field_label")
-                            yield Label("API URL:", classes="field_label2")
+                            yield Label("API URL:", id="lbl_target_api", classes="field_label2")
+
                         with Horizontal(classes="fetch_row"):
                             cur_plat = self.config.target_platform or "fluxer"
                             t_token = self.config.stoat_bot_token if cur_plat == "stoat" else self.config.fluxer_bot_token
@@ -510,6 +539,7 @@ class ConfigScreen(Screen):
                                 placeholder="Leave this Empty for official instance",
                                 tooltip="Enter the custom API url\nfor self hosted instances"
                             )
+
                         with Horizontal(id="target_validate_row"):
                             yield Button("Validate", id="btn_fetch_target", variant="primary", tooltip="Verify token and fetch available communities")
 
@@ -546,9 +576,17 @@ class ConfigScreen(Screen):
                 self.config.source_api_url or "default", 
                 initial=True
             ))
-        
+
         # Also auto-fetch target servers if mode is not backup_only
         if self._get_selected_mode() != "backup_only":
+            if self.config.source_platform != "discord": 
+                source_api = self.query_one("#inp_source_api_url", Input)
+                self._validate_api_url(source_api, "lbl_source_api", "Source API URL:", self.config.source_platform)
+
+            if self.config.target_platform != "none":
+                target_api = self.query_one("#inp_target_api", Input)
+                self._validate_api_url(target_api, "lbl_target_api", "Target API URL:", self.config.target_platform)
+
             platform = self.config.target_platform
             
             if platform == "fluxer":
