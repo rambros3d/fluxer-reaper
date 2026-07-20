@@ -3,15 +3,37 @@ import asyncio
 import logging
 from typing import AsyncGenerator, Dict, Any, Optional, List, Union
 
+from discord import emoji
 from fluxer import HTTPClient, Guild, Channel, Message, Role, Emoji, Forbidden
 
+
 logger = logging.getLogger(__name__)
+
+class FluxerChannelWrapper:
+    """Wraps a fluxer.Channel to add Discord‑compatible category_id."""
+    def __init__(self, channel):
+        self._channel = channel
+
+    def __getattr__(self, name):
+        return getattr(self._channel, name)
+
+    @property
+    def category_id(self):
+        return self._channel.parent_id   # Fluxer uses parent_id for category ID
 
 class FluxerReader:
     """
     Fluxer source reader – mimics DiscordReader interface.
     Uses HTTPClient (no WebSocket) for reading data.
     """
+
+    # Channel type constants (same as Discord's)
+    CHANNEL_TYPE_TEXT = 0
+    CHANNEL_TYPE_VOICE = 2
+    CHANNEL_TYPE_CATEGORY = 4
+    CHANNEL_TYPE_NEWS = 5
+    CHANNEL_TYPE_FORUM = 15
+
     def __init__(self, token: str, server_id: str, api_url: str = "default"):
         self.token = token
         self.server_id = str(server_id)
@@ -144,7 +166,8 @@ class FluxerReader:
         cats = []
         for ch_data in channels:
             if ch_data.get("type") == 4:
-                cats.append(Channel.from_data(ch_data))
+                cat = Channel.from_data(ch_data)
+                cats.append(FluxerChannelWrapper(cat))
         return cats
 
     async def get_roles(self):
@@ -154,7 +177,7 @@ class FluxerReader:
         roles = []
         for r in roles_data:
             role = Role.from_data(r)
-            if not role.is_default():
+            if not role.is_default:
                 roles.append(role)
         return roles
 
@@ -188,37 +211,44 @@ class FluxerReader:
             return []
 
     async def get_channels(self, category_id: Optional[str] = None):
-        """
-        Returns all non-category channels.
-        If category_id given, filter by parent_id.
-        """
         await self._ensure_http()
         channels_data = await self._http.get_guild_channels(self.server_id)
         all_ch = []
         for ch_data in channels_data:
             if ch_data.get("type") == 4:
-                continue  # skip categories
-            ch = Channel.from_data(ch_data)
-            if category_id is not None and ch.parent_id != int(category_id):
                 continue
-            all_ch.append(ch)
+            ch = Channel.from_data(ch_data)
+            wrapped = FluxerChannelWrapper(ch)
+            if category_id is not None and wrapped.category_id != int(category_id):
+                continue
+            all_ch.append(wrapped)
         return all_ch
 
     async def get_active_threads(self) -> List:
         """Fluxer may not have active threads; return empty list."""
         return []
 
-    async def fetch_channels(self) -> List[Channel]:
-        """Returns all channels (including categories)."""
+    async def fetch_channels(self) -> List:
         await self._ensure_http()
         channels_data = await self._http.get_guild_channels(self.server_id)
-        return [Channel.from_data(ch) for ch in channels_data]
-
+        wrapped = []
+        for ch_data in channels_data:
+            ch = Channel.from_data(ch_data)
+            wrapped.append(FluxerChannelWrapper(ch))
+        return wrapped
+    
     async def get_channel(self, channel_id: str):
         """Fetch a single channel by ID."""
         await self._ensure_http()
         ch_data = await self._http.get_channel(channel_id)
-        return Channel.from_data(ch_data)
+        ch = Channel.from_data(ch_data)
+        return FluxerChannelWrapper(ch)
+    
+    async def get_channel_overwrites(self, channel_id: str) -> List[Dict[str, Any]]:
+        """Fetch permission overwrites for a channel from the Fluxer API."""
+        await self._ensure_http()
+        ch_data = await self._http.get_channel(channel_id)
+        return ch_data.get("permission_overwrites", [])
 
     async def get_message(self, channel_id: str, message_id: str):
         """Fetch a single message."""
@@ -301,26 +331,47 @@ class FluxerReader:
             after_id = last_id
 
     async def download_emoji(self, emoji: Emoji) -> bytes:
-        """Download emoji image from its URL."""
-        url = emoji.url
+        """Download emoji image from its URL or construct from ID."""
+        url = getattr(emoji, 'url', None)
         if not url:
+            # fallback (Discord CDN) – likely wrong for Fluxer sources
+            ext = "gif" if getattr(emoji, 'animated', False) else "png"
+            url = f"https://cdn.discordapp.com/emojis/{emoji.id}.{ext}"
+            logger.warning(f"No URL attribute on emoji {emoji.name}, falling back to {url}")
+
+        if not url:
+            logger.error(f"No URL available for emoji {emoji.name} ({emoji.id})")
             return b""
-        async with self._http._session.get(url) as resp:
-            if resp.status == 200:
-                return await resp.read()
+
+        try:
+            async with self._http._session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+                else:
+                    logger.warning(f"Emoji download failed for {emoji.name}: HTTP {resp.status} from {url}")
+        except Exception as e:
+            logger.error(f"Emoji download exception for {emoji.name}: {e}")
         return b""
+
 
     async def download_sticker(self, sticker) -> bytes:
         return b""  # Fluxer may not support stickers; return empty bytes
     # async def download_sticker(self, sticker: Sticker) -> bytes:
-    #     """Download sticker from its URL."""
-    #     url = sticker.url
-    #     if not url:
-    #         return b""
-    #     async with self._http._session.get(url) as resp:
-    #         if resp.status == 200:
-    #             return await resp.read()
-    #     return b""
+#     """Download sticker from its URL or construct from ID."""
+        # url = getattr(sticker, 'url', None)
+        # if not url:
+        #     # Stickers might have format; we'll use the same CDN pattern
+        #     ext = getattr(sticker, 'format', 'png')
+        #     # If ext is an enum, get its string name
+        #     if hasattr(ext, 'name'):
+        #         ext = ext.name.lower()
+        #     url = f"https://cdn.discordapp.com/stickers/{sticker.id}.{ext}"
+        # if not url:
+        #     return b""
+        # async with self._http._session.get(url) as resp:
+        #     if resp.status == 200:
+        #         return await resp.read()
+        # return b""
 
     async def download_attachment(self, attachment_url: str) -> bytes:
         """Download an attachment from a URL."""

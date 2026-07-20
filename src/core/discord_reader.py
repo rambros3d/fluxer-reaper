@@ -1,6 +1,6 @@
 import discord
 import logging
-from typing import AsyncGenerator, Dict, Any, Union
+from typing import AsyncGenerator, Dict, Any, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -177,10 +177,41 @@ class DiscordReader:
             "icon_url": self.guild.icon.url if self.guild.icon else None,
             "banner_url": self.guild.banner.url if self.guild.banner else None
         }
+    
+    async def get_channel_overwrites(self, channel_id: int) -> List[Dict[str, Any]]:
+        """Fetch permission overwrites for a Discord channel."""
+        channel = await self.get_channel(channel_id)
+        overwrites = []
+        for target, overwrite in channel.overwrites.items():
+            if isinstance(target, discord.Role):
+                allow_val, deny_val = overwrite.pair()
+                overwrites.append({
+                    "id": str(target.id),
+                    "type": 0,  # role
+                    "allow": allow_val.value,
+                    "deny": deny_val.value,
+                })
+            # Members not supported for now
+        return overwrites
 
     async def download_asset(self, asset: discord.Asset) -> bytes:
-        """Downloads an asset (icon, banner) into memory."""
-        return await asset.read()
+        """Downloads an asset (icon, banner) into memory. Extended to accept a URL string as well."""
+        if isinstance(asset, str):
+            # Fetch from URL using the client's HTTP session
+            if self.client and hasattr(self.client.http, '_HTTPClient__session'):
+                session = self.client.http._HTTPClient__session
+                async with session.get(asset) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+            # Fallback to generic aiohttp
+            import aiohttp
+            async with aiohttp.ClientSession() as session:
+                async with session.get(asset) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+            return b""
+        else:
+            return await asset.read()
 
     async def get_categories(self):
         if not self.guild:

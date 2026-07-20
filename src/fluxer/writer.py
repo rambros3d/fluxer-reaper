@@ -173,7 +173,6 @@ class FluxerWriter:
             result["error_reason"] = str(e)
 
         return result
-    
 
     async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0, position: Optional[int] = None) -> str:
         """
@@ -235,6 +234,17 @@ class FluxerWriter:
         assert self.client is not None
         self._channels_cache = await self.client.get_guild_channels(self.community_id)
         return self._channels_cache
+    
+    async def get_emojis(self) -> list[dict]:
+        """Returns list of custom emojis in the community as dicts."""
+        assert self.client is not None
+        return await self.client.get_guild_emojis(self.community_id)
+
+    async def get_stickers(self) -> list[dict]:
+        """Returns list of custom stickers in the community as dicts."""
+        assert self.client is not None
+        return await self.client.get_guild_stickers(self.community_id)
+    
 
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: int, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
@@ -421,12 +431,31 @@ class FluxerWriter:
         Creates a custom emoji in the Fluxer community.
         """
         assert self.client is not None
-        
+
+        if not image_bytes:
+            logger.warning("create_emoji called with empty image_bytes, skipping.")
+            return ""
+
+        # Detect image type from magic bytes
+        if image_bytes.startswith(b"\x89PNG"):
+            mime = "image/png"
+        elif image_bytes.startswith(b"\xff\xd8\xff"):
+            mime = "image/jpeg"
+        elif image_bytes.startswith(b"GIF89a") or image_bytes.startswith(b"GIF87a"):
+            mime = "image/gif"
+        else:
+            # fallback to PNG
+            mime = "image/png"
+
+        import base64
+        image_data = base64.b64encode(image_bytes).decode("ascii")
+        data_uri = f"data:{mime};base64,{image_data}"
+
         try:
             emoji = await self.client.create_guild_emoji(
                 guild_id=self.community_id,
                 name=name,
-                image=image_bytes
+                image=data_uri   # ← pass the data URI
             )
             return str(emoji["id"])
         except Exception as e:
@@ -438,12 +467,31 @@ class FluxerWriter:
         Creates a custom sticker in the Fluxer community.
         """
         assert self.client is not None
-        
+
+        if not image_bytes:
+            logger.warning("create_sticker called with empty image_bytes, skipping.")
+            return ""
+
+        # Detect image type from magic bytes
+        if image_bytes.startswith(b"\x89PNG"):
+            mime = "image/png"
+        elif image_bytes.startswith(b"\xff\xd8\xff"):
+            mime = "image/jpeg"
+        elif image_bytes.startswith(b"GIF89a") or image_bytes.startswith(b"GIF87a"):
+            mime = "image/gif"
+        else:
+            # fallback to PNG
+            mime = "image/png"
+
+        import base64
+        image_data = base64.b64encode(image_bytes).decode("ascii")
+        data_uri = f"data:{mime};base64,{image_data}"
+
         try:
             sticker = await self.client.create_guild_sticker(
                 guild_id=self.community_id,
                 name=name,
-                image=image_bytes
+                image=data_uri   # ← pass the data URI
             )
             return str(sticker["id"])
         except Exception as e:
