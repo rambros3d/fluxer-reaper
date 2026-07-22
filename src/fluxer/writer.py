@@ -2,7 +2,7 @@ import asyncio
 import io
 import logging
 from typing import Optional, List, Dict, Any
-from fluxer import HTTPClient, Bot, Webhook, Forbidden, File
+from fluxer import HTTPClient, Bot, Unauthorized, Webhook, Forbidden, File
 
 logger = logging.getLogger(__name__)
 
@@ -427,35 +427,13 @@ class FluxerWriter:
             return ""
 
     async def create_emoji(self, name: str, image_bytes: bytes) -> str:
-        """
-        Creates a custom emoji in the Fluxer community.
-        """
+        """Creates a custom emoji. image_bytes must be raw bytes (not base64/data URI)."""
         assert self.client is not None
-
-        if not image_bytes:
-            logger.warning("create_emoji called with empty image_bytes, skipping.")
-            return ""
-
-        # Detect image type from magic bytes
-        if image_bytes.startswith(b"\x89PNG"):
-            mime = "image/png"
-        elif image_bytes.startswith(b"\xff\xd8\xff"):
-            mime = "image/jpeg"
-        elif image_bytes.startswith(b"GIF89a") or image_bytes.startswith(b"GIF87a"):
-            mime = "image/gif"
-        else:
-            # fallback to PNG
-            mime = "image/png"
-
-        import base64
-        image_data = base64.b64encode(image_bytes).decode("ascii")
-        data_uri = f"data:{mime};base64,{image_data}"
-
         try:
             emoji = await self.client.create_guild_emoji(
                 guild_id=self.community_id,
                 name=name,
-                image=data_uri   # ← pass the data URI
+                image=image_bytes  # raw bytes – library will base64-encode
             )
             return str(emoji["id"])
         except Exception as e:
@@ -463,37 +441,18 @@ class FluxerWriter:
             return ""
 
     async def create_sticker(self, name: str, image_bytes: bytes) -> str:
-        """
-        Creates a custom sticker in the Fluxer community.
-        """
+        """Creates a custom sticker. image_bytes must be raw bytes. Returns ID on success, empty string on failure."""
         assert self.client is not None
-
-        if not image_bytes:
-            logger.warning("create_sticker called with empty image_bytes, skipping.")
-            return ""
-
-        # Detect image type from magic bytes
-        if image_bytes.startswith(b"\x89PNG"):
-            mime = "image/png"
-        elif image_bytes.startswith(b"\xff\xd8\xff"):
-            mime = "image/jpeg"
-        elif image_bytes.startswith(b"GIF89a") or image_bytes.startswith(b"GIF87a"):
-            mime = "image/gif"
-        else:
-            # fallback to PNG
-            mime = "image/png"
-
-        import base64
-        image_data = base64.b64encode(image_bytes).decode("ascii")
-        data_uri = f"data:{mime};base64,{image_data}"
-
         try:
             sticker = await self.client.create_guild_sticker(
                 guild_id=self.community_id,
                 name=name,
-                image=data_uri   # ← pass the data URI
+                image=image_bytes  # raw bytes
             )
             return str(sticker["id"])
+        except Unauthorized:
+            logger.warning(f"Sticker creation failed (Unauthorized) for '{name}'. Skipping.")
+            return ""
         except Exception as e:
             logger.error(f"Failed to copy sticker '{name}': {e}", exc_info=True)
             return ""

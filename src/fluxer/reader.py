@@ -1,16 +1,145 @@
 # src/fluxer/reader.py
+"""
+Fluxer source reader – reads guild metadata, roles, channels, emojis,
+stickers, and permission overwrites from a Fluxer community via its HTTP API.
+
+Currently supports:
+  • Server name / icon / banner ("Sync Server Settings")
+  • Roles & role permissions
+  • Server structure (channels & categories)
+  • Channel & category permission overwrites
+  • Custom emoji & sticker fetching and download
+
+Not yet implemented here:
+  • Message history migration
+"""
+
 import asyncio
 import logging
-from typing import AsyncGenerator, Dict, Any, Optional, List, Union
+import re
+from typing import Dict, Any, Optional, List, Set
 
-from discord import emoji
-from fluxer import HTTPClient, Guild, Channel, Message, Role, Emoji, Forbidden
-
+from fluxer import HTTPClient, Guild, Channel, Role
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# CDN / asset URL helpers
+# ---------------------------------------------------------------------------
+
+_DEFAULT_FLUXER_CDN = "https://cdn.fluxer.app"
+
+
+def _cdn_base_from_api_url(api_url: Optional[str]) -> str:
+    """Derive the CDN host from a custom API URL.
+
+    * Official instance: ``https://api.fluxer.app/v1`` → ``https://cdn.fluxer.app``
+    * Self-hosted: ``https://fluxgard.omster.dev/api/v1`` → ``https://fluxgard.omster.dev``
+    * Falls back to the official CDN if nothing can be determined.
+    """
+    if not api_url or api_url == "default":
+        return _DEFAULT_FLUXER_CDN
+
+    url = api_url.rstrip("/")
+
+    # Official Fluxer: swap "api" for "cdn" in the hostname
+    if "api.fluxer" in url:
+        return url.replace("api.fluxer", "cdn.fluxer")
+
+    # Self-hosted: keep the scheme + host, drop any /api/… path segments
+    # so assets are fetched from the server root (typical setup).
+    m = re.match(r"(https?://[^/]+)", url)
+    if m:
+        return m.group(1)
+
+    # Last resort
+    return url
+
+
+# ---------------------------------------------------------------------------
+# Lightweight wrappers for API response objects
+# ---------------------------------------------------------------------------
+
+class EmojiWrapper:
+    """Minimal emoji object matching the OpenAPI ``GuildEmojiResponse`` schema.
+
+    Provides attribute access (``.id``, ``.name``, ``.animated``, ``.url``)
+    so that downstream code written for Discord objects works unchanged.
+    """
+
+    __slots__ = ("id", "name", "animated", "nsfw", "user", "_cdn_base")
+
+    def __init__(self, data: Dict[str, Any], cdn_base: str = _DEFAULT_FLUXER_CDN):
+        self.id = data.get("id")
+        self.name = data.get("name")
+        self.animated = data.get("animated", False)
+        self.nsfw = data.get("nsfw", False)
+        self.user = data.get("user")          # raw UserPartialResponse dict, or None
+        self._cdn_base = cdn_base
+
+    @property
+    def url(self) -> Optional[str]:
+        """Reconstructed CDN URL for the emoji image."""
+        if not self.id:
+            return None
+        ext = "gif" if self.animated else "png"
+        return f"{self._cdn_base}/emojis/{self.id}.{ext}"
+
+    def __repr__(self) -> str:
+        return f"<Emoji id={self.id} name={self.name!r} animated={self.animated}>"
+
+
+class StickerWrapper:
+    """Minimal sticker object matching the OpenAPI ``GuildStickerResponse`` schema.
+
+    Provides attribute access (``.id``, ``.name``, ``.animated``, ``.format``,
+    ``.url``, ``.tags``) so downstream code works unchanged.
+    """
+
+    __slots__ = ("id", "name", "description", "tags", "animated", "nsfw",
+                 "user", "_cdn_base")
+
+    def __init__(self, data: Dict[str, Any], cdn_base: str = _DEFAULT_FLUXER_CDN):
+        self.id = data.get("id")
+        self.name = data.get("name")
+        self.description = data.get("description", "")
+        self.tags = data.get("tags", [])
+        self.animated = data.get("animated", False)
+        self.nsfw = data.get("nsfw", False)
+        self.user = data.get("user")
+        self._cdn_base = cdn_base
+
+    @property
+    def url(self) -> Optional[str]:
+        """Reconstructed CDN URL for the sticker image."""
+        if not self.id:
+            return None
+        ext = "gif" if self.animated else "png"
+        return f"{self._cdn_base}/stickers/{self.id}.{ext}"
+
+    @property
+    def format(self) -> str:
+        """File extension – ``"gif"`` for animated, ``"png"`` otherwise."""
+        return "gif" if self.animated else "png"
+
+    def __repr__(self) -> str:
+        return f"<Sticker id={self.id} name={self.name!r} animated={self.animated}>"
+
+
+# ---------------------------------------------------------------------------
+# FluxerChannelWrapper
+# ---------------------------------------------------------------------------
+
+
 class FluxerChannelWrapper:
-    """Wraps a fluxer.Channel to add Discord‑compatible category_id."""
+    """Wraps a ``fluxer.Channel`` to expose a Discord‑compatible ``category_id``.
+
+    The Fluxer ``ChannelResponse`` schema uses ``parent_id`` for the category
+    ID, while the rest of the codebase expects ``category_id``.  This wrapper
+    bridges that gap.
+    """
+
     def __init__(self, channel):
         self._channel = channel
 
@@ -19,373 +148,470 @@ class FluxerChannelWrapper:
 
     @property
     def category_id(self):
-        return self._channel.parent_id   # Fluxer uses parent_id for category ID
+        return self._channel.parent_id
+
+
+# ---------------------------------------------------------------------------
+# FluxerReader
+# ---------------------------------------------------------------------------
+
 
 class FluxerReader:
-    """
-    Fluxer source reader – mimics DiscordReader interface.
-    Uses HTTPClient (no WebSocket) for reading data.
+    """Fluxer source reader – mimics the :class:`DiscordReader` interface for
+    the subset of operations needed by the *Clone Server Template* workflow.
+
+    Uses the Fluxer HTTP API (no WebSocket / Gateway).  All metadata-fetching
+    methods are aligned with the official `Fluxer OpenAPI specification
+    <https://api.fluxer.app/openapi.json>`_.
+
+    Parameters
+    ----------
+    token : str
+        Bot / user token for authentication.
+    server_id : str
+        The Fluxer community (guild) ID to operate on.  (The parameter is
+        named ``server_id`` for call-site compatibility with
+        ``DiscordReader`` – internally we refer to it as ``community_id``.)
+    api_url : str
+        Override for the API base URL.  Use ``"default"`` (or omit) for the
+        official ``https://api.fluxer.app`` instance.
     """
 
-    # Channel type constants (same as Discord's)
-    CHANNEL_TYPE_TEXT = 0
-    CHANNEL_TYPE_VOICE = 2
+    # -- Channel type constants (mirror Discord's for compatibility) ---------
+    CHANNEL_TYPE_TEXT     = 0
+    CHANNEL_TYPE_VOICE    = 2
     CHANNEL_TYPE_CATEGORY = 4
-    CHANNEL_TYPE_NEWS = 5
-    CHANNEL_TYPE_FORUM = 15
+    CHANNEL_TYPE_NEWS     = 5
+    CHANNEL_TYPE_FORUM    = 15
 
     def __init__(self, token: str, server_id: str, api_url: str = "default"):
         self.token = token
-        self.server_id = str(server_id)
-        self.api_url = api_url
+        # Fluxer terminology is "community", but the constructor parameter is
+        # named "server_id" for call-site compatibility with DiscordReader.
+        self.community_id = str(server_id)
+        self._raw_api_url = api_url
+
+        # Resolve the effective API base (no trailing slash)
+        if api_url and api_url != "default":
+            self._api_base = api_url.rstrip("/")
+        else:
+            self._api_base = "https://api.fluxer.app"
+
+        # CDN base is resolved lazily in _ensure_http() once we know the
+        # actual API host (important for self-hosted instances).
+        self._cdn_base: str = _DEFAULT_FLUXER_CDN
+
         self._http: Optional[HTTPClient] = None
-        self.guild_data: Optional[Dict] = None
+        self.guild_data: Optional[Dict[str, Any]] = None
         self.guild: Optional[Guild] = None
 
-    async def _ensure_http(self):
-        """Lazy initialise HTTP client and fetch guild."""
-        if self._http is None:
-            kwargs = {}
-            if self.api_url and self.api_url != "default":
-                kwargs["api_url"] = self.api_url
-            self._http = HTTPClient(self.token, **kwargs)
-            # Fetch guild data to cache
-            try:
-                self.guild_data = await self._http.get_guild(self.server_id)
-                self.guild = Guild.from_data(self.guild_data)
-                logger.info(f"FluxerReader: connected to community {self.guild.name} ({self.guild.id})")
-            except Exception as e:
-                await self.close()
-                raise RuntimeError(f"Failed to fetch Fluxer community {self.server_id}: {e}") from e
+    # -- Properties ----------------------------------------------------------
 
-    async def start(self):
-        """Starts the reader (lazy load on first method call, but this ensures it's ready)."""
+    @property
+    def server_id(self) -> str:
+        """Backward-compatible alias for ``community_id``."""
+        return self.community_id
+
+    @property
+    def api_base_url(self) -> str:
+        """Base URL for API requests."""
+        return self._api_base
+
+    @property
+    def asset_base_url(self) -> str:
+        """Base URL for constructing asset (CDN) URLs (icons, emojis, etc.)."""
+        return self._cdn_base
+
+    # -- Lifecycle -----------------------------------------------------------
+
+    async def _ensure_http(self) -> None:
+        """Lazily initialise the HTTP client and fetch guild metadata."""
+        if self._http is None:
+            kwargs: Dict[str, Any] = {}
+            if self._raw_api_url and self._raw_api_url != "default":
+                kwargs["api_url"] = self._raw_api_url
+            self._http = HTTPClient(self.token, **kwargs)
+
+            # Derive the CDN base from the *actual* API URL the client is
+            # using.  This is essential for self-hosted instances where the
+            # API host is not ``api.fluxer.app``.
+            actual_api = getattr(self._http, "api_url", "")
+            if actual_api:
+                self._cdn_base = _cdn_base_from_api_url(actual_api)
+                # Keep _api_base in sync as well
+                self._api_base = actual_api.rstrip("/")
+
+            try:
+                self.guild_data = await self._http.get_guild(self.community_id)
+                self.guild = Guild.from_data(self.guild_data)
+                logger.info(
+                    "FluxerReader: connected to community %s (%s)",
+                    self.guild.name, self.guild.id,
+                )
+            except Exception as exc:
+                await self.close()
+                raise RuntimeError(
+                    f"Failed to fetch Fluxer community {self.community_id}: {exc}"
+                ) from exc
+
+    async def start(self) -> None:
+        """Pre-load the HTTP client and guild data."""
         await self._ensure_http()
 
+    async def close(self) -> None:
+        """Tear down the HTTP client and clear cached data."""
+        if self._http is not None:
+            await self._http.close()
+            self._http = None
+        self.guild = None
+        self.guild_data = None
+
+    # -- Validation ----------------------------------------------------------
+
     async def validate(self) -> Dict[str, Any]:
-        # import src.fluxer.writer as FluxerWriter
-        # return await FluxerWriter.validate(self)
+        """Validate token, community and permissions using only HTTP.
+
+        Returns a dict compatible with :meth:`DiscordReader.validate`.
+
+        Notes
+        -----
+        The Fluxer API does not expose intents the way Discord does, so
+        ``message_content`` and ``members`` are always reported as ``True``.
         """
-        Validate token and community using only HTTP.
-        Returns a dict with token, community, permissions, etc.
-        """
-        import asyncio
-        result = {
+        result: Dict[str, Any] = {
             "token": False,
             "server": False,
             "bot_name": None,
             "server_name": None,
             "error_reason": None,
-            "intents": {"message_content": True, "members": True},   # pretend these are okay
-            "permissions": {"view_channel": True, "read_messages": True, "read_message_history": True}
+            "intents": {"message_content": True, "members": True},
+            "permissions": {
+                "view_channel": True,
+                "read_messages": True,
+                "read_message_history": True,
+            },
         }
         TIMEOUT = 15  # seconds
 
         try:
-            # Build HTTP client with optional custom API URL
-            http_kwargs = {}
-            if self.api_url and self.api_url != "default":
-                http_kwargs["api_url"] = self.api_url
+            http_kwargs: Dict[str, Any] = {}
+            if self._raw_api_url and self._raw_api_url != "default":
+                http_kwargs["api_url"] = self._raw_api_url
 
             http = HTTPClient(self.token, **http_kwargs)
             try:
-                # 1. Validate token – fetch current user
-                me = await asyncio.wait_for(http.get_current_user(), timeout=TIMEOUT)
+                # 1. Validate token via ``GET /users/@me``
+                me = await asyncio.wait_for(
+                    http.get_current_user(), timeout=TIMEOUT
+                )
                 result["token"] = True
                 result["bot_name"] = me.get("username")
                 me_id = int(me["id"])
 
-                # 2. Fetch community metadata and roles concurrently
+                # 2. Fetch guild and roles concurrently
                 guild_data, roles_data = await asyncio.gather(
-                    asyncio.wait_for(http.get_guild(self.community_id), timeout=TIMEOUT),
-                    asyncio.wait_for(http.get_guild_roles(self.community_id), timeout=TIMEOUT)
+                    asyncio.wait_for(
+                        http.get_guild(self.community_id), timeout=TIMEOUT
+                    ),
+                    asyncio.wait_for(
+                        http.get_guild_roles(self.community_id), timeout=TIMEOUT
+                    ),
                 )
                 if guild_data:
-                    result["community"] = True
-                    result["community_name"] = guild_data.get("name")
+                    result["server"] = True
+                    result["server_name"] = guild_data.get("name")
                     owner_id = int(guild_data.get("owner_id", 0))
 
-                    # 3. Check admin permission (bot is owner or has Administrator bit)
+                    # 3. Resolve effective permissions (owner or Administrator bit)
                     try:
                         member_data = await asyncio.wait_for(
                             http.get_guild_member(self.community_id, me_id),
-                            timeout=TIMEOUT
+                            timeout=TIMEOUT,
                         )
-                        member_role_ids = {int(r) for r in member_data.get("roles", [])}
+                        member_role_ids = {
+                            int(r) for r in member_data.get("roles", [])
+                        }
                         computed_perms = 0
                         guild_id_int = int(self.community_id)
                         for r_data in roles_data:
                             r_id = int(r_data["id"])
                             if r_id == guild_id_int or r_id in member_role_ids:
-                                computed_perms |= int(r_data.get("permissions", 0))
-                        is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
+                                # ``permissions`` is a string bitfield per the
+                                # OpenAPI ``GuildRoleResponse`` schema
+                                computed_perms |= int(
+                                    r_data.get("permissions", 0)
+                                )
+                        is_admin = (me_id == owner_id) or bool(
+                            computed_perms & (1 << 3)
+                        )
                         result["permissions"]["administrator"] = is_admin
                     except Exception:
-                        # Fallback: only owner check
-                        result["permissions"]["administrator"] = (me_id == owner_id)
+                        result["permissions"]["administrator"] = (
+                            me_id == owner_id
+                        )
                 else:
                     result["error_reason"] = "Community not found"
 
             except asyncio.TimeoutError:
-                result["error_reason"] = "Validation timed out (API unreachable or slow)"
-            except Exception as e:
-                result["error_reason"] = f"Validation error: {e}"
+                result["error_reason"] = (
+                    "Validation timed out (API unreachable or slow)"
+                )
+            except Exception as exc:
+                result["error_reason"] = f"Validation error: {exc}"
             finally:
                 await http.close()
 
-        except Exception as e:
-            result["error_reason"] = str(e)
+        except Exception as exc:
+            result["error_reason"] = str(exc)
 
         return result
 
+    # ========================================================================
+    #  Server / guild metadata
+    # ========================================================================
+
     async def get_server_metadata(self) -> Dict[str, Any]:
-        """Returns name, icon, banner URLs."""
+        """Return guild metadata for the *Sync Server Settings* workflow.
+
+        Returns a dict with keys matching what :meth:`DiscordReader.get_server_metadata`
+        returns: ``name``, ``id``, ``icon_url``, ``banner_url``.
+
+        Asset hashes come from the OpenAPI ``GuildResponse`` schema
+        (``icon`` / ``banner`` fields).  Full CDN URLs are composed here.
+        """
         await self._ensure_http()
+        data = self.guild_data or {}
+        g = self.guild
+
+        def _url(kind: str, hash_val: Optional[str]) -> Optional[str]:
+            if not hash_val:
+                return None
+            return f"{self._cdn_base}/{kind}/{self.community_id}/{hash_val}.png"
+
         return {
-            "name": self.guild.name,
-            "id": str(self.guild.id),
-            "icon_url": self.guild.icon.url if self.guild.icon else None,
-            "banner_url": self.guild.banner.url if self.guild.banner else None
+            "name": g.name if g else "Unknown",
+            "id": str(g.id) if g else self.community_id,
+            "icon_url": _url("icons", data.get("icon")),
+            "banner_url": _url("banners", data.get("banner")),
         }
 
+    # ========================================================================
+    #  Asset download helpers
+    # ========================================================================
+
     async def download_asset(self, asset_url: str) -> bytes:
-        """Downloads an asset (icon/banner) from a URL."""
-        await self._ensure_http()
-        if not asset_url:
+        """Download an arbitrary asset (icon, banner, etc.) from a URL.
+
+        Returns empty ``bytes`` on any failure.
+        """
+        if not asset_url or not self._http:
             return b""
-        # Use the http client's session to download
-        async with self._http._session.get(asset_url) as resp:
-            if resp.status == 200:
-                return await resp.read()
+        try:
+            async with self._http._session.get(asset_url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
+        except Exception:
+            logger.debug(
+                "Failed to download asset: %s", asset_url, exc_info=True
+            )
         return b""
 
-    async def get_categories(self):
-        """Returns list of category channels (type=4)."""
-        await self._ensure_http()
-        channels = await self._http.get_guild_channels(self.server_id)
-        cats = []
-        for ch_data in channels:
-            if ch_data.get("type") == 4:
-                cat = Channel.from_data(ch_data)
-                cats.append(FluxerChannelWrapper(cat))
-        return cats
+    async def download_emoji(self, emoji) -> bytes:
+        """Download an emoji image.
 
-    async def get_roles(self):
-        """Returns list of roles (excluding @everyone)."""
+        Accepts an :class:`EmojiWrapper`, a ``fluxer.Emoji``, or any object
+        with ``id`` / ``url`` / ``animated`` attributes.  Returns raw bytes.
+        """
         await self._ensure_http()
-        roles_data = await self._http.get_guild_roles(self.server_id)
-        roles = []
+
+        url = getattr(emoji, "url", None)
+        if not url:
+            ext = "gif" if getattr(emoji, "animated", False) else "png"
+            eid = getattr(emoji, "id", None)
+            if eid:
+                url = f"{self._cdn_base}/emojis/{eid}.{ext}"
+        return await self.download_asset(url or "")
+
+    async def download_sticker(self, sticker) -> bytes:
+        """Download a sticker image.
+
+        Accepts a :class:`StickerWrapper` or any object with ``id`` / ``url``
+        / ``animated`` / ``format`` attributes.  Returns raw bytes.
+        """
+        await self._ensure_http()
+
+        url = getattr(sticker, "url", None)
+        if not url:
+            sid = getattr(sticker, "id", None)
+            if sid:
+                fmt = getattr(sticker, "format", "png")
+                if hasattr(fmt, "name"):          # enum → string
+                    fmt = fmt.name.lower()
+                elif fmt in ("apng",):
+                    fmt = "png"
+                url = f"{self._cdn_base}/stickers/{sid}.{fmt}"
+        return await self.download_asset(url or "")
+
+    # ========================================================================
+    #  Roles
+    # ========================================================================
+
+    async def get_roles(self) -> List[Role]:
+        """Return guild roles (excluding the ``@everyone`` role).
+
+        Aligned with the OpenAPI ``GuildRoleResponse`` schema:
+
+        * ``id``, ``name``, ``color``, ``position`` – as expected.
+        * ``permissions`` is a **string** bitfield (handled transparently by
+          ``Role.from_data()``).
+        * ``hoist``, ``mentionable``, ``unicode_emoji`` – available on the
+          returned object.
+        """
+        await self._ensure_http()
+        roles_data = await self._http.get_guild_roles(self.community_id)
+        roles: List[Role] = []
         for r in roles_data:
             role = Role.from_data(r)
             if not role.is_default:
                 roles.append(role)
         return roles
 
-    async def get_emojis(self):
-        """Returns list of custom emojis."""
-        await self._ensure_http()
-        emojis_data = await self._http.get_guild_emojis(self.server_id)
-        return [Emoji.from_data(e) for e in emojis_data]
+    # ========================================================================
+    #  Channels & categories
+    # ========================================================================
 
-    async def get_stickers(self):
-        """Returns list of custom stickers."""
-        return []  # Fluxer may not support stickers; return empty list for now
+    async def get_categories(self) -> List[FluxerChannelWrapper]:
+        """Return category channels (``type == 4``)."""
         await self._ensure_http()
-        stickers_data = await self._http.get_guild_stickers(self.server_id)
-        return [Sticker.from_data(s) for s in stickers_data]
+        channels = await self._http.get_guild_channels(self.community_id)
+        return [
+            FluxerChannelWrapper(Channel.from_data(ch))
+            for ch in channels
+            if ch.get("type") == 4
+        ]
 
-    async def get_members(self):
-        """
-        Returns all members. (May be expensive; implement if needed.)
-        Fluxer API may not have a guild-wide members list; you might need to paginate.
-        """
+    async def get_channels(
+        self, category_id: Optional[str] = None
+    ) -> List[FluxerChannelWrapper]:
+        """Return non-category channels, optionally filtered by *category_id*."""
         await self._ensure_http()
-        # If the API supports get_guild_members, use it; otherwise return empty.
-        # For now, we'll try to fetch members (might need pagination).
-        # This is a placeholder; you may need to implement pagination with ?limit=1000&after=...
-        try:
-            members = await self._http.get_guild_members(self.server_id, limit=1000)
-            return members  # list of dicts; we could wrap in Member class if needed
-        except AttributeError:
-            logger.warning("get_guild_members not available in fluxer.py; returning []")
-            return []
-
-    async def get_channels(self, category_id: Optional[str] = None):
-        await self._ensure_http()
-        channels_data = await self._http.get_guild_channels(self.server_id)
-        all_ch = []
+        channels_data = await self._http.get_guild_channels(self.community_id)
+        result: List[FluxerChannelWrapper] = []
         for ch_data in channels_data:
             if ch_data.get("type") == 4:
                 continue
-            ch = Channel.from_data(ch_data)
-            wrapped = FluxerChannelWrapper(ch)
+            wrapped = FluxerChannelWrapper(Channel.from_data(ch_data))
             if category_id is not None and wrapped.category_id != int(category_id):
                 continue
-            all_ch.append(wrapped)
-        return all_ch
+            result.append(wrapped)
+        return result
 
-    async def get_active_threads(self) -> List:
-        """Fluxer may not have active threads; return empty list."""
-        return []
-
-    async def fetch_channels(self) -> List:
+    async def fetch_channels(self) -> List[FluxerChannelWrapper]:
+        """Return **all** channels (including categories), unsorted."""
         await self._ensure_http()
-        channels_data = await self._http.get_guild_channels(self.server_id)
-        wrapped = []
-        for ch_data in channels_data:
-            ch = Channel.from_data(ch_data)
-            wrapped.append(FluxerChannelWrapper(ch))
-        return wrapped
-    
-    async def get_channel(self, channel_id: str):
+        channels_data = await self._http.get_guild_channels(self.community_id)
+        return [
+            FluxerChannelWrapper(Channel.from_data(ch))
+            for ch in channels_data
+        ]
+
+    async def get_channel(self, channel_id: str) -> FluxerChannelWrapper:
         """Fetch a single channel by ID."""
         await self._ensure_http()
         ch_data = await self._http.get_channel(channel_id)
-        ch = Channel.from_data(ch_data)
-        return FluxerChannelWrapper(ch)
-    
-    async def get_channel_overwrites(self, channel_id: str) -> List[Dict[str, Any]]:
-        """Fetch permission overwrites for a channel from the Fluxer API."""
+        return FluxerChannelWrapper(Channel.from_data(ch_data))
+
+    async def get_active_threads(self) -> List:
+        """Active threads are not currently exposed by the Fluxer REST API."""
+        return []
+
+    # ========================================================================
+    #  Emojis
+    # ========================================================================
+
+    async def get_emojis(self) -> List[EmojiWrapper]:
+        """Return custom guild emojis.
+
+        Each emoji wraps the ``GuildEmojiResponse`` / ``GuildEmojiWithUserResponse``
+        schema (``id``, ``name``, ``animated``, ``nsfw``, optional ``user``).
+
+        Uses ``GET /guilds/{guild_id}/emojis``.
+        """
+        await self._ensure_http()
+        emojis_data = await self._http.get_guild_emojis(self.community_id)
+        # The library may return a list or a dict with an ``items`` key
+        if isinstance(emojis_data, dict):
+            items = emojis_data.get("items", [])
+        elif isinstance(emojis_data, list):
+            items = emojis_data
+        else:
+            items = []
+        return [EmojiWrapper(e, cdn_base=self._cdn_base) for e in items]
+
+    # ========================================================================
+    #  Stickers
+    # ========================================================================
+
+    async def get_stickers(self) -> List[StickerWrapper]:
+        """Return custom guild stickers.
+
+        Each sticker wraps the ``GuildStickerResponse`` / ``GuildStickerWithUserResponse``
+        schema (``id``, ``name``, ``description``, ``tags``, ``animated``,
+        ``nsfw``, optional ``user``).
+
+        Uses ``GET /guilds/{guild_id}/stickers``.
+        """
+        await self._ensure_http()
+        try:
+            stickers_data = await self._http.get_guild_stickers(self.community_id)
+        except Exception as exc:
+            logger.warning(
+                "Could not fetch stickers from Fluxer: %s. Returning empty list.", exc
+            )
+            return []
+
+        if isinstance(stickers_data, dict):
+            items = stickers_data.get("items", [])
+        elif isinstance(stickers_data, list):
+            items = stickers_data
+        else:
+            items = []
+        return [StickerWrapper(s, cdn_base=self._cdn_base) for s in items]
+
+    # ========================================================================
+    #  Stub / placeholder methods
+    # ========================================================================
+
+    async def get_all_channels(self) -> List[FluxerChannelWrapper]:
+        """Alias for :meth:`fetch_channels` – used by the shuttle UI."""
+        return await self.fetch_channels()
+
+    async def get_backed_up_channel_ids(self) -> Set[str]:
+        """Stub – returns an empty set.  Only meaningful in backup mode."""
+        return set()
+
+    @property
+    def threads(self) -> List:
+        """Stub – returns an empty list.  Thread support is not yet implemented."""
+        return []
+
+    # ========================================================================
+    #  Permission overwrites
+    # ========================================================================
+
+    async def get_channel_overwrites(
+        self, channel_id: str
+    ) -> List[Dict[str, Any]]:
+        """Return permission overwrites for a channel.
+
+        Matches the ``permission_overwrites`` array from the OpenAPI
+        `ChannelResponse`_ schema.  Each overwrite dict contains:
+
+        * ``id``     – target role/user ID
+        * ``type``   – 0 for role, 1 for member
+        * ``allow``  – allowed permissions bitfield
+        * ``deny``   – denied permissions bitfield
+        """
         await self._ensure_http()
         ch_data = await self._http.get_channel(channel_id)
         return ch_data.get("permission_overwrites", [])
-
-    async def get_message(self, channel_id: str, message_id: str):
-        """Fetch a single message."""
-        await self._ensure_http()
-        try:
-            msg_data = await self._http.get_channel_message(channel_id, message_id)
-            return Message.from_data(msg_data)
-        except Exception:
-            return None
-
-    async def get_first_message(self, channel_id: str):
-        """Returns the oldest message in the channel."""
-        await self._ensure_http()
-        try:
-            msgs = await self._http.get_channel_messages(channel_id, limit=1, oldest_first=True)
-            if msgs:
-                return Message.from_data(msgs[0])
-        except Exception:
-            pass
-        return None
-
-    async def fetch_message_history(
-        self,
-        channel_id: str,
-        limit: Optional[int] = None,
-        after_id: Optional[str] = None,
-        inclusive: bool = False
-    ) -> AsyncGenerator[Message, None]:
-        """
-        Yields messages from oldest to newest.
-        Fluxer's get_channel_messages may accept 'after' and 'before' parameters.
-        We'll implement pagination by repeatedly fetching up to limit.
-        """
-        await self._ensure_http()
-        fetched = 0
-        last_id = None
-        while True:
-            # Calculate how many to fetch
-            to_fetch = 100  # max per request; adjust if Fluxer supports larger
-            if limit is not None:
-                to_fetch = min(to_fetch, limit - fetched)
-                if to_fetch <= 0:
-                    break
-
-            # Build params: after= after_id (exclusive) or inclusive? Fluxer might not support inclusive.
-            # If inclusive and after_id, we need to fetch messages after that ID.
-            # We'll handle inclusive by using after_id as is (it's exclusive) but the caller expects inclusive.
-            # We can work around by fetching one extra and skipping if needed.
-            params = {}
-            if after_id:
-                params["after"] = after_id
-            # Add limit
-            params["limit"] = to_fetch
-
-            try:
-                msgs_data = await self._http.get_channel_messages(channel_id, **params)
-            except Exception as e:
-                logger.error(f"Error fetching messages for channel {channel_id}: {e}")
-                break
-
-            if not msgs_data:
-                break
-
-            for msg_data in msgs_data:
-                # If inclusive and after_id, we might have fetched the message with ID == after_id.
-                # We'll skip if inclusive is False and msg.id == after_id (since after_id is exclusive normally)
-                # But since we don't know what the server does, we'll just yield all and let the caller handle duplicates.
-                msg = Message.from_data(msg_data)
-                yield msg
-                fetched += 1
-                last_id = msg.id
-                if limit and fetched >= limit:
-                    return
-
-            # If we got fewer than requested, we've reached the end.
-            if len(msgs_data) < to_fetch:
-                break
-
-            # Set after to the last ID for next iteration (exclusive)
-            after_id = last_id
-
-    async def download_emoji(self, emoji: Emoji) -> bytes:
-        """Download emoji image from its URL or construct from ID."""
-        url = getattr(emoji, 'url', None)
-        if not url:
-            # fallback (Discord CDN) – likely wrong for Fluxer sources
-            ext = "gif" if getattr(emoji, 'animated', False) else "png"
-            url = f"https://cdn.discordapp.com/emojis/{emoji.id}.{ext}"
-            logger.warning(f"No URL attribute on emoji {emoji.name}, falling back to {url}")
-
-        if not url:
-            logger.error(f"No URL available for emoji {emoji.name} ({emoji.id})")
-            return b""
-
-        try:
-            async with self._http._session.get(url) as resp:
-                if resp.status == 200:
-                    return await resp.read()
-                else:
-                    logger.warning(f"Emoji download failed for {emoji.name}: HTTP {resp.status} from {url}")
-        except Exception as e:
-            logger.error(f"Emoji download exception for {emoji.name}: {e}")
-        return b""
-
-
-    async def download_sticker(self, sticker) -> bytes:
-        return b""  # Fluxer may not support stickers; return empty bytes
-    # async def download_sticker(self, sticker: Sticker) -> bytes:
-#     """Download sticker from its URL or construct from ID."""
-        # url = getattr(sticker, 'url', None)
-        # if not url:
-        #     # Stickers might have format; we'll use the same CDN pattern
-        #     ext = getattr(sticker, 'format', 'png')
-        #     # If ext is an enum, get its string name
-        #     if hasattr(ext, 'name'):
-        #         ext = ext.name.lower()
-        #     url = f"https://cdn.discordapp.com/stickers/{sticker.id}.{ext}"
-        # if not url:
-        #     return b""
-        # async with self._http._session.get(url) as resp:
-        #     if resp.status == 200:
-        #         return await resp.read()
-        # return b""
-
-    async def download_attachment(self, attachment_url: str) -> bytes:
-        """Download an attachment from a URL."""
-        if not attachment_url:
-            return b""
-        async with self._http._session.get(attachment_url) as resp:
-            if resp.status == 200:
-                return await resp.read()
-        return b""
-
-    async def close(self):
-        """Close HTTP client."""
-        if self._http:
-            await self._http.close()
-            self._http = None
-        self.guild = None
-        self.guild_data = None
