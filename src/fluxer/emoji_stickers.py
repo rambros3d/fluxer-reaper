@@ -9,13 +9,24 @@ logger = logging.getLogger(__name__)
 async def sync_assets_state(context: MigrationContext):
     """
     Scans Fluxer for emojis and stickers matching Discord names and updates state file mappings.
+    Gracefully handles 401/403 errors (treats as no assets – common on self-hosted instances).
     """
     logger.info("Synchronizing asset mappings (emojis/stickers) with Fluxer...")
     discord_emojis = await context.source_reader.get_emojis()
     discord_stickers = await context.source_reader.get_stickers()
-    
-    fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
-    fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
+
+    fluxer_emojis = []
+    fluxer_stickers = []
+
+    try:
+        fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
+    except Exception as e:
+        logger.warning(f"Could not fetch emojis from Fluxer: {e}. Assuming none exist.")
+
+    try:
+        fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
+    except Exception as e:
+        logger.warning(f"Could not fetch stickers from Fluxer: {e}. Assuming none exist.")
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
     fluxer_emoji_map = {e.get("name"): e.get("id") for e in fluxer_emojis if e.get("name")}

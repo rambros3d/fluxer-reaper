@@ -28,13 +28,13 @@ logger = logging.getLogger(__name__)
 # CDN / asset URL helpers
 # ---------------------------------------------------------------------------
 
-_DEFAULT_FLUXER_CDN = "https://cdn.fluxer.app"
+_DEFAULT_FLUXER_CDN = "https://fluxerusercontent.com"
 
 
 def _cdn_base_from_api_url(api_url: Optional[str]) -> str:
     """Derive the CDN host from a custom API URL.
 
-    * Official instance: ``https://api.fluxer.app/v1`` → ``https://cdn.fluxer.app``
+    * Official instance: ``https://api.fluxer.app/v1`` → ``https://fluxerusercontent.com``
     * Self-hosted: ``https://fluxgard.omster.dev/api/v1`` → ``https://fluxgard.omster.dev``
     * Falls back to the official CDN if nothing can be determined.
     """
@@ -43,9 +43,9 @@ def _cdn_base_from_api_url(api_url: Optional[str]) -> str:
 
     url = api_url.rstrip("/")
 
-    # Official Fluxer: swap "api" for "cdn" in the hostname
-    if "api.fluxer" in url:
-        return url.replace("api.fluxer", "cdn.fluxer")
+    # Official Fluxer: use the known CDN domain
+    if "api.fluxer.app" in url:
+        return _DEFAULT_FLUXER_CDN
 
     # Self-hosted: keep the scheme + host, drop any /api/… path segments
     # so assets are fetched from the server root (typical setup).
@@ -377,7 +377,9 @@ class FluxerReader:
         returns: ``name``, ``id``, ``icon_url``, ``banner_url``.
 
         Asset hashes come from the OpenAPI ``GuildResponse`` schema
-        (``icon`` / ``banner`` fields).  Full CDN URLs are composed here.
+        (``icon`` / ``banner`` fields).  Full CDN URLs are composed here,
+        matching the fluxer library's own ``Guild.icon_url`` convention
+        (``a_`` prefix → ``.gif``, otherwise ``.png``).
         """
         await self._ensure_http()
         data = self.guild_data or {}
@@ -386,7 +388,8 @@ class FluxerReader:
         def _url(kind: str, hash_val: Optional[str]) -> Optional[str]:
             if not hash_val:
                 return None
-            return f"{self._cdn_base}/{kind}/{self.community_id}/{hash_val}.png"
+            ext = "gif" if hash_val.startswith("a_") else "png"
+            return f"{self._cdn_base}/{kind}/{self.community_id}/{hash_val}.{ext}"
 
         return {
             "name": g.name if g else "Unknown",

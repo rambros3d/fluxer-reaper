@@ -8,13 +8,14 @@ logger = logging.getLogger(__name__)
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll, Center
 from textual.widgets import (
-    Header, Footer, Button, Label, Input, ListItem,
-    ListView, Rule, RadioButton, RadioSet, Select, Static, Markdown, Switch
+    Header, Footer, Button, Label, Input,
+    Rule, RadioButton, RadioSet, Select, Markdown, Switch
 )
 from textual.screen import Screen, ModalScreen
 
 from src.core.configuration import (
     get_available_configs, create_new_config, load_config, save_config,
+    delete_config, clone_config, scan_config_data,
 )
 from src.ui.widgets import RamDisplay, Footnote
 from src.core.utils import get_app_version
@@ -122,25 +123,253 @@ class NewConfigModal(ModalScreen[str]):
 # Screen 1: pick (or create) a ReaperFiles-* config
 # ──────────────────────────────────────────────────────────────────────────────
 
+class DeleteConfigModal(ModalScreen[bool]):
+    """Confirmation modal before deleting a configuration."""
+
+    DEFAULT_CSS = """
+    DeleteConfigModal { align: center middle; }
+    #delete_dialog {
+        width: 60; height: auto;
+        border: thick $error 80%; background: $surface; padding: 1 2;
+    }
+    #delete_title { text-style: bold; color: $error; margin-bottom: 1; }
+    #delete_warning {
+        margin-bottom: 1; color: $text-warning;
+    }
+    #delete_buttons { height: auto; margin-top: 1; }
+    #delete_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, cfg_name: str, has_data: bool = False, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg_name = cfg_name
+        self.has_data = has_data
+
+    def compose(self) -> ComposeResult:
+        btn_label = "Begin Delete" if self.has_data else "Delete Config"
+        with Vertical(id="delete_dialog"):
+            yield Label(f"Delete Configuration?", id="delete_title")
+            yield Label(
+                f"Are you sure you want to delete the configuration\n"
+                f"[bold]{self.cfg_name}[/bold]?\n\n"
+                f"This will permanently remove the folder\n"
+                f"[bold]ReaperFiles-{self.cfg_name}[/bold]\n"
+                f"and all its contents.\n\n"
+                f"This action cannot be undone.",
+                id="delete_warning"
+            )
+            with Horizontal(id="delete_buttons"):
+                yield Button(btn_label, variant="error", id="btn_delete_confirm")
+                yield Button("Cancel", variant="primary", id="btn_delete_cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_delete_confirm":
+            self.dismiss(True)
+        elif event.button.id == "btn_delete_cancel":
+            self.dismiss(False)
+
+
+class DeleteDataModal(ModalScreen[str]):
+    """Second-step confirmation — config has db/backup files. What to do with them?"""
+
+    DEFAULT_CSS = """
+    DeleteDataModal { align: center middle; }
+    #deletedata_dialog {
+        width: 62; height: auto;
+        border: thick $warning 80%; background: $surface; padding: 1 2;
+    }
+    #deletedata_title { text-style: bold; color: $warning; margin-bottom: 1; }
+    #deletedata_files { margin-bottom: 1; color: $text-muted; }
+    #deletedata_buttons1, #deletedata_buttons2, #deletedata_buttons3 { height: auto; margin-top: 1; }
+    #deletedata_buttons1 Button, #deletedata_buttons2 Button, #deletedata_buttons3 Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, cfg_name: str, data_info: dict, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg_name = cfg_name
+        self.data_info = data_info
+
+    def compose(self) -> ComposeResult:
+        lines = []
+        if "db" in self.data_info:
+            lines.append(f"• Database files: {', '.join(self.data_info['db'])}")
+        if "backups" in self.data_info:
+            lines.append(f"• Backup folders: {', '.join(self.data_info['backups'])}")
+
+        with Vertical(id="deletedata_dialog"):
+            yield Label("Extra Data Found!", id="deletedata_title")
+            yield Label(
+                f"The configuration [bold]{self.cfg_name}[/bold] also contains\n"
+                f"the following data that will be [bold]permanently deleted[/bold]:\n\n"
+                + "\n".join(lines) + "\n\n"
+                f"You can open the folder to back up files yourself,\n"
+                f"then choose Delete Everything when ready.",
+                id="deletedata_files"
+            )
+            with Horizontal(id="deletedata_buttons1"):
+                yield Button("Open Folder", variant="primary", id="btn_data_open",
+                             tooltip="Open the config folder in your file manager to back up files")
+            with Horizontal(id="deletedata_buttons2"):
+                yield Button("Delete Everything", variant="error", id="btn_data_delete_all",
+                             tooltip="Delete the config AND all db/backup files permanently")
+            with Horizontal(id="deletedata_buttons3"):
+                yield Button("Cancel", variant="primary", id="btn_data_cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_data_open":
+            self.dismiss("open")
+        elif event.button.id == "btn_data_delete_all":
+            self.dismiss("delete_all")
+        elif event.button.id == "btn_data_cancel":
+            self.dismiss("cancel")
+
+
+class CloneConfigModal(ModalScreen[tuple | None]):
+    """Modal to clone a configuration with a new name and optionally a new source platform."""
+
+    DEFAULT_CSS = """
+    CloneConfigModal { align: center middle; }
+    #clone_dialog {
+        width: 50; height: auto;
+        border: thick $primary 80%; background: $surface; padding: 1 2;
+    }
+    #clone_title { text-style: bold; margin-bottom: 1; padding-bottom: 1; border-bottom: solid $primary; }
+    #clone_source_info { margin-bottom: 1; color: $text-muted; }
+    #clone_source_select { text-style: bold; margin-top: 1; padding-top: 1; border-bottom: solid $primary; }
+    #clone_buttons { height: auto; margin-top: 1; }
+    #clone_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, source_name: str, source_platform: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.source_name = source_name
+        self.source_platform = source_platform
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="clone_dialog"):
+            yield Label(f"Clone Configuration", id="clone_title")
+            yield Label(
+                f"Cloning from: [bold]{self.source_name}[/bold]\n"
+                f"Current source platform: [bold]{self.source_platform.capitalize()}[/bold]",
+                id="clone_source_info"
+            )
+            yield Label("Enter new configuration name:", id="clone_name_label")
+            yield Input(placeholder="e.g. MyClonedServer", id="clone_input", tooltip="Enter a unique name for the cloned config")
+            yield Label("Change source platform? (keep same if unchanged)", id="clone_source_select")
+            with RadioSet(id="clone_platform"):
+                yield RadioButton(f"Keep same ({self.source_platform.capitalize()})", id="clone_plat_keep", value=True)
+                yield RadioButton("Discord", id="clone_plat_discord")
+                yield RadioButton("Fluxer", id="clone_plat_fluxer")
+            with Horizontal(id="clone_buttons"):
+                yield Button("Clone", variant="success", id="btn_clone_confirm", tooltip="Create the cloned configuration")
+                yield Button("Cancel", variant="primary", id="btn_clone_cancel")
+
+    def _get_sanitized_name(self) -> str:
+        raw = self.query_one("#clone_input", Input).value.strip()
+        return re.sub(r"[^a-zA-Z0-9_-]+", "_", raw).strip("-")
+
+    def _get_selected_platform(self) -> str | None:
+        for rb in self.query("#clone_platform RadioButton"):
+            if rb.value:
+                if rb.id == "clone_plat_keep":
+                    return None  # keep original
+                elif rb.id == "clone_plat_discord":
+                    return "discord"
+                elif rb.id == "clone_plat_fluxer":
+                    return "fluxer"
+        return None
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_clone_confirm":
+            name = self._get_sanitized_name()
+            if name:
+                platform = self._get_selected_platform()
+                self.dismiss((name, platform))
+        elif event.button.id == "btn_clone_cancel":
+            self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Config row widget — one per saved configuration
+# ──────────────────────────────────────────────────────────────────────────────
+
+class ConfigRow(Horizontal, can_focus=False):
+    """A single row in the config list — name button + trash icon."""
+
+    DEFAULT_CSS = """
+    ConfigRow {
+        height: auto; align: center middle; padding: 0 2; margin: 0;
+    }
+    ConfigRow .btn_open {
+        width: 1fr; text-align: left;
+        border: none; background: $surface;
+    }
+    ConfigRow .btn_open:hover {
+        border: none; background: $boost;
+    }
+    ConfigRow .btn_clone {
+        width: 7; min-width: 7; max-width: 7;
+        border: none; background: $surface;
+        color: $text-disabled;
+    }
+    ConfigRow .btn_clone:hover {
+        color: $text; background: $primary 30%; border: none;
+    }
+    ConfigRow .btn_trash {
+        width: 5; min-width: 5; max-width: 5;
+        border: none; background: $surface;
+        color: $text-disabled;
+    }
+    ConfigRow .btn_trash:hover {
+        color: $text; background: $warning 30%; border: none;
+    }
+    """
+
+    def __init__(self, cfg_name: str, display_name: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cfg_name = cfg_name
+        self.display_name = display_name
+
+    def compose(self) -> ComposeResult:
+        yield Button(self.display_name, id=f"open_cfg__{self.cfg_name}", classes="btn_open",
+                     tooltip=f"Open configuration '{self.display_name}'")
+        yield Button("📋", id=f"clone_cfg__{self.cfg_name}", classes="btn_clone",
+                     tooltip=f"Clone configuration '{self.display_name}'")
+        yield Button("🗑️", id=f"delete_cfg__{self.cfg_name}", classes="btn_trash",
+                     tooltip=f"Delete configuration '{self.display_name}'")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Screen 1: pick (or create) a ReaperFiles-* config
+# ──────────────────────────────────────────────────────────────────────────────
+
 class ConfigSelectionScreen(Screen):
     """Screen to select or create a Reaper configuration."""
 
     DEFAULT_CSS = """
     ConfigSelectionScreen { align: center middle; }
     #config_sel_container {
-        width: 60; height: auto;
+        width: 65; height: auto;
         border: solid green; padding: 1 2;
     }
     #config_sel_title {
-        text-style: bold; color: green; margin-bottom: 1;
+        text-style: bold; color: green; margin-bottom: 0;
         content-align: center middle; width: 100%;
     }
+    #config_security_note {
+        text-style: italic; color: $text-warning; margin-bottom: 1;
+        content-align: center middle; width: 100%; height: auto;
+    }
     #config_list_container {
-        height: 10; max-height: 20;
-        border: solid $primary; margin-bottom: 1;
+        height: auto; max-height: 20;
+        border: solid $primary; margin-bottom: 1; padding: 0;
     }
     #config_sel_actions { height: auto; margin-top: 0; }
-    #config_sel_actions Button { width: 1fr; margin: 0 1; }
+    #config_sel_actions Button { width: 1fr; margin: 1 1; }
     #bottom_actions_row { height: auto; align: center middle; margin-top: 2; }
     #btn_update_app { display: none; margin-bottom: 1; width: 40; border: none; height: 1; }
     #btn_about { border: none; width: 40; height: 1; }
@@ -151,8 +380,12 @@ class ConfigSelectionScreen(Screen):
         with Center():
             with Container(id="config_sel_container"):
                 yield Label(f"Reaper Configs", id="config_sel_title")
+                yield Label(
+                    "⚠  Bot tokens are stored in plaintext. \n    Delete configs when you're done.",
+                    id="config_security_note"
+                )
                 with VerticalScroll(id="config_list_container"):
-                    yield ListView(id="config_list")
+                    yield Label("No configurations found.", id="config_empty_label")
                 with Horizontal(id="config_sel_actions"):
                     yield Button("New Config", id="btn_new_config", variant="success", tooltip="Create a new configuration folder")
                     yield Button("Exit", id="btn_exit", variant="error")
@@ -195,27 +428,43 @@ class ConfigSelectionScreen(Screen):
 
     def refresh_configs(self) -> list:
         configs = get_available_configs()
-        lv = self.query_one("#config_list", ListView)
-        lv.clear()
-        
+        scroll = self.query_one("#config_list_container", VerticalScroll)
+        empty_label = self.query_one("#config_empty_label", Label)
+
+        # Remove all existing ConfigRow widgets (keep the empty label)
+        for child in list(scroll.children):
+            if isinstance(child, ConfigRow):
+                child.remove()
+
         is_standalone = ("." in configs)
         try:
             self.query_one("#btn_new_config", Button).display = not is_standalone
-        except Exception: pass
+        except Exception:
+            pass
+
+        if not configs:
+            empty_label.display = True
+            return configs
+
+        empty_label.display = False
 
         for c in configs:
-            label = c
             if c == ".":
                 dir_name = Path(".").resolve().name
                 if dir_name.startswith("ReaperFiles-"):
-                    label = dir_name[len("ReaperFiles-"):]
+                    display_name = dir_name[len("ReaperFiles-"):]
                 else:
-                    label = dir_name
-            lv.append(ListItem(Label(label), name=c))
+                    display_name = dir_name
+            else:
+                display_name = c
+
+            row = ConfigRow(cfg_name=c, display_name=display_name)
+            scroll.mount(row)
+
         return configs
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        cfg_name = event.item.name
+    def _open_config(self, cfg_name: str) -> None:
+        """Navigate into the selected configuration."""
         if cfg_name == ".":
             cfg_path = Path("reaper_config.yaml")
             dir_name = Path(".").resolve().name
@@ -226,9 +475,80 @@ class ConfigSelectionScreen(Screen):
         else:
             cfg_path = Path(f"ReaperFiles-{cfg_name}") / "reaper_config.yaml"
             display_name = cfg_name
-            
+
         from src.ui.mode_screen import ModeScreen
         self.app.push_screen(ModeScreen(display_name, cfg_path))
+
+    def _delete_config(self, cfg_name: str) -> None:
+        """Scan for extra data, then show appropriate confirmation modal(s)."""
+        data_info = scan_config_data(cfg_name)
+
+        def on_first_confirm(confirmed: bool):
+            if not confirmed:
+                return
+
+            if not data_info:
+                # No extra data — just delete
+                delete_config(cfg_name)
+                self.notify(f"Configuration '{cfg_name}' deleted.", severity="information")
+                self.refresh_configs()
+                return
+
+            # Extra data exists — ask what to do with it
+            def on_data_choice(choice: str):
+                if choice == "open":
+                    # Open the folder for the user to back up
+                    import subprocess, sys
+                    folder = Path(f"ReaperFiles-{cfg_name}").resolve()
+                    try:
+                        if sys.platform == "darwin":
+                            subprocess.Popen(["open", str(folder)])
+                        elif sys.platform == "win32":
+                            subprocess.Popen(["explorer", str(folder)])
+                        else:
+                            subprocess.Popen(["xdg-open", str(folder)])
+                        self.notify(f"Opened {folder.name} in file manager.", severity="information")
+                    except Exception:
+                        self.notify(f"Could not open folder: {folder}", severity="warning")
+                    # Re-show the data modal so the user can decide after backing up
+                    self._delete_config(cfg_name)
+                elif choice == "delete_all":
+                    # Re-evaluate: did the user move the files already?
+                    still_there = scan_config_data(cfg_name)
+                    if still_there:
+                        self.notify(
+                            f"Deleting config '{cfg_name}' and all data files.",
+                            severity="information"
+                        )
+                    delete_config(cfg_name)
+                    self.notify(f"Configuration '{cfg_name}' deleted.", severity="information")
+                    self.refresh_configs()
+                # "cancel" → do nothing
+
+            self.app.push_screen(DeleteDataModal(cfg_name, data_info), on_data_choice)
+
+        self.app.push_screen(DeleteConfigModal(cfg_name, has_data=bool(data_info)), on_first_confirm)
+
+    def _clone_config(self, cfg_name: str) -> None:
+        """Show clone modal, then clone the config with a new name and optional platform change."""
+        # Load the source config to get its current platform
+        cfg_path = Path(f"ReaperFiles-{cfg_name}") / "reaper_config.yaml"
+        source_config = load_config(cfg_path)
+        source_platform = source_config.source_platform or "discord"
+
+        def on_clone(result):
+            if result is None:
+                return
+            new_name, new_platform = result
+
+            cloned = clone_config(cfg_name, new_name, new_platform)
+            if cloned:
+                self.notify(f"Configuration cloned to '{new_name}'.", severity="information")
+                self.refresh_configs()
+            else:
+                self.notify(f"Failed to clone configuration '{cfg_name}'.", severity="error")
+
+        self.app.push_screen(CloneConfigModal(cfg_name, source_platform), on_clone)
 
     def action_new_config(self) -> None:
         def cb(result):
@@ -236,7 +556,7 @@ class ConfigSelectionScreen(Screen):
                 return
             name, source_platform = result
 
-            create_new_config(name)
+            create_new_config(name, source_platform=source_platform)
             self.refresh_configs()
             # Immediately open the ConfigScreen for the new config
             cfg_path = Path(f"ReaperFiles-{name}") / "reaper_config.yaml"
@@ -247,20 +567,35 @@ class ConfigSelectionScreen(Screen):
                     # Navigate into the ModeScreen
                     from src.ui.mode_screen import ModeScreen
                     self.app.push_screen(ModeScreen(name, cfg_path))
+                else:
+                    # User exited without saving — clean up the newly created config
+                    delete_config(name)
+                    self.refresh_configs()
 
             self.app.push_screen(
-                ConfigScreen(name, cfg_path, source_platform=source_platform),
+                ConfigScreen(name, cfg_path, source_platform=source_platform, is_new_config=True),
                 on_config_saved
                 )
-            
+
         self.app.push_screen(NewConfigModal(), cb)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "btn_new_config":
+        bid = event.button.id or ""
+
+        if bid == "btn_new_config":
             self.action_new_config()
-        elif event.button.id == "btn_about":
+        elif bid.startswith("open_cfg__"):
+            cfg_name = bid[len("open_cfg__"):]
+            self._open_config(cfg_name)
+        elif bid.startswith("delete_cfg__"):
+            cfg_name = bid[len("delete_cfg__"):]
+            self._delete_config(cfg_name)
+        elif bid.startswith("clone_cfg__"):
+            cfg_name = bid[len("clone_cfg__"):]
+            self._clone_config(cfg_name)
+        elif bid == "btn_about":
             self.app.push_screen(FirstInfoModal())
-        elif event.button.id == "btn_update_app":
+        elif bid == "btn_update_app":
             if hasattr(self, 'update_info') and self.update_info:
                 from src.ui.modals import UpdateModalScreen, UpdateProgressScreen
                 def on_update_confirm(do_update):
@@ -268,13 +603,13 @@ class ConfigSelectionScreen(Screen):
                         self.app.push_screen(UpdateProgressScreen(asset_url=self.update_info['asset_url']))
                 self.app.push_screen(
                     UpdateModalScreen(
-                        version=self.update_info['version'], 
-                        notes=self.update_info['body'], 
+                        version=self.update_info['version'],
+                        notes=self.update_info['body'],
                         prerelease=self.update_info.get('prerelease', False)
                     ),
                     on_update_confirm
                 )
-        elif event.button.id == "btn_exit":
+        elif bid == "btn_exit":
             self.app.exit()
 
 
@@ -384,18 +719,21 @@ class ConfigScreen(Screen):
         },
     }
 
-    def __init__(self, cfg_name: str, cfg_path: Path, source_platform: str = None, *args, **kwargs):
+    def __init__(self, cfg_name: str, cfg_path: Path, source_platform: str = None, is_new_config: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
         self.cfg_name = cfg_name
         self.cfg_path = cfg_path
+        self.is_new_config = is_new_config
         self.config = load_config(cfg_path)
         
-        if not self.config.source_platform:
+        # For brand-new configs (file was just created), use the explicitly chosen platform.
+        # Otherwise, honour what is already saved in the config file.
+        if is_new_config and source_platform:
             self.source_platform = source_platform
             self.config.source_platform = source_platform
-        else: 
-            source_platform = self.config.source_platform
+        else:
+            self.source_platform = self.config.source_platform or source_platform or "discord"
 
         if not self.config.source_api_url:
             self.api_url = ""
@@ -403,12 +741,19 @@ class ConfigScreen(Screen):
         else:
             self.config.source_api_url = self.config.source_api_url.strip() or ""
 
+    def action_go_back(self) -> None:
+        """Handle Escape key — dismiss without saving."""
+        self.dismiss(False)
+
     def _validate_api_url(self, input_widget: Input, label_id: str, base_text: str, platform: str) -> None:
         """Update the label to show a warning if the URL doesn't end with /api."""
         url = input_widget.value.strip()
         label = self.query_one(f"#{label_id}", Label)
         if platform is not None and platform == "fluxer":
-            if url and not url.endswith("/api"):
+            if url and not url.startswith("http"):
+                label.update(f"{base_text} ⚠️ must start with http:// or https://")
+                label.add_class("api_warning")
+            elif url and not url.endswith("/api"):
                 label.update(f"{base_text} ⚠️ must end with /api")
                 label.add_class("api_warning")
             else:
@@ -431,8 +776,8 @@ class ConfigScreen(Screen):
 
                 with VerticalScroll(id="cfg_scroll"):
                     # -- Source Platform (Discord or Fluxer) --
-                    yield Label(f"[{self.config.source_platform.capitalize()}](Source Platform)", classes="section_title")
-                    if self.config.source_platform == "discord":
+                    yield Label(f"[{self.source_platform.capitalize()}](Source Platform)", classes="section_title")
+                    if self.source_platform == "discord":
                         # ── Discord ──────────────────────────────────────────────
                         yield Label("Discord Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
@@ -450,7 +795,7 @@ class ConfigScreen(Screen):
                             id="inp_source_server",
                             prompt="Validate Bot Token"
                         )
-                    elif self.config.source_platform == "fluxer":
+                    elif self.source_platform == "fluxer":
                         # ── Fluxer ───────────────────────────────────────────────
                         with Horizontal(id="info_row", classes="fetch_row"):
                             yield Label("Fluxer Bot Token:", classes="field_label")
@@ -759,7 +1104,7 @@ class ConfigScreen(Screen):
             self.run_worker(self._do_fetch("target", platform, token, api_url, initial=False))
 
         elif event.button.id == "btn_back":
-            self.app.pop_screen()
+            self.dismiss(False)
 
         elif event.button.id == "btn_save":
             self._collect_and_save()
