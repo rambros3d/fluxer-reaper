@@ -24,6 +24,8 @@ class DiscordReader:
     CHANNEL_TYPE_NEWS = discord.ChannelType.news
     CHANNEL_TYPE_FORUM = discord.ChannelType.forum
 
+    PLATFORM_NAME = "discord"
+    
     @staticmethod
     def find_item(iterable, **attrs):
         """Find first item in iterable matching all attrs. Drop-in for discord.utils.get()."""

@@ -3,15 +3,18 @@ import io
 import logging
 from typing import Optional, List, Dict, Any
 from fluxer import HTTPClient, Bot, Unauthorized, Webhook, Forbidden, File
+from src.core.configuration import AppConfig
+
 
 logger = logging.getLogger(__name__)
 
 class FluxerWriter:
-    def __init__(self, token: str, community_id: str, api_url: str = "default"):
+    def __init__(self, token: str, community_id: str, config: AppConfig, api_url: str = "default"):
         self.token = token
         self.community_id = str(community_id)
         self.api_url = api_url
         self.bot: Optional[Bot] = None
+        self.config = config
         self._bot_task: Optional[asyncio.Task] = None
         self._ready_event = asyncio.Event()
         self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
@@ -315,7 +318,7 @@ class FluxerWriter:
                     msg = await asyncio.wait_for(
                         webhook.send(
                             content=final_content,
-                            username=f"{author_name} (discord)",
+                            username=f"{author_name} ({self.config.source_platform})",
                             avatar_url=author_avatar_url,
                             files=fluxer_files,
                             embeds=normalized_embeds,

@@ -589,13 +589,14 @@ class ChannelPickerScreen(Screen[tuple]):
     #chanpick_buttons Button { width: 1fr; margin: 0 1; }
     """
 
-    def __init__(self, src_channels: list, src_cat_map: dict, tgt_channels: list, tgt_cat_map: dict, tgt_name: str = "Fluxer", all_tgt_channels: list | None = None):
+    def __init__(self, src_channels: list, src_cat_map: dict, tgt_channels: list, tgt_cat_map: dict, tgt_name: str = "Fluxer", src_name: str = "Discord", all_tgt_channels: list | None = None):
         super().__init__()
         self.src_channels = src_channels
         self.src_cat_map = src_cat_map
         self.tgt_channels = tgt_channels
         self.tgt_cat_map = tgt_cat_map
         self.tgt_name = tgt_name
+        self.src_name = src_name
         self.all_tgt_channels = all_tgt_channels or tgt_channels
 
     def _render_pane(self, channels, categories, pane_id, prefix):
@@ -639,7 +640,7 @@ class ChannelPickerScreen(Screen[tuple]):
                 yield Label("Select Source and Target Channels", id="chanpick_title")
                 with Horizontal(id="chanpick_split"):
                     with Vertical():
-                        yield Label("Source: Discord", classes="pane_title")
+                        yield Label(f"Source: {self.src_name}", classes="pane_title")
                         yield from self._render_pane(self.src_channels, self.src_cat_map, "pane_src", "src")
                     
                     with Vertical():

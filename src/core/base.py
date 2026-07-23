@@ -64,12 +64,12 @@ class MigrationContext:
             self.writer = StoatWriter(token=token, community_id=community_id, api_url=api_url)
             # Keep aliases for backward compatibility with shuttle_ops
             self.stoat_writer = self.writer
-            self.fluxer_writer = FluxerWriter(token="", community_id="", api_url="default")
+            self.fluxer_writer = FluxerWriter(token="", community_id="", config=self.config, api_url="default")
         else:  # fluxer
             token = config.fluxer_bot_token or ""
             community_id = config.fluxer_server_id or ""
             api_url = config.fluxer_api_url or "default"
-            self.writer = FluxerWriter(token=token, community_id=community_id, api_url=api_url)
+            self.writer = FluxerWriter(token=token, community_id=community_id, config=self.config, api_url=api_url)
             self.fluxer_writer = self.writer
             self.stoat_writer = StoatWriter(token="", community_id="", api_url="default")
         

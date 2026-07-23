@@ -1,7 +1,8 @@
 # src/fluxer/reader.py
 """
 Fluxer source reader – reads guild metadata, roles, channels, emojis,
-stickers, and permission overwrites from a Fluxer community via its HTTP API.
+stickers, messages, and permission overwrites from a Fluxer community via
+its HTTP API.
 
 Currently supports:
   • Server name / icon / banner ("Sync Server Settings")
@@ -9,17 +10,15 @@ Currently supports:
   • Server structure (channels & categories)
   • Channel & category permission overwrites
   • Custom emoji & sticker fetching and download
-
-Not yet implemented here:
   • Message history migration
 """
 
 import asyncio
 import logging
 import re
-from typing import Dict, Any, Optional, List, Set
+from typing import AsyncGenerator, Dict, Any, Optional, List, Set
 
-from fluxer import HTTPClient, Guild, Channel, Role
+from fluxer import HTTPClient, Guild, Channel, Role, Message
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +127,109 @@ class StickerWrapper:
 
 
 # ---------------------------------------------------------------------------
+# FluxerMessageWrapper – bridges fluxer Message ↔ Discord-compatible attrs
+# ---------------------------------------------------------------------------
+
+class _MessageFlags:
+    """Thin wrapper so ``msg.flags.forwarded`` and ``msg.flags.value`` work."""
+    __slots__ = ("value",)
+
+    def __init__(self, value: int = 0):
+        self.value = value
+
+    @property
+    def forwarded(self) -> bool:
+        # Discord bit 5 (32); Fluxer likely uses the same bit for forwarded
+        return bool(self.value & (1 << 5))
+
+
+class _MessageReference:
+    """Thin wrapper so ``msg.reference.message_id`` works."""
+    __slots__ = ("message_id", "channel_id", "guild_id")
+
+    def __init__(self, data: Optional[Dict[str, Any]]):
+        if data:
+            self.message_id = data.get("message_id")
+            self.channel_id = data.get("channel_id")
+            self.guild_id = data.get("guild_id")
+        else:
+            self.message_id = None
+            self.channel_id = None
+            self.guild_id = None
+
+
+class _MentionRole:
+    """Thin wrapper so ``msg.role_mentions[i].id`` works."""
+    __slots__ = ("id",)
+    def __init__(self, role_id: str):
+        self.id = role_id
+
+
+class _MentionChannel:
+    """Thin wrapper so ``msg.channel_mentions[i].id`` / ``.name`` / ``.type`` work."""
+    __slots__ = ("id", "name", "type")
+    def __init__(self, data: Dict[str, Any]):
+        self.id = data.get("id")
+        self.name = data.get("name")
+        self.type = data.get("type")
+
+
+class FluxerMessageWrapper:
+    """Wraps a ``fluxer.Message`` to add Discord‑compatible attributes
+    (``.type``, ``.reference``, ``.flags``, ``.stickers``, etc.) that
+    the migration code expects.
+
+    All other attribute accesses are delegated to the inner Message.
+    """
+
+    __slots__ = ("_msg", "_data", "type", "reference", "flags",
+                 "stickers", "mention_everyone", "mention_roles",
+                 "role_mentions", "channel_mentions",
+                 "tts", "webhook_id", "message_snapshots", "position",
+                 "jump_url")
+
+    def __init__(self, msg: Message, raw_data: Dict[str, Any],
+                 web_base: str = "https://fluxer.app",
+                 guild_id: str = ""):
+        self._msg = msg
+        self._data = raw_data
+
+        # Critical Discord-compatible attributes from the raw API response
+        self.type: int = raw_data.get("type", 0)
+        self.reference: Optional[_MessageReference] = _MessageReference(
+            raw_data.get("message_reference")
+        )
+        self.flags: _MessageFlags = _MessageFlags(raw_data.get("flags", 0))
+        self.stickers: List[Dict[str, Any]] = raw_data.get("stickers", [])
+        self.mention_everyone: bool = raw_data.get("mention_everyone", False)
+        self.mention_roles: List[str] = raw_data.get("mention_roles", [])
+        self.tts: bool = raw_data.get("tts", False)
+        self.webhook_id: Optional[str] = raw_data.get("webhook_id")
+        self.message_snapshots: List[Dict[str, Any]] = raw_data.get("message_snapshots", [])
+        self.position: Optional[int] = raw_data.get("position")
+
+        # Discord-compatible role / channel mention wrappers
+        self.role_mentions: List[_MentionRole] = [
+            _MentionRole(rid) for rid in raw_data.get("mention_roles", [])
+        ]
+        self.channel_mentions: List[_MentionChannel] = [
+            _MentionChannel(ch) for ch in raw_data.get("mention_channels", [])
+        ]
+
+        # Construct jump URL (web app link to this message)
+        ch_id = raw_data.get("channel_id", "")
+        msg_id = raw_data.get("id", "")
+        self.jump_url: str = f"{web_base}/channels/{guild_id}/{ch_id}/{msg_id}"
+
+    def __getattr__(self, name: str):
+        # Delegate everything else to the inner fluxer Message
+        return getattr(self._msg, name)
+
+    def __repr__(self) -> str:
+        return f"<FluxerMsg id={self._msg.id} type={self.type}>"
+
+
+# ---------------------------------------------------------------------------
 # FluxerChannelWrapper
 # ---------------------------------------------------------------------------
 
@@ -184,6 +286,18 @@ class FluxerReader:
     CHANNEL_TYPE_NEWS     = 5
     CHANNEL_TYPE_FORUM    = 15
 
+    # -- Message type constants (mirror Discord's for compatibility) ---------
+    MESSAGE_TYPE_DEFAULT                    = 0
+    MESSAGE_TYPE_REPLY                      = 19
+    MESSAGE_TYPE_THREAD_STARTER             = 21
+    MESSAGE_TYPE_FORWARD                    = 22   # Fluxer/Discord forward type
+    MESSAGE_TYPE_CHAT_INPUT_COMMAND         = 20
+    MESSAGE_TYPE_CONTEXT_MENU_COMMAND       = 23
+    MESSAGE_TYPE_POLL_RESULT                = 46
+    MESSAGE_TYPE_AUTO_MODERATION_ACTION     = 24
+
+    PLATFORM_NAME = "fluxer"
+
     def __init__(self, token: str, server_id: str, api_url: str = "default"):
         self.token = token
         # Fluxer terminology is "community", but the constructor parameter is
@@ -221,6 +335,18 @@ class FluxerReader:
     def asset_base_url(self) -> str:
         """Base URL for constructing asset (CDN) URLs (icons, emojis, etc.)."""
         return self._cdn_base
+
+    @property
+    def web_base_url(self) -> str:
+        """Base URL for the Fluxer web app (used for jump URLs).
+
+        Derived from the API base by stripping any ``/api/…`` path.
+        """
+        if "api.fluxer.app" in self._api_base:
+            return "https://fluxer.app"
+        # Self-hosted: scheme + host only (no /api path)
+        m = re.match(r"(https?://[^/]+)", self._api_base)
+        return m.group(1) if m else self._api_base
 
     # -- Lifecycle -----------------------------------------------------------
 
@@ -402,21 +528,53 @@ class FluxerReader:
     #  Asset download helpers
     # ========================================================================
 
-    async def download_asset(self, asset_url: str) -> bytes:
-        """Download an arbitrary asset (icon, banner, etc.) from a URL.
+    async def download_asset(self, asset: str) -> bytes:
+        """Download a guild asset (icon, banner) from a URL or raw hash.
+
+        Accepts two forms:
+        1. A full URL (e.g. ``https://fluxerusercontent.com/icons/...``)
+        2. A raw asset hash string (e.g. ``"a_a5f0cb3d"``) – in this case
+           the hash is matched against the cached guild data to determine
+           whether it belongs to an icon or banner, and the correct CDN
+           URL is composed automatically.
 
         Returns empty ``bytes`` on any failure.
         """
-        if not asset_url or not self._http:
+        if not asset or not self._http:
             return b""
+
+        # Already a full URL – download directly
+        if asset.startswith(("http://", "https://")):
+            try:
+                async with self._http._session.get(asset) as resp:
+                    if resp.status == 200:
+                        return await resp.read()
+            except Exception:
+                logger.debug("Failed to download asset: %s", asset, exc_info=True)
+            return b""
+
+        # Raw hash string – compose a CDN URL
+        await self._ensure_http()
+        data = self.guild_data or {}
+
+        # Determine whether this hash is the icon or the banner
+        if asset == data.get("icon"):
+            kind = "icons"
+        elif asset == data.get("banner"):
+            kind = "banners"
+        else:
+            # Unknown hash – try icon first (most common case)
+            kind = "icons"
+
+        ext = "gif" if asset.startswith("a_") else "png"
+        url = f"{self._cdn_base}/{kind}/{self.community_id}/{asset}.{ext}"
+
         try:
-            async with self._http._session.get(asset_url) as resp:
+            async with self._http._session.get(url) as resp:
                 if resp.status == 200:
                     return await resp.read()
         except Exception:
-            logger.debug(
-                "Failed to download asset: %s", asset_url, exc_info=True
-            )
+            logger.debug("Failed to download asset: %s", url, exc_info=True)
         return b""
 
     async def download_emoji(self, emoji) -> bytes:
@@ -580,6 +738,143 @@ class FluxerReader:
         else:
             items = []
         return [StickerWrapper(s, cdn_base=self._cdn_base) for s in items]
+
+    # ========================================================================
+    #  Messages
+    # ========================================================================
+
+    async def get_message(
+        self, channel_id: str, message_id: str
+    ) -> Optional[FluxerMessageWrapper]:
+        """Fetch a single message via ``GET /channels/{channel_id}/messages/{message_id}``.
+
+        Returns a :class:`FluxerMessageWrapper` with Discord-compatible
+        attributes (``.type``, ``.reference``, ``.flags``, ``.stickers``,
+        etc.), or ``None`` on failure.
+        """
+        await self._ensure_http()
+        try:
+            raw = await self._http.get_message(channel_id, message_id)
+            msg = Message.from_data(raw)
+            return FluxerMessageWrapper(msg, raw,
+                                         web_base=self.web_base_url,
+                                         guild_id=self.community_id)
+        except Exception:
+            logger.debug(
+                "Failed to fetch message %s in channel %s",
+                message_id, channel_id, exc_info=True,
+            )
+            return None
+
+    async def get_first_message(
+        self, channel_id: str
+    ) -> Optional[FluxerMessageWrapper]:
+        """Return the oldest message in *channel_id*."""
+        await self._ensure_http()
+        try:
+            msgs = await self._http.get_messages(
+                channel_id, limit=1
+            )
+            if msgs:
+                raw = msgs[0]
+                msg = Message.from_data(raw)
+                return FluxerMessageWrapper(msg, raw,
+                                             web_base=self.web_base_url,
+                                             guild_id=self.community_id)
+        except Exception:
+            logger.debug(
+                "Failed to fetch first message in channel %s",
+                channel_id, exc_info=True,
+            )
+        return None
+
+    async def fetch_message_history(
+        self,
+        channel_id: str,
+        limit: Optional[int] = None,
+        after_id: Optional[str] = None,
+        inclusive: bool = False,
+    ) -> AsyncGenerator[FluxerMessageWrapper, None]:
+        """Yield messages from oldest to newest with automatic pagination.
+
+        Uses ``GET /channels/{channel_id}/messages`` with ``limit``,
+        ``after`` parameters as defined in the OpenAPI spec.
+
+        Parameters
+        ----------
+        channel_id : str
+            The channel to fetch messages from.
+        limit : int, optional
+            Maximum total messages to yield.  ``None`` means fetch all.
+        after_id : str, optional
+            Snowflake ID — only messages with ID > *after_id* are returned
+            (exclusive).  When *inclusive* is ``True``, the message with
+            ``id == after_id`` is included as the first result.
+        inclusive : bool
+            If ``True`` and *after_id* is set, the message with that ID is
+            the first one yielded (the caller must have already processed it
+            — this just prevents a gap).
+        """
+        await self._ensure_http()
+        fetched = 0
+        last_id: Optional[str] = after_id
+
+        while True:
+            to_fetch = 100
+            if limit is not None:
+                to_fetch = min(to_fetch, limit - fetched)
+                if to_fetch <= 0:
+                    return
+
+            params: Dict[str, Any] = {"limit": to_fetch}
+            if last_id:
+                params["after"] = last_id
+
+            try:
+                msgs_data = await self._http.get_messages(
+                    channel_id, **params
+                )
+            except Exception as exc:
+                logger.error(
+                    "Error fetching messages for channel %s: %s",
+                    channel_id, exc,
+                )
+                break
+
+            if not msgs_data:
+                break
+
+            # The API returns messages newest-first; reverse for oldest-first
+            msgs_data = list(reversed(msgs_data))
+
+            for raw in msgs_data:
+                msg = Message.from_data(raw)
+                wrapped = FluxerMessageWrapper(msg, raw,
+                                                web_base=self.web_base_url,
+                                                guild_id=self.community_id)
+                yield wrapped
+                fetched += 1
+                last_id = raw.get("id")
+                if limit is not None and fetched >= limit:
+                    return
+
+            if len(msgs_data) < to_fetch:
+                break
+
+    async def download_attachment(self, attachment: Any) -> bytes:
+        """Download a message attachment.
+
+        Accepts a fluxer ``Attachment`` object (extracts ``.url``) or a raw
+        URL string.  Returns empty ``bytes`` on any failure.
+        """
+        # Fluxer Attachment object → extract URL
+        url = getattr(attachment, "url", None)
+        if url:
+            return await self.download_asset(url)
+        # Raw URL string
+        if isinstance(attachment, str):
+            return await self.download_asset(attachment)
+        return b""
 
     # ========================================================================
     #  Stub / placeholder methods

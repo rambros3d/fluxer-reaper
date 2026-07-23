@@ -308,7 +308,16 @@ async def _process_and_send_message(
         author_avatar_url = None
     else:
         author_name = msg.author.display_name
-        author_avatar_url = msg.author.avatar.url if hasattr(msg.author, 'avatar') and msg.author.avatar else None
+        # Discord User: .avatar is an Asset with .url
+        # Fluxer User:  .avatar_hash is a plain string — compose CDN URL
+        if hasattr(msg.author, 'avatar') and msg.author.avatar:
+            author_avatar_url = msg.author.avatar.url
+        elif hasattr(msg.author, 'avatar_hash') and msg.author.avatar_hash:
+            cdn = getattr(context.source_reader, 'asset_base_url', 'https://fluxerusercontent.com')
+            ext = "gif" if msg.author.avatar_hash.startswith("a_") else "png"
+            author_avatar_url = f"{cdn}/avatars/{msg.author.id}/{msg.author.avatar_hash}.{ext}"
+        else:
+            author_avatar_url = None
 
     fluxer_msg_id = await context.fluxer_writer.send_message(
         channel_id=target_channel_id,
