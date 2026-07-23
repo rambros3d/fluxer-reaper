@@ -1,14 +1,15 @@
 # PR: 
-Among many other things, this PR has currently: 
+Among many other things, this vibe-coded to hell & back PR has currently: 
 - Changed/Added UI/UX to accommodate new features & de-hardcode Discord as a source
-- Validate between Fluxer to Fluxer
-   - From Self-Hosted to Self-Hosted/Official is untested. Offical to self-hosted has been my testing so far
+   - Config Selection screen received a makeover & ways to return to it.
+- Validation between Fluxer to Fluxer
+   - From Self-Hosted to Self-Hosted/Official hasn't been fully tested. Offical to self-hosted has been most of my testing so far. I would assume it works though.
 - Cloning: 
    - Complete clone of Server Template
    - Partial Server Settings clone
       - Sticker cloning is not cooperating
 - Direct Migration mode 
-   - Migrate messages Fluxer-Fluxer 
+   - Migrate messages Fluxer-Fluxer between chosen channels
       - Not battle-tested.
 
 # DiscoReaper

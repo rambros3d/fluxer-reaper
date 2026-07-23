@@ -503,11 +503,12 @@ class OperationPane(Container):
             if self.config.source_platform != "discord": 
                 try:
                     import asyncio
-                    res = await asyncio.wait_for(self.engine.writer.validate(), timeout=10.0)
+                    res = await asyncio.wait_for(self.engine.source_reader.validate(), timeout=10.0)
                     self.validation_results["source_token"] = res.get("token", False)
                     self.validation_results["source_bot_name"] = res.get("bot_name")
-                    self.validation_results["source_server"] = res.get("community", False)
-                    self.validation_results["source_server_name"] = res.get("community_name")
+                    self.validation_results["source_server"] = res.get("server", False)
+                    self.validation_results["source_server_name"] = res.get("server_name")
+                    self.validation_results["discord_intents"] = res.get("intents", {})
                     self.validation_results["source_permissions"] = res.get("permissions", {})
                     self.validation_results["source_error"] = res.get("error_reason")
                 except asyncio.TimeoutError:
@@ -816,12 +817,20 @@ class OperationPane(Container):
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
                 if src_server:
+                    # Fetch live counts from the reader (works for both Discord and Fluxer)
+                    try:
+                        src_roles = await self.engine.source_reader.get_roles()
+                        src_emojis = await self.engine.source_reader.get_emojis()
+                        src_channels = await self.engine.source_reader.get_channels()
+                    except Exception:
+                        src_roles, src_emojis, src_channels = [], [], []
+
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
-                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
-                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_channels)}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
@@ -940,12 +949,20 @@ class OperationPane(Container):
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
                 if src_server:
+                    # Fetch live counts from the reader (works for both Discord and Fluxer)
+                    try:
+                        src_roles = await self.engine.source_reader.get_roles()
+                        src_emojis = await self.engine.source_reader.get_emojis()
+                        src_channels = await self.engine.source_reader.get_channels()
+                    except Exception:
+                        src_roles, src_emojis, src_channels = [], [], []
+
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
-                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
-                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_channels)}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
