@@ -175,7 +175,13 @@ async def _process_and_send_message(
     """
     # 1. Formatting
     content = msg.content or ""
-    
+
+    # Handle system join messages (type 7) — generate friendly content
+    if msg.type == getattr(context.source_reader, 'MESSAGE_TYPE_GUILD_MEMBER_JOIN', 7) and not content:
+        display_name = getattr(msg.author, 'display_name', 'Someone')
+        ts = int(msg.created_at.timestamp())
+        content = f"**{display_name}** joined the server.\n-# <t:{ts}:D>"
+
     # Check for forwarded flag
     is_forwarded = False
     if hasattr(msg.flags, 'forwarded'):
@@ -319,17 +325,25 @@ async def _process_and_send_message(
         else:
             author_avatar_url = None
 
-    fluxer_msg_id = await context.fluxer_writer.send_message(
-        channel_id=target_channel_id,
-        author_name=author_name,
-        author_avatar_url=author_avatar_url,
-        content=content,
-        timestamp=int(msg.created_at.timestamp()),
-        files=files if files else None,
-        reply_to_message_id=reply_to_fluxer_id,
-        is_forwarded=is_forwarded,
-        embeds=msg.embeds
-    )
+    # System join messages — post directly as the bot, no webhook impersonation
+    if msg.type == getattr(context.source_reader, 'MESSAGE_TYPE_GUILD_MEMBER_JOIN', 7):
+        fluxer_msg_id = await context.fluxer_writer.send_marker(
+            channel_id=target_channel_id,
+            content=content,
+            reply_to_message_id=reply_to_fluxer_id,
+        )
+    else:
+        fluxer_msg_id = await context.fluxer_writer.send_message(
+            channel_id=target_channel_id,
+            author_name=author_name,
+            author_avatar_url=author_avatar_url,
+            content=content,
+            timestamp=int(msg.created_at.timestamp()),
+            files=files if files else None,
+            reply_to_message_id=reply_to_fluxer_id,
+            is_forwarded=is_forwarded,
+            embeds=msg.embeds
+        )
 
     if fluxer_msg_id:
         if thread_id:
@@ -391,7 +405,8 @@ async def analyze_migration(context: MigrationContext, source_channel_id: int, a
             context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
             context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
             context.source_reader.MESSAGE_TYPE_POLL_RESULT,
-            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION,
+            context.source_reader.MESSAGE_TYPE_GUILD_MEMBER_JOIN,
         ]:
             logger.debug(f"Skipping message {msg.id} in analyze: type={msg.type} (not an allowed type)")
             continue
@@ -450,7 +465,9 @@ async def migrate_messages(
         "last_message_author": ""
     }
     
-    logger.info(f"Starting message migration: Discord #{source_channel_id} -> Fluxer #{target_channel_id}")
+    source_label = getattr(getattr(context, 'config', None), 'source_platform', 'discord').capitalize()
+    target_label = getattr(getattr(context, 'config', None), 'target_platform', 'fluxer').capitalize()
+    logger.info(f"Starting message migration: {source_label} #{source_channel_id} -> {target_label} #{target_channel_id}")
     if after_message_id:
         logger.info(f"Starting migration of {source_channel_id} (inclusive={inclusive})...")
     
@@ -545,7 +562,8 @@ async def migrate_messages(
                 context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
                 context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
                 context.source_reader.MESSAGE_TYPE_POLL_RESULT,
-                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION,
+                context.source_reader.MESSAGE_TYPE_GUILD_MEMBER_JOIN,
             ]:
                 # If we are skipping the parent, we STILL need to check for a thread!
                 if hasattr(msg, 'thread') and msg.thread:
@@ -840,7 +858,8 @@ async def analyze_global_migration(context: MigrationContext, after_message_id: 
             context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
             context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
             context.source_reader.MESSAGE_TYPE_POLL_RESULT,
-            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+            context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION,
+            context.source_reader.MESSAGE_TYPE_GUILD_MEMBER_JOIN,
         ]:
             continue
             
@@ -899,7 +918,8 @@ async def migrate_global_messages(
                 context.source_reader.MESSAGE_TYPE_CHAT_INPUT_COMMAND,
                 context.source_reader.MESSAGE_TYPE_CONTEXT_MENU_COMMAND,
                 context.source_reader.MESSAGE_TYPE_POLL_RESULT,
-                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION
+                context.source_reader.MESSAGE_TYPE_AUTO_MODERATION_ACTION,
+                context.source_reader.MESSAGE_TYPE_GUILD_MEMBER_JOIN,
             ]:
                 continue
                 

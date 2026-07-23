@@ -14,6 +14,7 @@ class DiscordReader:
     MESSAGE_TYPE_FORWARD = getattr(discord.MessageType, 'forward', 100)
     MESSAGE_TYPE_POLL_RESULT = getattr(discord.MessageType, 'poll_result', 46)
     MESSAGE_TYPE_AUTO_MODERATION_ACTION = getattr(discord.MessageType, 'auto_moderation_action', 24)
+    MESSAGE_TYPE_GUILD_MEMBER_JOIN = getattr(discord.MessageType, 'new_member', 7)
     
     # Exceptions
     Forbidden = discord.Forbidden
@@ -25,7 +26,7 @@ class DiscordReader:
     CHANNEL_TYPE_FORUM = discord.ChannelType.forum
 
     PLATFORM_NAME = "discord"
-    
+
     @staticmethod
     def find_item(iterable, **attrs):
         """Find first item in iterable matching all attrs. Drop-in for discord.utils.get()."""

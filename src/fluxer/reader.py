@@ -295,6 +295,7 @@ class FluxerReader:
     MESSAGE_TYPE_CONTEXT_MENU_COMMAND       = 23
     MESSAGE_TYPE_POLL_RESULT                = 46
     MESSAGE_TYPE_AUTO_MODERATION_ACTION     = 24
+    MESSAGE_TYPE_GUILD_MEMBER_JOIN          = 7
 
     PLATFORM_NAME = "fluxer"
 
@@ -797,8 +798,10 @@ class FluxerReader:
     ) -> AsyncGenerator[FluxerMessageWrapper, None]:
         """Yield messages from oldest to newest with automatic pagination.
 
-        Uses ``GET /channels/{channel_id}/messages`` with ``limit``,
-        ``after`` parameters as defined in the OpenAPI spec.
+        The Fluxer API returns messages newest-first and supports ``before``
+        for backwards pagination.  We collect **all** batches by walking
+        backwards from the newest message, then reverse the full list to
+        yield oldest-first -- No alternative for newest-first API.
 
         Parameters
         ----------
@@ -807,33 +810,33 @@ class FluxerReader:
         limit : int, optional
             Maximum total messages to yield.  ``None`` means fetch all.
         after_id : str, optional
-            Snowflake ID — only messages with ID > *after_id* are returned
+            Snowflake ID — only messages with ID > *after_id* are yielded
             (exclusive).  When *inclusive* is ``True``, the message with
             ``id == after_id`` is included as the first result.
         inclusive : bool
             If ``True`` and *after_id* is set, the message with that ID is
-            the first one yielded (the caller must have already processed it
-            — this just prevents a gap).
+            the first one yielded.
         """
         await self._ensure_http()
-        fetched = 0
-        last_id: Optional[str] = after_id
+
+        # ── Phase 1: collect all batches (newest → oldest) ──────────────
+        all_raw: List[Dict[str, Any]] = []
+        before_id: Optional[str] = None
 
         while True:
             to_fetch = 100
             if limit is not None:
-                to_fetch = min(to_fetch, limit - fetched)
-                if to_fetch <= 0:
-                    return
+                remaining = limit - len(all_raw)
+                if remaining <= 0:
+                    break
+                to_fetch = min(to_fetch, remaining)
 
             params: Dict[str, Any] = {"limit": to_fetch}
-            if last_id:
-                params["after"] = last_id
+            if before_id:
+                params["before"] = before_id
 
             try:
-                msgs_data = await self._http.get_messages(
-                    channel_id, **params
-                )
+                batch = await self._http.get_messages(channel_id, **params)
             except Exception as exc:
                 logger.error(
                     "Error fetching messages for channel %s: %s",
@@ -841,25 +844,43 @@ class FluxerReader:
                 )
                 break
 
-            if not msgs_data:
+            if not batch:
                 break
 
-            # The API returns messages newest-first; reverse for oldest-first
-            msgs_data = list(reversed(msgs_data))
+            all_raw.extend(batch)
 
-            for raw in msgs_data:
-                msg = Message.from_data(raw)
-                wrapped = FluxerMessageWrapper(msg, raw,
-                                                web_base=self.web_base_url,
-                                                guild_id=self.community_id)
-                yield wrapped
-                fetched += 1
-                last_id = raw.get("id")
-                if limit is not None and fetched >= limit:
-                    return
+            # The *last* message in a newest-first batch is the oldest.
+            # Use its ID as ``before`` to fetch the next (older) page.
+            before_id = batch[-1].get("id")
 
-            if len(msgs_data) < to_fetch:
+            if len(batch) < to_fetch:
                 break
+
+        # ── Phase 2: reverse → oldest-first, apply after_id filter ──────
+        all_raw.reverse()
+
+        fetched = 0
+        for raw in all_raw:
+            msg_id = raw.get("id")
+
+            # Honour after_id filter
+            if after_id is not None:
+                if inclusive:
+                    if str(msg_id) < str(after_id):
+                        continue
+                else:
+                    if str(msg_id) <= str(after_id):
+                        continue
+
+            msg = Message.from_data(raw)
+            wrapped = FluxerMessageWrapper(msg, raw,
+                                           web_base=self.web_base_url,
+                                           guild_id=self.community_id)
+            yield wrapped
+            fetched += 1
+
+            if limit is not None and fetched >= limit:
+                return
 
     async def download_attachment(self, attachment: Any) -> bytes:
         """Download a message attachment.

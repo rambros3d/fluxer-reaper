@@ -1,3 +1,16 @@
+# PR: 
+Among many other things, this PR has currently: 
+- Changed/Added UI/UX to accommodate new features & de-hardcode Discord as a source
+- Validate between Fluxer to Fluxer
+   - From Self-Hosted to Self-Hosted/Official is untested. Offical to self-hosted has been my testing so far
+- Cloning: 
+   - Complete clone of Server Template
+   - Partial Server Settings clone
+      - Sticker cloning is not cooperating
+- Direct Migration mode 
+   - Migrate messages Fluxer-Fluxer 
+      - Not battle-tested.
+
 # DiscoReaper
 
 **DiscoReaper** is a powerful tool designed to help you migrate your entire Discord server to Fluxer or Stoat. It clones channels, roles, emojis, permissions, and also your community's full message history.

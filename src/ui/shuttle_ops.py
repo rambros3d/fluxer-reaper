@@ -1230,6 +1230,7 @@ class OperationPane(Container):
 
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
+        source_name = getattr(self.engine.config, "source_platform", "discord").capitalize()
 
         if not modal:
             modal = ProgressScreen(log_level=self.config.log_level)
@@ -1287,7 +1288,7 @@ class OperationPane(Container):
                     if not pick_future.done():
                         pick_future.set_result(result)
 
-                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name, all_tgt_channels=full_f), on_pick)
+                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name, src_name=source_name, all_tgt_channels=full_f), on_pick)
                 res = await pick_future
 
                 if res is None:
@@ -1366,7 +1367,7 @@ class OperationPane(Container):
                 async def update_scan(current_stats):
                     modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
 
-                logger.info(f"Analyzing message history for Discord #{source_channel.name}...")
+                logger.info(f"Analyzing message history for {source_name} #{source_channel.name}...")
                 
                 # Run analysis and wait for confirmation concurrently
                 analysis_task = asyncio.create_task(migrate_mod.analyze_migration(
@@ -1448,7 +1449,7 @@ class OperationPane(Container):
                     i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
                     modal.show_info(m_status, i_status)
                     
-                    modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+                    modal.set_status(f"Awaiting Confirmation to migrate {source_name} [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
                     
                     # Now wait for the choice if not already made
                     choice = await confirm_task
@@ -1562,7 +1563,8 @@ class OperationPane(Container):
             total_attachments = stats_analysis["attachments"]
             
             modal.set_status(f"Migrating: [cyan]#{source_channel.name}[/cyan] → [green]#{target_channel.get('name')}[/green]")
-            modal.write(f"[bold cyan]Migration Started:[/bold cyan] Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+            source_label = getattr(self.engine.config, "source_platform", "discord").capitalize()
+            modal.write(f"[bold cyan]Migration Started:[/bold cyan] {source_label} [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
             modal.write(f"[dim]Stats: {total_messages} messages, {total_threads} threads, {total_attachments} files[/dim]\n")
             
             logger.info(f"Execution started for #{source_channel.name} -> {platform_name} @ {target_channel.get('name')}")
@@ -1614,7 +1616,7 @@ class OperationPane(Container):
                 event_title = "Message Migration"
                 modal.phase_report(event_title, "stopped", show_back=False)
 
-            lines = [f"Migrated Discord #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
+            lines = [f"Migrated {source_label} #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
             lines.append(f"{result['messages']} messages, {result['attachments']} attachments, {result['threads']} threads")
             await log_audit_event(self.engine, event_title, "\n".join(lines))
 

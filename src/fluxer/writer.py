@@ -19,6 +19,7 @@ class FluxerWriter:
         self._ready_event = asyncio.Event()
         self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
         self._channels_cache: List[Dict[str, Any]] | None = None
+        self._channel_last_timestamp: Dict[str, int] = {}  # channel_id -> last message unix timestamp
 
     @staticmethod
     async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
@@ -313,12 +314,20 @@ class FluxerWriter:
             # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
             # So if we have a reply, we MUST use the bot's direct send method.
             if webhook and not reply_to_message_id:
+                # Break visual message grouping if > 7min gap since last message
+                # in this channel (adds invisible zero-width space to username)
+                webhook_username = f"{author_name} ({self.config.source_platform})"
+                last_ts = self._channel_last_timestamp.get(channel_id, 0)
+                if last_ts and abs(timestamp - last_ts) > 420:
+                    webhook_username += "\u200b"
+                self._channel_last_timestamp[channel_id] = timestamp
+
                 logger.debug(f"Fluxer: Sending message via webhook {webhook.id} for user '{author_name}'")
                 try:
                     msg = await asyncio.wait_for(
                         webhook.send(
                             content=final_content,
-                            username=f"{author_name} ({self.config.source_platform})",
+                            username=webhook_username,
                             avatar_url=author_avatar_url,
                             files=fluxer_files,
                             embeds=normalized_embeds,
@@ -334,6 +343,9 @@ class FluxerWriter:
                     return None
             else:
                 # Use bot direct message (supports files and message_reference)
+                # Update timestamp tracking for grouping
+                self._channel_last_timestamp[channel_id] = timestamp
+
                 # We add the author name to the prefix since bot name won't match
                 bot_prefix = f"-# <t:{timestamp}:D>\n"
                 if is_forwarded:
