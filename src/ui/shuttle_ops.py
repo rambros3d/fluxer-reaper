@@ -634,7 +634,6 @@ class OperationPane(Container):
         elif bid == "op_autotest" or bid == "btn_autotest":
             self.run_autotest_sequence()
 
-    # REDESIGN - AUTO TEST LOGIC LIKELY DISCORD BOUND
     @work(exclusive=True)
     async def run_autotest_sequence(self) -> None:
         """Entry point for the AUTO TEST sequence."""
@@ -751,7 +750,6 @@ class OperationPane(Container):
             is_autotest=True
         )
 
-    # REDESIGN - CLONE/SYNC MENUS 
     # ── (1) clone server template (combined) ─────────────────────────────
     def _open_clone_menu(self):
         options = [
@@ -782,7 +780,6 @@ class OperationPane(Container):
         self.app.push_screen(OptionSelectModal("Sync Server Settings", options), on_result)
 
 
-    # REDESIGN - batch workers
     # ── batch workers ──────────────────────────────────────────────────
 
     @work(exclusive=True)
@@ -927,7 +924,6 @@ class OperationPane(Container):
             # Ensure we only close if we actually started them and no other task is inheriting
             await self.engine.close_connections()
 
-    # REDESIGN - sync server settings (combined)
     @work(exclusive=True)
     async def run_batch_sync(self, selections: list[str]) -> None:
         modal = ProgressScreen(log_level=self.config.log_level)
@@ -1187,7 +1183,6 @@ class OperationPane(Container):
 
         return "\n".join(lines)
 
-    # REDESIGN - migration operations
     # ── (5) message migration ─────────────────────────────────────────────
     @work(exclusive=True)
     async def run_migrate_messages(self, modal: ProgressScreen | None = None) -> None:
@@ -1240,7 +1235,6 @@ class OperationPane(Container):
             
         modal.write("\n[bold green]Automated channel migration complete.[/bold green]")
 
-    # REDESIGN - message migration logic
     async def _logic_migrate_messages(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
@@ -1654,7 +1648,6 @@ class OperationPane(Container):
         await self._logic_waterfall_migration(modal)
 
 
-    # REDESIGN - waterfall migration logic
     async def _logic_waterfall_migration(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
             return
@@ -2082,7 +2075,6 @@ class OperationPane(Container):
 
         return preview
 
-    # REDESIGN - matching logic for cloning confirmation
     async def _fetch_clone_preview(self, selections: list[str]) -> dict[str, Any]:
         """Fetches preview data from Discord (source server) for cloning confirmation,
         comparing with existing entities on the target server for presence highlighting."""
@@ -2337,7 +2329,6 @@ class OperationPane(Container):
 
 
 
-    # REDESIGN - backup workers
     # ── backup workers ───────────────────────────────────────────────────
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
@@ -2547,7 +2538,6 @@ class OperationPane(Container):
             self.run_validate()
 
 
-    # REDESIGN - backup sync workers
     @work(exclusive=True)
     async def run_backup_sync(self) -> None:
         modal_prog = ProgressScreen(log_level=self.config.log_level)

@@ -13,7 +13,7 @@ from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.widgets import Header, Footer, Button, ContentSwitcher, Rule
 from textual.screen import Screen
 
-from src.core.configuration import load_config
+from src.core.configuration import load_config, FLUXER_SOURCE_DISABLE_BACKUP_MODES
 from src.ui.shuttle_ops import OperationPane
 from src.ui.widgets import RamDisplay, Footnote
 
@@ -118,6 +118,9 @@ class ModeScreen(Screen):
         yield Header(show_clock=True)
 
         mode = self.config.tool_mode or "backup_only"
+        # Fluxer source only supports direct transfer until backup is implemented
+        if FLUXER_SOURCE_DISABLE_BACKUP_MODES and getattr(self.config, "source_platform", "discord") == "fluxer":
+            mode = "direct_transfer"
 
         with Container(id="main_outer"):
             with Container(id="main_container"):

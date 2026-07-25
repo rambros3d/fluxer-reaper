@@ -3,6 +3,17 @@ import yaml
 from pathlib import Path
 from pydantic import BaseModel, Field
 
+
+# ---------------------------------------------------------------------------
+# Feature flags — toggle these to enable/disable platform-specific behaviour
+# ---------------------------------------------------------------------------
+
+# When True, Fluxer-source configs are restricted to direct-transfer mode
+# only (backup and backup-transfer modes are hidden/disabled).
+# Set to False once backup support for Fluxer sources is implemented.
+FLUXER_SOURCE_DISABLE_BACKUP_MODES = True
+
+
 class AppConfig(BaseModel):
     source_platform: str = Field(default="discord")  # discord | fluxer | none
     source_bot_token: Optional[str] = Field(default=None)  

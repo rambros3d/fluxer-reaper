@@ -16,6 +16,7 @@ from textual.screen import Screen, ModalScreen
 from src.core.configuration import (
     get_available_configs, create_new_config, load_config, save_config,
     delete_config, clone_config, scan_config_data,
+    FLUXER_SOURCE_DISABLE_BACKUP_MODES,
 )
 from src.ui.widgets import RamDisplay, Footnote
 from src.core.utils import get_app_version
@@ -661,11 +662,12 @@ class ConfigScreen(Screen):
     #mode_radio, #plat_radio {
         height: auto; margin: 0 0 0 2;
     }
+    #mode_radio RadioButton:disabled {
+        opacity: 70%;
+        color: gray;
+    }
     .field_label2 { margin-top: 1; padding-left: 2;}
     #cfg_container Input { margin-bottom: 0; }
-    #mode_radio, #plat_radio {
-        height: auto; margin: 0 0 0 2;
-    }
     #target_section { height: auto; }
     #cfg_actions { height: auto; margin-top: 0; margin-bottom: 0; dock: bottom; }
     #cfg_actions Button { width: 1fr; margin: 0 1; }
@@ -829,22 +831,27 @@ class ConfigScreen(Screen):
 
                     # ── Reaper Mode ──────────────────────────────────────────
                     yield Label("Reaper Mode", classes="section_title")
-                    cur_mode = self.config.tool_mode or "backup_only"
+                    cur_mode = self.config.tool_mode or "direct_transfer"
+                    disable_backup = FLUXER_SOURCE_DISABLE_BACKUP_MODES and self.source_platform == "fluxer"
+                    if disable_backup:
+                        cur_mode = "direct_transfer"  # force for Fluxer sources
                     with RadioSet(id="mode_radio"):
                         yield RadioButton(
                             "Shuttle Transfer  (direct migration)",
                             id="radio_direct",
-                            value=(cur_mode == "direct_transfer")
+                            value=True
                         )
                         yield RadioButton(
                             "Backup & Migrate  (backup first, then migrate)",
                             id="radio_backup",
-                            value=(cur_mode == "backup_transfer")
+                            value=False,
+                            disabled=disable_backup,
                         )
                         yield RadioButton(
                             "Backup Only       (local backup, no migration)",
                             id="radio_bkonly",
-                            value=(cur_mode == "backup_only")
+                            value=False,
+                            disabled=disable_backup,
                         )
 
                     # ── Target Platform (hidden for backup_only) ─────────────
@@ -1112,6 +1119,8 @@ class ConfigScreen(Screen):
             self.dismiss(True)
 
     def _get_selected_mode(self) -> str:
+        if FLUXER_SOURCE_DISABLE_BACKUP_MODES and self.source_platform == "fluxer":
+            return "direct_transfer"
         for rb in self.query("#mode_radio RadioButton"):
             if rb.value:
                 return _MODE_MAP.get(rb.id, "backup_only")
@@ -1168,7 +1177,10 @@ class ConfigScreen(Screen):
             self.config.source_server_id = str(d_select.value)
 
         # 2. Mode
-        self.config.tool_mode = self._get_selected_mode()
+        if FLUXER_SOURCE_DISABLE_BACKUP_MODES and self.source_platform == "fluxer":
+            self.config.tool_mode = "direct_transfer"
+        else:
+            self.config.tool_mode = self._get_selected_mode()
 
         # 3. Target Section
         if self.config.tool_mode != "backup_only":
