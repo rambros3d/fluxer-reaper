@@ -12,7 +12,14 @@ Go to your **user settings** in Fluxer (**Ctrl** + **,**) and **Create Applicati
 **Regenerate** & copy the **Bot Token**. Save it somewhere safe, you will need it later for the tool
 ![Fluxer Step 3](images/fluxer-bot-3.png)
 
-Scroll down to **Scopes** and select **bot**. Enable **Administrator** under Bot Permissions
+Scroll down to **Scopes** and select **bot**. Choose the permissions your bot needs:
+
+| Role | Permissions needed |
+|---|---|
+| **Source** (reading from a community) | View Channels, Read Messages OR (if not working) **Administrator**
+| **Target** (writing to a community) | Administrator
+
+If you're using the same community as both source and target, or if you're unsure, just give **Administrator** — it covers everything.
 ![Fluxer Step 4](images/fluxer-bot-4.png)
 
 Choose your **Fluxer Community** (Preferably create and use a new one)

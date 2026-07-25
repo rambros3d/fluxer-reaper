@@ -18,7 +18,7 @@ from src.core.configuration import (
     delete_config, clone_config, scan_config_data,
     FLUXER_SOURCE_DISABLE_BACKUP_MODES,
 )
-from src.ui.widgets import RamDisplay, Footnote
+from src.ui.widgets import RamDisplay, Footnote, ClipboardInput
 from src.core.utils import get_app_version
 
 
@@ -783,12 +783,11 @@ class ConfigScreen(Screen):
                         # ── Discord ──────────────────────────────────────────────
                         yield Label("Discord Bot Token:", classes="field_label")
                         with Horizontal(classes="fetch_row"):
-                            yield Input(
+                            yield ClipboardInput(
                                 value=self.config.source_bot_token or "",
                                 id="inp_source_token",
                                 password=True,
-                                placeholder="Paste Bot Token here",
-                                tooltip="Enter your Discord BOT token from the Developer Portal"
+                                placeholder="Paste Discord Bot Token here",
                             )
                             yield Button("Validate", id="btn_fetch_source", variant="primary", tooltip="Verify token and fetch available Discord servers")
                         yield Label("Server ID:", classes="field_label")
@@ -803,12 +802,11 @@ class ConfigScreen(Screen):
                             yield Label("Fluxer Bot Token:", classes="field_label")
                             yield Label("API URL:", id="lbl_source_api", classes="field_label2")
                         with Horizontal(classes="fetch_row"):
-                            yield Input(
+                            yield ClipboardInput(
                                 value=self.config.source_bot_token or "",
                                 id="inp_source_token",
                                 password=True,
                                 placeholder="Paste Fluxer Bot Token here",
-                                tooltip="Enter your Fluxer BOT token from the Developer Portal"
                             )
 
                             yield Input(
@@ -876,12 +874,11 @@ class ConfigScreen(Screen):
                         with Horizontal(classes="fetch_row"):
                             cur_plat = self.config.target_platform or "fluxer"
                             t_token = self.config.stoat_bot_token if cur_plat == "stoat" else self.config.fluxer_bot_token
-                            yield Input(
+                            yield ClipboardInput(
                                 value=t_token or "",
                                 id="inp_target_token",
                                 password=True,
                                 placeholder="Paste Target Bot Token",
-                                tooltip="Enter the Bot token for the target platform"
                             )
                             
                             t_api = self.config.stoat_api_url if cur_plat == "stoat" else self.config.fluxer_api_url
@@ -1091,7 +1088,7 @@ class ConfigScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "btn_fetch_source":
-            token = self.query_one("#inp_source_token", Input).value.strip()
+            token = self.query_one("#inp_source_token", ClipboardInput).value.strip()
             if not token:
                 self.notify("Please enter a valid Source Bot Token.", severity="error")
                 return
@@ -1102,7 +1099,7 @@ class ConfigScreen(Screen):
             self.run_worker(self._do_fetch("source", self.config.source_platform, token, api_url, initial=False))
 
         elif event.button.id == "btn_fetch_target":
-            token = self.query_one("#inp_target_token", Input).value.strip()
+            token = self.query_one("#inp_target_token", ClipboardInput).value.strip()
             if not token:
                 self.notify("Please enter a valid Target Bot Token.", severity="error")
                 return
@@ -1142,7 +1139,7 @@ class ConfigScreen(Screen):
         elif event.radio_set.id == "plat_radio":
             plat = self._get_selected_platform()
             try:
-                inp_token = self.query_one("#inp_target_token", Input)
+                inp_token = self.query_one("#inp_target_token", ClipboardInput)
                 inp_api = self.query_one("#inp_target_api", Input)
                 
                 if plat == "fluxer":
@@ -1168,7 +1165,7 @@ class ConfigScreen(Screen):
 
     def _collect_and_save(self) -> None:
         # 1. Source Section
-        self.config.source_bot_token = self.query_one("#inp_source_token", Input).value.strip() or None
+        self.config.source_bot_token = self.query_one("#inp_source_token", ClipboardInput).value.strip() or None
         if self.config.source_platform == "fluxer":
             self.config.source_api_url = self.query_one("#inp_source_api_url", Input).value.strip() or None
         
@@ -1186,7 +1183,7 @@ class ConfigScreen(Screen):
         if self.config.tool_mode != "backup_only":
             plat = self._get_selected_platform()
             self.config.target_platform = plat
-            token_val = self.query_one("#inp_target_token", Input).value.strip() or None
+            token_val = self.query_one("#inp_target_token", ClipboardInput).value.strip() or None
             
             t_select = self.query_one("#inp_target_server", Select)
             

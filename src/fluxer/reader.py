@@ -34,7 +34,7 @@ def _cdn_base_from_api_url(api_url: Optional[str]) -> str:
     """Derive the CDN host from a custom API URL.
 
     * Official instance: ``https://api.fluxer.app/v1`` → ``https://fluxerusercontent.com``
-    * Self-hosted: ``https://fluxgard.omster.dev/api/v1`` → ``https://fluxgard.omster.dev``
+    * Self-hosted: ``https://my-fluxer.example.com/api/v1`` → ``https://my-fluxer.example.com``
     * Falls back to the official CDN if nothing can be determined.
     """
     if not api_url or api_url == "default":
@@ -863,13 +863,16 @@ class FluxerReader:
         for raw in all_raw:
             msg_id = raw.get("id")
 
-            # Honour after_id filter
+            # Honour after_id filter (use int comparison — snowflake IDs
+            # are 64-bit which fits comfortably in Python int)
             if after_id is not None:
+                msg_int = int(msg_id)
+                after_int = int(after_id)
                 if inclusive:
-                    if str(msg_id) < str(after_id):
+                    if msg_int < after_int:
                         continue
                 else:
-                    if str(msg_id) <= str(after_id):
+                    if msg_int <= after_int:
                         continue
 
             msg = Message.from_data(raw)

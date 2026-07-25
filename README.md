@@ -1,20 +1,6 @@
-# PR: 
-Among many other things, this vibe-coded to hell & back PR has currently: 
-- Changed/Added UI/UX to accommodate new features & de-hardcode Discord as a source
-   - Config Selection screen received a makeover & ways to return to it.
-- Validation between Fluxer to Fluxer
-   - From Self-Hosted to Self-Hosted/Official hasn't been fully tested. Offical to self-hosted has been most of my testing so far. I would assume it works though.
-- Cloning: 
-   - Complete clone of Server Template
-   - Partial Server Settings clone
-      - Sticker cloning is not cooperating
-- Direct Migration mode 
-   - Migrate messages Fluxer-Fluxer between chosen channels
-      - Not battle-tested.
-
 # DiscoReaper
 
-**DiscoReaper** is a powerful tool designed to help you migrate your entire Discord server to Fluxer or Stoat. It clones channels, roles, emojis, permissions, and also your community's full message history.
+**DiscoReaper** is a powerful tool designed to help you migrate your entire Discord server — or a Fluxer community — to Fluxer or Stoat. It clones channels, roles, emojis, permissions, and your community's full message history.
 
 ### Get it here: [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-linux.zip)   [![Windows](https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-windows.zip) [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-macos.zip)
 
@@ -54,6 +40,9 @@ Among many other things, this vibe-coded to hell & back PR has currently:
 | - Threads | 🟩 | 🟩 |
 | - Forums | ⚠️ | ⚠️ |
 
+- **Fluxer Source**: 
+   - Local source backup for Fluxer yet to be implemented, only available mode is **Direct Migration**
+   - Cloning Stickers from a Fluxer Source does not work yet.
 - ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels as normal messages. 
 - ⚠️**Stoat**: doesn't have features like Category Permissions or Slowmode settings for channels.
 - ⏳**Stoat**: permission sync for channels was not implemented due to architectural differences.

@@ -22,7 +22,8 @@ def pytest_configure(config):
     """Register global warning filters and marks."""
     # Register marks if needed
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
-    
+    config.addinivalue_line("markers", "live: live integration test (requires ReaperFiles-AutoTest with real tokens)")
+
     # Silence benign async mock and ResourceWarnings globally
     config.addinivalue_line("filterwarnings", "ignore::RuntimeWarning")
     config.addinivalue_line("filterwarnings", "ignore::ResourceWarning")
@@ -31,6 +32,15 @@ def pytest_sessionstart(session):
     """Clear the log file at the beginning of the test session."""
     with open(LOG_FILE, "w") as f:
         f.write("--- Reaper Test Session Started ---\n")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip live tests by default — opt in with ``-m live``."""
+    if config.getoption("-m") != "live":
+        skip_live = pytest.mark.skip(reason="live test — use '-m live' to run")
+        for item in items:
+            if "live" in item.keywords:
+                item.add_marker(skip_live)
 
 def pytest_report_header(config):
     """Print data source status to the console header."""

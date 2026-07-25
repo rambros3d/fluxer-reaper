@@ -29,11 +29,14 @@ stoat_bot_token: YOUR_STOAT_BOT_TOKEN
 
 
 ### Which Platforms are supported?
+- **Discord** and **Fluxer*** are supported as source platforms
 - **Fluxer** and **Stoat** are the supported target platforms.
 - Eligibility criteria for new platforms:
     - Open Source
     - Self-Hostable
     - Bot API
+
+*Fluxer sources do not have full support yet (reaper modes)
 
 ---
 

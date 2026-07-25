@@ -3,12 +3,31 @@ import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock, AsyncMock, patch
 from textual.app import App
-from src.ui.main_app import ReaperApp, ConfigSelectionScreen, ConfigScreen
+from textual.widgets import Button, Label, OptionList
+from textual.widgets.option_list import Option
+from src.ui.main_app import ReaperApp, ConfigSelectionScreen, ConfigScreen, ConfigRow
 from src.ui.mode_screen import ModeScreen
+from src.ui.widgets import ClipboardInput
 from src.core.configuration import AppConfig
 
 import os
-from textual.widgets import ListItem, ListView, Input, Button, Label
+
+
+def _find_config_button(screen, cfg_display_name: str) -> Button | None:
+    """Find the 'Open' button for a config by its display name."""
+    for row in screen.query(ConfigRow):
+        if row.display_name == cfg_display_name:
+            return row.query_one(".btn_open", Button)
+    return None
+
+
+def _click_first_config(pilot, screen) -> Button | None:
+    """Find and return the first config's open button."""
+    rows = list(screen.query(ConfigRow))
+    if not rows:
+        return None
+    btn = rows[0].query_one(".btn_open", Button)
+    return btn
 
 
 
@@ -42,13 +61,14 @@ async def test_ui_minimal_launch(mock_configs, log):
     """Verify app launch and screen transition to ModeScreen."""
     log("Running test_ui_minimal_launch")
     try:
-        # Reverting to AsyncMock to avoid WorkerError. 
-        # RuntimeWarnings are now handled globally in conftest.py.
         with patch("src.ui.main_app.ConfigSelectionScreen.check_updates", AsyncMock()):
             app = ReaperApp()
             async with app.run_test() as pilot:
                 await wait_for_screen(app, ConfigSelectionScreen)
-                await pilot.click(ListItem)
+                # Click the open button of the first config
+                btn = _click_first_config(pilot, app.screen)
+                assert btn is not None, "No config rows found"
+                await pilot.click(btn)
                 await wait_for_screen(app, ModeScreen)
                 assert isinstance(app.screen, ModeScreen)
                 log("test_ui_minimal_launch PASSED")
@@ -65,13 +85,15 @@ async def test_ui_config_wizard_save(mock_configs, log):
             app = ReaperApp()
             async with app.run_test() as pilot:
                 await wait_for_screen(app, ConfigSelectionScreen)
-                await pilot.click(ListItem)
+                btn = _click_first_config(pilot, app.screen)
+                assert btn is not None, "No config rows found"
+                await pilot.click(btn)
                 await wait_for_screen(app, ModeScreen)
                 await pilot.click("#btn_config")
                 await wait_for_screen(app, ConfigScreen)
                 
                 screen = app.screen
-                inp = screen.query_one("#inp_source_token", Input)
+                inp = screen.query_one("#inp_source_token", ClipboardInput)
                 inp.value = "new_fake_token"
                 
                 with patch("src.ui.main_app.save_config") as mock_save:
@@ -91,12 +113,13 @@ async def test_ui_operation_trigger(mock_configs, log):
     from src.ui.modals import ChannelPickerScreen, ProgressScreen
     try:
         with patch("src.ui.main_app.ConfigSelectionScreen.check_updates", AsyncMock()):
-            # run_validate is decorated with @work in shuttle_ops.py, so it MUST be a coroutine (AsyncMock)
             with patch.object(OperationPane, "run_validate", AsyncMock()):
                 app = ReaperApp()
                 async with app.run_test() as pilot:
                     await wait_for_screen(app, ConfigSelectionScreen)
-                    await pilot.click(ListItem)
+                    btn = _click_first_config(pilot, app.screen)
+                    assert btn is not None, "No config rows found"
+                    await pilot.click(btn)
                     await wait_for_screen(app, ModeScreen)
                     
                     pane = app.screen.query_one(OperationPane)
@@ -131,30 +154,23 @@ async def test_ui_autotest_button(mock_configs, log):
                 app = ReaperApp()
                 async with app.run_test() as pilot:
                     await wait_for_screen(app, ConfigSelectionScreen)
-                    # Find the AutoTest item in the list
-                    lv = app.screen.query_one(ListView)
-                    autotest_index = -1
-                    for idx, item in enumerate(lv.children):
-                        if item.name == "AutoTest":
-                            autotest_index = idx
-                            break
-                    
-                    assert autotest_index != -1, "AutoTest profile not found in ListView"
-                    target_item = lv.children[autotest_index]
-                    await pilot.click(target_item)
+                    # Find the AutoTest config button
+                    btn = _find_config_button(app.screen, "AutoTest")
+                    assert btn is not None, "AutoTest config button not found"
+                    await pilot.click(btn)
                     assert await wait_for_screen(app, ModeScreen), "Timed out waiting for ModeScreen"
                     
-                    # Verify button is present
+                    # Verify AUTO TEST button is present
                     pane = app.screen.query_one(OperationPane)
-                    btn = pane.query_one("#op_autotest", Button)
-                    assert btn.display is True
-                    assert "AUTO TEST" in str(btn.label)
+                    autotest_btn = pane.query_one("#op_autotest", Button)
+                    assert autotest_btn.display is True
+                    assert "AUTO TEST" in str(autotest_btn.label)
                     
                     # Mock the sequence and trigger it
                     with patch.object(OperationPane, "run_autotest_sequence", AsyncMock()) as mock_seq:
-                        btn.disabled = False
+                        autotest_btn.disabled = False
                         await pilot.pause(0.1)
-                        btn.focus()
+                        autotest_btn.focus()
                         await pilot.press("enter")
                         await pilot.pause(0.1)
                         assert mock_seq.called

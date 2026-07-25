@@ -1,10 +1,27 @@
-# Discord Reaper Operations
+# DiscoReaper Operations
+
+## 0. Source Platforms
+
+DiscoReaper supports two source platforms:
+
+| Source | Modes available |
+|---|---|
+| **Discord** | Direct migration, Backup, Backup-then-migrate |
+| **Fluxer** | Direct migration only (backup coming later) |
+
+To use a Fluxer source, set **Source Platform** to `fluxer` when creating a config. You'll need:
+- A Fluxer bot token (from the Developer Portal or your self-hosted instance)
+    - The Fluxer Bot should be given Administrator for ease of use
+- The community (guild) ID you want to migrate from
+- If self-hosted: the API URL (e.g. `https://your-instance.com/api`)
+
+---
 
 ## 1. Migration & Shuttle Tools
 The primary suite of tools for moving data between Discord & Fluxer/Stoat.
 
 *   **Shuttle Migration (Direct)**: 
-    Connects directly to Discord and your target platform to migrate categories, channels, roles, and messages in real-time. It uses intelligent mapping to ensure links and mentions work in the new community.
+    Connects directly to your source platform and target platform to migrate categories, channels, roles, and messages in real-time. Supports Discord and Fluxer as sources. Uses intelligent mapping to ensure links and mentions work in the new community.
 *   **Resumed Migration**: 
     If a large migration is interrupted or hits a rate limit, the Resumed Migration tool uses the local SQLite database to pick up exactly where it left off, skipping messages that have already been transferred.
 *   **Offline Migration (from Backup)**: 

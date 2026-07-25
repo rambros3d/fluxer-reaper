@@ -1,6 +1,11 @@
 # Extensive Feature list
 Here's complete list of everything the tool can handle and any specific caveats or workarounds.
 
+## 🟢 Fluxer sources are supported for direct migration
+Starting with V4, you can migrate **from** a Fluxer community (official or self-hosted) **to** another Fluxer or Stoat community. Roles, channels, permissions, emojis, icons, messages, and more — all supported*. See the [guide](guide.md) for setup.
+
+*Barring Sticker Cloning
+
 - 🟩Fully supported
 - 🟧Work Around implemented
 - 🟥Limitation
