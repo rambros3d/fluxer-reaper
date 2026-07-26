@@ -456,7 +456,15 @@ class FluxerWriter:
             return ""
 
     async def create_sticker(self, name: str, image_bytes: bytes) -> str:
-        """Creates a custom sticker. image_bytes must be raw bytes. Returns ID on success, empty string on failure."""
+        """Creates a custom sticker. image_bytes must be raw bytes. Returns ID on success, empty string on failure.
+
+        Note
+        ----
+        Sticker creation returns ``401 UNAUTHORIZED`` on some self-hosted Fluxer
+        instances even when the bot has Administrator permissions.  This is a
+        server-side / ``fluxer.py`` library issue — the endpoint works correctly
+        against the official Fluxer API (``api.fluxer.app``).  Tracked upstream.
+        """
         assert self.client is not None
         try:
             sticker = await self.client.create_guild_sticker(

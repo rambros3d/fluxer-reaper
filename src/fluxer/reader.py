@@ -722,6 +722,13 @@ class FluxerReader:
         ``nsfw``, optional ``user``).
 
         Uses ``GET /guilds/{guild_id}/stickers``.
+
+        Note
+        ----
+        The stickers endpoint returns ``401 UNAUTHORIZED`` on self-hosted
+        Fluxer instances.  This is a server-side / ``fluxer.py`` library issue;
+        sticker operations work correctly against the official Fluxer API.
+        Fall back to an empty list so the rest of the migration continues.
         """
         await self._ensure_http()
         try:

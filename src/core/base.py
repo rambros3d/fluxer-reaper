@@ -76,23 +76,25 @@ class MigrationContext:
         self.is_running = False
 
     def _find_backup_path(self, server_id: str | int | None, base_dir_str: str) -> Path:
-        """Searches workspace for a SOURCE_BACKUP-{server_id} directory. Returns the path (does not create)."""
+        """Searches workspace for a *_BACKUP-{server_id} directory. Returns the path (does not create).
+
+        Matches both legacy ``DISCORD_BACKUP-{id}`` and new ``SOURCE_BACKUP-{id}``
+        directory naming conventions.
+        """
         if not server_id:
             return Path(base_dir_str or ".") / "SOURCE_BACKUP-UNKNOWN"
 
         sid_str = str(server_id).strip()
         base_dir = Path(base_dir_str) if base_dir_str else Path(".")
         
-        # Search inside the workspace
+        # Search inside the workspace for any *_BACKUP-{id} directory
         if base_dir.exists() and base_dir.is_dir():
             for d in base_dir.iterdir():
-                if d.is_dir():
-                    dname = d.name.upper()
-                    if "SOURCE_BACKUP" in dname and dname.endswith(f"-{sid_str}"):
-                        logger.info(f"Found backup directory in workspace: {d}")
-                        return d
+                if d.is_dir() and d.name.endswith(f"-{sid_str}") and "_BACKUP" in d.name.upper():
+                    logger.info(f"Found backup directory in workspace: {d}")
+                    return d
         
-        # Fallback to expected location
+        # Fallback to expected location (new naming convention)
         new_path = base_dir / f"SOURCE_BACKUP-{sid_str}"
         logger.info(f"Using lazy backup path (not yet existing): {new_path}")
         return new_path

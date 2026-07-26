@@ -211,9 +211,7 @@ class OperationPane(Container):
         if not self.config or not self.config.source_server_id:
             return None
         
-        backup_str = (f"SOURCE_BACKUP-{self.config.source_server_id}" if self.config.source_platform == "discord" 
-                      else f"SOURCE_BACKUP-{self.config.source_server_id}"
-                      )
+        backup_str = f"SOURCE_BACKUP-{self.config.source_server_id}"
                       
         target_dir = Path(self._base_dir()) / backup_str
         if not target_dir.exists():
