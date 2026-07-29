@@ -15,56 +15,65 @@ async def sync_assets_state(context: MigrationContext):
     discord_emojis = await context.source_reader.get_emojis()
     discord_stickers = await context.source_reader.get_stickers()
 
-    fluxer_emojis = []
-    fluxer_stickers = []
+    # Fetch target emoji / sticker lists — None means "fetch failed, skip"
+    fluxer_emojis: list | None = None
+    fluxer_stickers: list | None = None
 
     try:
-        fluxer_emojis = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
+        raw = await context.fluxer_writer.client.get_guild_emojis(context.config.fluxer_server_id)
+        fluxer_emojis = raw.get("items", []) if isinstance(raw, dict) else raw
     except Exception as e:
-        logger.warning(f"Could not fetch emojis from Fluxer: {e}. Assuming none exist.")
+        logger.warning("Could not fetch emojis from Fluxer: %s. Skipping emoji sync.", e)
 
     try:
-        fluxer_stickers = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
+        raw = await context.fluxer_writer.client.get_guild_stickers(context.config.fluxer_server_id)
+        fluxer_stickers = raw.get("items", []) if isinstance(raw, dict) else raw
     except Exception as e:
-        logger.warning(f"Could not fetch stickers from Fluxer: {e}. Assuming none exist.")
-    
-    # Build name -> id maps and ID sets for Fluxer for fast lookup
-    fluxer_emoji_map = {e.get("name"): e.get("id") for e in fluxer_emojis if e.get("name")}
-    fluxer_sticker_map = {s.get("name"): s.get("id") for s in fluxer_stickers if s.get("name")}
-    fluxer_emoji_ids = {e.get("id") for e in fluxer_emojis}
-    fluxer_sticker_ids = {s.get("id") for s in fluxer_stickers}
-    
+        logger.warning("Could not fetch stickers from Fluxer: %s. Skipping sticker sync.", e)
+
     updates = 0
     removals = 0
-    
-    # 1. Verify and Sync Emojis
-    for emoji in discord_emojis:
-        discord_id = str(emoji.id)
-        fluxer_id = context.state.get_fluxer_emoji_id(discord_id)
-        
-        if fluxer_id:
-            if fluxer_id not in fluxer_emoji_ids:
+
+    # 1. Verify and Sync Emojis (only if we successfully fetched the target list)
+    if fluxer_emojis is not None:
+        fluxer_emoji_map = {e.get("name"): e.get("id") for e in fluxer_emojis if e.get("name")}
+        fluxer_emoji_ids = {e.get("id") for e in fluxer_emojis}
+
+        for emoji in discord_emojis:
+            discord_id = str(emoji.id)
+            fluxer_id = context.state.get_fluxer_emoji_id(discord_id)
+
+            if fluxer_id and fluxer_id not in fluxer_emoji_ids:
+                # Stale mapping — target emoji was deleted; remove it so we
+                # can try a fresh name match below.
                 context.state.remove_emoji_mapping(discord_id)
                 removals += 1
-        elif emoji.name in fluxer_emoji_map:
-            context.state.set_emoji_mapping(discord_id, fluxer_emoji_map[emoji.name])
-            updates += 1
-                
-    # 2. Verify and Sync Stickers
-    for sticker in discord_stickers:
-        discord_id = str(sticker.id)
-        fluxer_id = context.state.get_fluxer_sticker_id(discord_id)
-        
-        if fluxer_id:
-            if fluxer_id not in fluxer_sticker_ids:
+                fluxer_id = None
+
+            if not fluxer_id and emoji.name in fluxer_emoji_map:
+                context.state.set_emoji_mapping(discord_id, fluxer_emoji_map[emoji.name])
+                updates += 1
+
+    # 2. Verify and Sync Stickers (only if we successfully fetched the target list)
+    if fluxer_stickers is not None:
+        fluxer_sticker_map = {s.get("name"): s.get("id") for s in fluxer_stickers if s.get("name")}
+        fluxer_sticker_ids = {s.get("id") for s in fluxer_stickers}
+
+        for sticker in discord_stickers:
+            discord_id = str(sticker.id)
+            fluxer_id = context.state.get_fluxer_sticker_id(discord_id)
+
+            if fluxer_id and fluxer_id not in fluxer_sticker_ids:
                 context.state.remove_sticker_mapping(discord_id)
                 removals += 1
-        elif sticker.name in fluxer_sticker_map:
-            context.state.set_sticker_mapping(discord_id, fluxer_sticker_map[sticker.name])
-            updates += 1
-                
+                fluxer_id = None
+
+            if not fluxer_id and sticker.name in fluxer_sticker_map:
+                context.state.set_sticker_mapping(discord_id, fluxer_sticker_map[sticker.name])
+                updates += 1
+
     if updates > 0 or removals > 0:
-        logger.info(f"Asset sync: {updates} mapped, {removals} stale mappings removed")
+        logger.info(f"Asset sync: {updates} matched by name, {removals} stale mappings removed")
 
 
 async def migrate_emojis(context: MigrationContext, progress_callback: Callable[[str, str, int, int], Awaitable[None]] | None = None, types_to_include: List[str] = ["Emoji", "Sticker"], force: bool = False) -> dict[str, dict[str, str]]:
@@ -83,16 +92,21 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
     if "Sticker" in types_to_include:
         stickers = await context.source_reader.get_stickers()
         objs.extend([(s, "Sticker") for s in stickers])
-        
+    
+    total_source = len(objs)
     if not force:
         objs = [(obj, obj_type) for obj, obj_type in objs if not (
             context.state.get_fluxer_emoji_id(str(obj.id)) if obj_type == "Emoji" else context.state.get_fluxer_sticker_id(str(obj.id))
         )]
 
+    skipped = total_source - len(objs)
     total = len(objs)
     cloned_assets: dict[str, dict[str, str]] = {"Emoji": {}, "Sticker": {}}
     
-    logger.info(f"Migrating {total} assets to Fluxer (Types: {', '.join(types_to_include)})...")
+    logger.info(
+        "Migrating %d assets to Fluxer (Types: %s) — %d already mapped, skipping.",
+        total, ", ".join(types_to_include), skipped,
+    )
 
     for idx, (obj, obj_type) in enumerate(objs):
         if not context.is_running:

@@ -35,11 +35,12 @@ async def sync_assets_state(context: MigrationContext):
         # Using target mapping in state
         stoat_id = context.state.get_target_emoji_id(discord_id)
         
-        if stoat_id:
-            if stoat_id not in stoat_emoji_ids:
-                context.state.remove_emoji_mapping(discord_id)
-                removals += 1
-        elif emoji.name in stoat_emoji_map:
+        if stoat_id and stoat_id not in stoat_emoji_ids:
+            context.state.remove_emoji_mapping(discord_id)
+            removals += 1
+            stoat_id = None
+
+        if not stoat_id and emoji.name in stoat_emoji_map:
             context.state.set_target_emoji_mapping(discord_id, stoat_emoji_map[emoji.name])
             updates += 1
                 

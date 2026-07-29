@@ -1078,6 +1078,17 @@ class OperationPane(Container):
         return synced
 
     async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str], force: bool = False):
+        # Ensure the migration state database is initialised so that
+        # name-based matching in sync_assets_state is persisted.
+        tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
+        if tid and not self.engine.state.db:
+            try:
+                tgt_info = await self.engine.writer.validate()
+                name = tgt_info.get("community_name", "Target") if tgt_info else "Target"
+            except Exception:
+                name = "Target"
+            self.engine.ensure_state_initialized(str(tid), name)
+
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
         modal.set_item_status("Processing Assets...")
         await asset_mod.sync_assets_state(self.engine)

@@ -79,11 +79,16 @@ class EmojiWrapper:
 
     @property
     def url(self) -> Optional[str]:
-        """Reconstructed CDN URL for the emoji image."""
+        """Reconstructed CDN URL for the emoji image.
+
+        Animated emojis use ``.gif?animated=true`` to get the full animated
+        GIF (the bare ``.gif`` URL returns only a static first frame).
+        """
         if not self.id:
             return None
-        ext = "gif" if self.animated else "png"
-        return f"{self._cdn_base}/emojis/{self.id}.{ext}"
+        if self.animated:
+            return f"{self._cdn_base}/emojis/{self.id}.gif?animated=true"
+        return f"{self._cdn_base}/emojis/{self.id}.png"
 
     def __repr__(self) -> str:
         return f"<Emoji id={self.id} name={self.name!r} animated={self.animated}>"
@@ -583,16 +588,44 @@ class FluxerReader:
 
         Accepts an :class:`EmojiWrapper`, a ``fluxer.Emoji``, or any object
         with ``id`` / ``url`` / ``animated`` attributes.  Returns raw bytes.
+
+        If the primary URL fails, a handful of fallback URLs are tried
+        (different extensions / query params) before giving up.
         """
         await self._ensure_http()
 
-        url = getattr(emoji, "url", None)
-        if not url:
-            ext = "gif" if getattr(emoji, "animated", False) else "png"
-            eid = getattr(emoji, "id", None)
-            if eid:
-                url = f"{self._cdn_base}/emojis/{eid}.{ext}"
-        return await self.download_asset(url or "")
+        eid = getattr(emoji, "id", None)
+        animated = getattr(emoji, "animated", False)
+
+        primary = getattr(emoji, "url", None)
+        urls: list[str] = [primary] if primary else []
+
+        if eid:
+            if animated:
+                extras = [
+                    f"{self._cdn_base}/emojis/{eid}.gif?animated=true",
+                    f"{self._cdn_base}/emojis/{eid}.gif",
+                    f"{self._cdn_base}/emojis/{eid}.png",
+                ]
+            else:
+                extras = [
+                    f"{self._cdn_base}/emojis/{eid}.png",
+                    f"{self._cdn_base}/emojis/{eid}.gif?animated=true",
+                    f"{self._cdn_base}/emojis/{eid}.gif",
+                ]
+            for u in extras:
+                if u not in urls:
+                    urls.append(u)
+
+        for url in urls:
+            if not url:
+                continue
+            data = await self.download_asset(url)
+            if data:
+                return data
+
+        logger.warning("download_emoji: all URL attempts failed for emoji %s (id=%s)", getattr(emoji, "name", "?"), eid)
+        return b""
 
     async def download_sticker(self, sticker) -> bytes:
         """Download a sticker image.

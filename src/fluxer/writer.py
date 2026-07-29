@@ -5,8 +5,112 @@ from typing import Optional, List, Dict, Any
 from fluxer import HTTPClient, Bot, Unauthorized, Webhook, Forbidden, File
 from src.core.configuration import AppConfig
 
+try:
+    from PIL import Image
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Emoji image optimisation
+# ---------------------------------------------------------------------------
+
+# Fluxer emoji size limit: 512 KB (static images are auto-resized by the API,
+# but animated GIFs must already fit).  We target just under the cap so that
+# an efficient re-encode at original dimensions usually passes without any
+# quality loss.
+_EMOJI_MAX_KB = 500
+
+
+def _shrink_emoji_image(image_bytes: bytes, name: str = "?") -> bytes:
+    """Return *image_bytes* resized / re-encoded so that it fits within
+    :data:`_EMOJI_MAX_KB` (if Pillow is available).
+
+    Strategy (tried in order, stops at first that fits):
+    1. Re-encode at original size — preserves original palette, zero quality loss.
+    2. Down-scale in fine steps — only when the raw re-encode is still too large.
+    """
+    if not _HAS_PIL or len(image_bytes) <= _EMOJI_MAX_KB * 1024:
+        return image_bytes
+
+    try:
+        original_kb = len(image_bytes) / 1024
+        img = Image.open(io.BytesIO(image_bytes))
+        fmt = img.format or "PNG"
+        is_anim = getattr(img, "is_animated", False)
+
+        # Scales: 1.0 = re-encode only (no resize), then gradual down-scale.
+        scales = [1.0, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.33, 0.25]
+
+        for scale in scales:
+            new_w = max(32, int(img.width * scale))
+            new_h = max(32, int(img.height * scale))
+
+            buf = io.BytesIO()
+            if is_anim:
+                # Rewind to the first frame — previous scale attempt
+                # consumed the iterator.
+                img.seek(0)
+
+                frames: list[Image.Image] = []
+                durations: list[int] = []
+                disposals: list[int] = []
+                try:
+                    while True:
+                        if scale < 1.0:
+                            frame = img.convert("RGBA")
+                            frame = frame.resize((new_w, new_h), Image.LANCZOS)
+                        else:
+                            frame = img.copy()
+                        durations.append(img.info.get("duration", 0) or 100)
+                        disposals.append(img.info.get("disposal", 2))
+                        frames.append(frame)
+                        img.seek(img.tell() + 1)
+                except EOFError:
+                    pass
+
+                if not frames:
+                    continue
+
+                frames[0].save(
+                    buf,
+                    format="GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=durations,
+                    loop=img.info.get("loop", 0),
+                    disposal=disposals,
+                    transparency=0,
+                )
+            else:
+                if scale < 1.0:
+                    img = img.resize((new_w, new_h), Image.LANCZOS)
+                img.save(buf, format=fmt, optimize=True)
+
+            result = buf.getvalue()
+            result_kb = len(result) / 1024
+
+            if len(result) <= _EMOJI_MAX_KB * 1024:
+                verb = "re-encoded" if scale >= 1.0 else f"shrunk (scale={scale:.0%}, {new_w}x{new_h})"
+                logger.info(
+                    "Optimised emoji '%s': %.0f KB → %.0f KB (%s)",
+                    name, original_kb, result_kb, verb,
+                )
+                return result
+
+        logger.warning(
+            "Could not shrink emoji '%s' below %d KB (final: %.0f KB)",
+            name, _EMOJI_MAX_KB, result_kb,
+        )
+        return image_bytes
+
+    except Exception:
+        logger.debug("Image optimisation failed for emoji '%s'", name, exc_info=True)
+        return image_bytes
+
 
 class FluxerWriter:
     def __init__(self, token: str, community_id: str, config: AppConfig, api_url: str = "default"):
@@ -444,6 +548,13 @@ class FluxerWriter:
     async def create_emoji(self, name: str, image_bytes: bytes) -> str:
         """Creates a custom emoji. image_bytes must be raw bytes (not base64/data URI)."""
         assert self.client is not None
+        if not image_bytes:
+            logger.warning("create_emoji: empty image data for '%s' — skipping", name)
+            return ""
+
+        # Shrink oversized images so the API accepts them
+        image_bytes = _shrink_emoji_image(image_bytes, name)
+
         try:
             emoji = await self.client.create_guild_emoji(
                 guild_id=self.community_id,
@@ -452,7 +563,11 @@ class FluxerWriter:
             )
             return str(emoji["id"])
         except Exception as e:
-            logger.error(f"Failed to copy emoji '{name}': {e}", exc_info=True)
+            size_kb = len(image_bytes) / 1024
+            logger.error(
+                "Failed to copy emoji '%s' (%.1f KB): %s", name, size_kb, e,
+                exc_info=True,
+            )
             return ""
 
     async def create_sticker(self, name: str, image_bytes: bytes) -> str:

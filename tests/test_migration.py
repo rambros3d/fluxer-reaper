@@ -436,3 +436,105 @@ async def test_discord_live_seed_and_migrate(reaper_config, test_data_dir):
     #  2. Create DiscordReader, read channels, verify counts
     #  3. Create FluxerWriter, migrate messages, verify on target
     pytest.skip("Discord live test not yet implemented")
+
+
+# --- Asset Sync Debug Tests ---
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_compare_source_and_target_emojis(reaper_config, test_data_dir):
+    """Fetch emojis from both source and target, compare by name, and report
+    which are already present vs which would be migrated.
+
+    Runs for any source platform (discord or fluxer) as long as both
+    source and target tokens are configured in ``ReaperFiles-AutoTest``.
+
+    This is a **diagnostic** test — it always passes.  Read the output.
+    """
+    if not test_data_dir.exists():
+        pytest.skip("ReaperFiles-AutoTest directory not found")
+
+    src_token  = reaper_config.get("source_bot_token")
+    src_guild  = reaper_config.get("source_server_id")
+    tgt_token  = reaper_config.get("fluxer_bot_token")
+    tgt_guild  = reaper_config.get("fluxer_server_id")
+    src_api    = reaper_config.get("source_api_url") or "default"
+    tgt_api    = reaper_config.get("fluxer_api_url") or "default"
+    src_plat   = reaper_config.get("source_platform", "discord")
+
+    if not all([src_token, src_guild, tgt_token, tgt_guild]):
+        pytest.skip("Missing tokens or guild IDs in config")
+
+    # ── Source emojis ──────────────────────────────────────────────────
+    if src_plat == "discord":
+        from src.core.discord_reader import DiscordReader
+        reader = DiscordReader(token=src_token, server_id=src_guild)
+        await reader.start()
+        src_emojis = await reader.get_emojis()
+    else:
+        from src.fluxer.reader import FluxerReader
+        reader = FluxerReader(token=src_token, server_id=src_guild, api_url=src_api)
+        await reader.start()
+        src_emojis = await reader.get_emojis()
+
+    src_names  = {e.name for e in src_emojis}
+    src_anim   = {e.name: getattr(e, 'animated', False) for e in src_emojis}
+    src_by_id  = {str(e.id): e.name for e in src_emojis}
+
+    # ── Target emojis ──────────────────────────────────────────────────
+    from src.fluxer.writer import FluxerWriter
+    from src.core.configuration import AppConfig
+    tgt_config = AppConfig()
+    writer = FluxerWriter(token=tgt_token, community_id=tgt_guild, config=tgt_config, api_url=tgt_api)
+    await writer.start()
+    tgt_raw = await writer.get_emojis()  # list of dicts with "name" and "id"
+
+    tgt_names = {e.get("name") for e in tgt_raw if e.get("name")}
+    tgt_by_name = {e.get("name"): e.get("id") for e in tgt_raw if e.get("name")}
+    tgt_ids   = {e.get("id") for e in tgt_raw}
+
+    # ── Comparison ─────────────────────────────────────────────────────
+    already_on_target = src_names & tgt_names
+    missing_on_target = src_names - tgt_names
+    extra_on_target   = tgt_names - src_names
+
+    matched = len(already_on_target)
+    need_migration = len(missing_on_target)
+    total_src = len(src_names)
+    total_tgt = len(tgt_names)
+
+    print(f"\n{'='*60}")
+    print(f"  Source emojis : {total_src}  |  Target emojis : {total_tgt}")
+    print(f"  Already on target (would skip) : {matched}")
+    print(f"  Need migration                 : {need_migration}")
+    print(f"  On target but NOT in source    : {len(extra_on_target)}")
+    print(f"{'='*60}")
+
+    if missing_on_target:
+        print(f"\n  Emojis that WOULD be migrated ({need_migration}):")
+        for name in sorted(missing_on_target)[:10]:
+            anim = "🎞" if src_anim.get(name) else ""
+            print(f"    {anim} {name}")
+        if need_migration > 10:
+            print(f"    ... and {need_migration - 10} more")
+
+    if extra_on_target:
+        print(f"\n  Emojis on target but NOT in source ({len(extra_on_target)}):")
+        for name in sorted(extra_on_target)[:5]:
+            print(f"    {name}")
+        if len(extra_on_target) > 5:
+            print(f"    ... and {len(extra_on_target) - 5} more")
+
+    # ── State DB check ─────────────────────────────────────────────────
+    print(f"\n  State DB mappings:")
+    for src_id, src_name in sorted(src_by_id.items())[:5]:
+        tgt_id = tgt_by_name.get(src_name)
+        exists = "✓" if tgt_id and tgt_id in tgt_ids else "✗"
+        print(f"    {src_name:30s}  src={src_id[:10]}...  →  tgt={'found' if tgt_id else 'NONE'}  {exists}")
+
+    await reader.close()
+    await writer.close()
+
+    # Always pass — this is a diagnostic, not a gate
+    assert True
