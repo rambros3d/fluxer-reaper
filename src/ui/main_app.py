@@ -251,7 +251,7 @@ class OverwriteConfigModal(ModalScreen[bool]):
                 f"A configuration named [bold]{self.new_name}[/bold] already exists.\n\n"
                 f"Cloning over it will [bold]overwrite[/bold] its\n"
                 f"[bold]ReaperFiles-{self.new_name}/reaper_config.yaml[/bold].\n\n"
-                f"Existing database and backup files in the folder are kept.\n\n"
+                f"Existing database and backup files in the folder \nare kept.\n\n"
                 f"Do you want to overwrite it?",
                 id="overwrite_warning"
             )
