@@ -5,7 +5,7 @@
 - Windows 10 has been known to be problematic, it seems to use a separate clipboard for the terminal.
 - As a workaround, you can directly paste tokens in **config.yaml** file inside the ReaperFiles-XXX folder
 ```
-discord_bot_token: YOUR_DISCORD_BOT_TOKEN
+source_bot_token: YOUR_SOURCE_BOT_TOKEN
 fluxer_bot_token: YOUR_FLUXER_BOT_TOKEN
 stoat_bot_token: YOUR_STOAT_BOT_TOKEN
 ```
@@ -29,11 +29,18 @@ stoat_bot_token: YOUR_STOAT_BOT_TOKEN
 
 
 ### Which Platforms are supported?
+- **Discord** and **Fluxer*** are supported as source platforms
 - **Fluxer** and **Stoat** are the supported target platforms.
 - Eligibility criteria for new platforms:
     - Open Source
     - Self-Hostable
     - Bot API
+
+*Fluxer sources do not have full support yet (reaper modes)
+
+### Why do sticker clones fail on my self-hosted Fluxer instance?
+- Sticker creation returns `401 UNAUTHORIZED` on some self-hosted Fluxer instances even when the bot has Administrator permissions. This is an upstream `fluxer.py` issue — the endpoint works against the official Fluxer API (`api.fluxer.app`).
+- Stickers are also not cloned when the **source** is Fluxer (not implemented yet).
 
 ---
 

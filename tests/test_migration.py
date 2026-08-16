@@ -25,9 +25,9 @@ def get_platforms():
 # --- Unit Tests (Transformation Logic) ---
 
 @pytest.fixture
-def mock_context(mock_discord_reader, mock_fluxer_writer, mock_stoat_writer):
+def mock_context(mock_source_reader, mock_fluxer_writer, mock_stoat_writer):
     context = MagicMock(spec=MigrationContext)
-    context.discord_reader = mock_discord_reader
+    context.source_reader = mock_source_reader
     context.fluxer_writer = mock_fluxer_writer
     context.stoat_writer = mock_stoat_writer
     context.state = MagicMock()
@@ -75,7 +75,7 @@ async def test_backup_reader_interaction(backup_reader, reaper_config):
     await backup_reader.start()
     assert backup_reader.guild is not None
     # Verify ID from config (or mock default)
-    assert str(backup_reader.guild.id) == reaper_config.get("discord_server_id")
+    assert str(backup_reader.guild.id) == reaper_config.get("source_server_id")
     
     channels = await backup_reader.fetch_channels()
     assert len(channels) > 0
@@ -86,8 +86,8 @@ async def test_backup_reader_interaction(backup_reader, reaper_config):
 @pytest.mark.parametrize("platform", get_platforms())
 async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platform, request):
     config = AppConfig(
-        discord_bot_token=reaper_config["discord_bot_token"],
-        discord_server_id=reaper_config["discord_server_id"],
+        source_bot_token=reaper_config["source_bot_token"],
+        source_server_id=reaper_config["source_server_id"],
         target_platform=platform,
         fluxer_bot_token=reaper_config.get("fluxer_bot_token"),
         fluxer_server_id=reaper_config.get("fluxer_server_id"),
@@ -121,8 +121,8 @@ async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platfo
     from src.core.database import MigrationDatabase
     context.state.db = MigrationDatabase(tmp_path / f"e2e_{platform}.db", platform=platform)
     
-    await context.discord_reader.start()
-    channels = await context.discord_reader.fetch_channels()
+    await context.source_reader.start()
+    channels = await context.source_reader.fetch_channels()
     text_channels = [c for c in channels if c.type == ChannelType.text]
     
     if text_channels:
@@ -135,4 +135,406 @@ async def test_migration_e2e_loop(reaper_config, test_data_dir, tmp_path, platfo
         stats = await migrate_func(context=context, source_channel_id=source_channel_id, target_channel_id=target_channel_id)
         assert stats["messages"] >= 0
     
-    await context.discord_reader.close()
+    await context.source_reader.close()
+
+
+# --- FluxerReader Pagination Tests ---
+
+def _make_mock_message(msg_id: int, channel_id: str = "1") -> dict:
+    """Create a minimal Fluxer API message dict for testing."""
+    return {
+        "id": str(msg_id),
+        "channel_id": channel_id,
+        "content": f"msg {msg_id}",
+        "author": {"id": "1", "username": "test", "discriminator": "0001"},
+        "timestamp": "2024-01-01T00:00:00+00:00",
+        "type": 0,
+        "flags": 0,
+        "mention_roles": [],
+        "mention_channels": [],
+        "mentions": [],
+        "attachments": [],
+        "embeds": [],
+        "stickers": [],
+        "pinned": False,
+        "mention_everyone": False,
+        "tts": False,
+        "reactions": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_fluxer_reader_fetches_all_messages():
+    """Messages returned newest-first by the API are collected and reversed
+    so fetch_message_history yields oldest-first across multiple pages."""
+    from src.fluxer.reader import FluxerReader
+
+    total = 250
+    page_size = 100
+
+    # Build messages oldest-first (id=1 is oldest)
+    all_msgs = [_make_mock_message(i) for i in range(1, total + 1)]
+
+    # API returns newest-first per page:
+    #  page 1: msgs 250 → 151 (newest 100)
+    #  page 2: msgs 150 → 51
+    #  page 3: msgs 50  → 1
+    def api_page(before_id: str | None) -> list[dict]:
+        if before_id is None:
+            # first call: newest messages
+            return list(reversed(all_msgs[-page_size:]))
+        before = int(before_id)
+        # collect messages with id < before, newest-first
+        older = [m for m in all_msgs if int(m["id"]) < before]
+        return list(reversed(older[-page_size:]))
+
+    mock_http = MagicMock()
+    mock_http.api_url = "https://api.fluxer.app/v1"
+    mock_http.get_messages = AsyncMock(side_effect=lambda channel_id, **kw: api_page(kw.get("before")))
+
+    reader = FluxerReader(token="t", server_id="1")
+    reader._http = mock_http
+    reader.guild_data = {"id": "1", "name": "Test", "icon": None, "banner": None}
+    reader.community_id = "1"
+    reader._cdn_base = "https://cdn.example.com"
+    reader._api_base = "https://api.fluxer.app"
+
+    results = []
+    async for wrapped in reader.fetch_message_history("1"):
+        results.append(wrapped.content)
+
+    assert len(results) == total, f"Expected {total} messages, got {len(results)}"
+    assert results[0] == "msg 1", "First should be oldest"
+    assert results[-1] == f"msg {total}", "Last should be newest"
+    assert results[99] == "msg 100"
+
+
+@pytest.mark.asyncio
+async def test_fluxer_reader_after_id_resume():
+    """Only messages with ID > after_id are yielded (exclusive)."""
+    from src.fluxer.reader import FluxerReader
+
+    page_size = 100
+    all_msgs = [_make_mock_message(i) for i in range(1, 60)]
+
+    def api_page(before_id: str | None) -> list[dict]:
+        if before_id is None:
+            return list(reversed(all_msgs[-page_size:]))
+        before = int(before_id)
+        older = [m for m in all_msgs if int(m["id"]) < before]
+        return list(reversed(older[-page_size:]))
+
+    mock_http = MagicMock()
+    mock_http.api_url = "https://api.fluxer.app/v1"
+    mock_http.get_messages = AsyncMock(side_effect=lambda channel_id, **kw: api_page(kw.get("before")))
+
+    reader = FluxerReader(token="t", server_id="1")
+    reader._http = mock_http
+    reader.guild_data = {"id": "1", "name": "Test", "icon": None, "banner": None}
+    reader.community_id = "1"
+    reader._cdn_base = "https://cdn.example.com"
+    reader._api_base = "https://api.fluxer.app"
+
+    # Resume from id 30 (exclusive — skip 1-30)
+    results = []
+    async for wrapped in reader.fetch_message_history("1", after_id="30"):
+        results.append(wrapped.content)
+
+    assert results[0] == "msg 31", f"First after 30 should be 31, got {results[0]}"
+    assert len(results) == 29, f"Expected 29 messages (31-59), got {len(results)}"
+
+
+@pytest.mark.asyncio
+async def test_fluxer_reader_inclusive_resume():
+    """When inclusive=True, the after_id message itself is included."""
+    from src.fluxer.reader import FluxerReader
+
+    page_size = 100
+    all_msgs = [_make_mock_message(i) for i in range(1, 60)]
+
+    def api_page(before_id: str | None) -> list[dict]:
+        if before_id is None:
+            return list(reversed(all_msgs[-page_size:]))
+        before = int(before_id)
+        older = [m for m in all_msgs if int(m["id"]) < before]
+        return list(reversed(older[-page_size:]))
+
+    mock_http = MagicMock()
+    mock_http.api_url = "https://api.fluxer.app/v1"
+    mock_http.get_messages = AsyncMock(side_effect=lambda channel_id, **kw: api_page(kw.get("before")))
+
+    reader = FluxerReader(token="t", server_id="1")
+    reader._http = mock_http
+    reader.guild_data = {"id": "1", "name": "Test", "icon": None, "banner": None}
+    reader.community_id = "1"
+    reader._cdn_base = "https://cdn.example.com"
+    reader._api_base = "https://api.fluxer.app"
+
+    results = []
+    async for wrapped in reader.fetch_message_history("1", after_id="30", inclusive=True):
+        results.append(wrapped.content)
+
+    assert results[0] == "msg 30", f"First (inclusive) should be 30, got {results[0]}"
+    assert len(results) == 30, f"Expected 30 messages (30-59), got {len(results)}"
+
+
+# --- Live Integration Tests (require ReaperFiles-AutoTest config) ---
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_fluxer_live_seed_and_migrate(reaper_config, test_data_dir, tmp_path):
+    """Seed source channels, migrate via FluxerReader → target, verify.
+
+    Channel names: ``reaper-live-a`` and ``reaper-live-b``.
+    Message counts are read from env vars (defaults shown):
+
+        LIVE_COUNT_A=300   LIVE_COUNT_B=400
+    """
+    if not test_data_dir.exists():
+        pytest.skip("ReaperFiles-AutoTest directory not found")
+
+    src_token = reaper_config.get("source_bot_token")
+    src_guild = reaper_config.get("source_server_id")
+    tgt_token = reaper_config.get("fluxer_bot_token")
+    tgt_guild = reaper_config.get("fluxer_server_id")
+    src_api = reaper_config.get("source_api_url") or "default"
+    tgt_api = reaper_config.get("fluxer_api_url") or "default"
+
+    if not all([src_token, src_guild, tgt_token, tgt_guild]):
+        pytest.skip("Missing tokens or guild IDs in config")
+
+    from src.fluxer.reader import FluxerReader
+    from tests.live_helpers import (
+        ensure_test_channel, _count_fluxer_test_messages,
+        make_fluxer_http, live_count,
+    )
+
+    count_a = live_count("LIVE_COUNT_A", 300)
+    count_b = live_count("LIVE_COUNT_B", 400)
+
+    src_http = make_fluxer_http(src_token, src_api)
+    tgt_http = make_fluxer_http(tgt_token, tgt_api)
+
+    # ── Setup: seed source channels ─────────────────────────────────────
+    src_ch_a, src_name_a = await ensure_test_channel(src_http, src_guild, "reaper-live-a", count_a)
+    src_ch_b, src_name_b = await ensure_test_channel(src_http, src_guild, "reaper-live-b", count_b)
+
+    # ── Setup: create target channels ───────────────────────────────────
+    tgt_ch_a, _ = await ensure_test_channel(tgt_http, tgt_guild, "reaper-live-a", 0)
+    tgt_ch_b, _ = await ensure_test_channel(tgt_http, tgt_guild, "reaper-live-b", 0)
+
+    # ── Read source via FluxerReader ────────────────────────────────────
+    reader = FluxerReader(token=src_token, server_id=str(src_guild), api_url=src_api)
+    await reader.start()
+
+    results_a = []
+    async for wrapped in reader.fetch_message_history(str(src_ch_a)):
+        results_a.append(wrapped.content)
+    assert len(results_a) == count_a
+
+    results_b = []
+    async for wrapped in reader.fetch_message_history(str(src_ch_b)):
+        results_b.append(wrapped.content)
+    assert len(results_b) == count_b
+
+    await reader.close()
+
+    # ── Copy to target ──────────────────────────────────────────────────
+    for tgt_ch, results in [(tgt_ch_a, results_a), (tgt_ch_b, results_b)]:
+        for content in results:
+            await tgt_http.send_message(tgt_ch, content=content)
+
+    # ── Verify target ───────────────────────────────────────────────────
+    tgt_count_a = await _count_fluxer_test_messages(tgt_http, tgt_ch_a)
+    tgt_count_b = await _count_fluxer_test_messages(tgt_http, tgt_ch_b)
+    assert tgt_count_a == count_a, f"Target ch-a: expected {count_a}, got {tgt_count_a}"
+    assert tgt_count_b == count_b, f"Target ch-b: expected {count_b}, got {tgt_count_b}"
+
+    await src_http.close()
+    await tgt_http.close()
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_fluxer_live_resume(reaper_config, test_data_dir):
+    """Verify that fetch_message_history correctly resumes from an after_id.
+
+    Uses env var  LIVE_COUNT_RESUME=200  (default).
+    """
+    if not test_data_dir.exists():
+        pytest.skip("ReaperFiles-AutoTest directory not found")
+
+    src_token = reaper_config.get("source_bot_token")
+    src_guild = reaper_config.get("source_server_id")
+    src_api = reaper_config.get("source_api_url") or "default"
+
+    if not all([src_token, src_guild]):
+        pytest.skip("Missing source_bot_token or source_server_id in config")
+
+    from src.fluxer.reader import FluxerReader
+    from tests.live_helpers import ensure_test_channel, make_fluxer_http, live_count
+
+    total = live_count("LIVE_COUNT_RESUME", 200)
+    if total < 2:
+        pytest.skip("LIVE_COUNT_RESUME must be >= 2 for resume test")
+
+    src_http = make_fluxer_http(src_token, src_api)
+    src_ch, src_name = await ensure_test_channel(src_http, src_guild, "reaper-live-resume", total)
+
+    reader = FluxerReader(token=src_token, server_id=str(src_guild), api_url=src_api)
+    await reader.start()
+
+    all_msgs = []
+    async for wrapped in reader.fetch_message_history(str(src_ch)):
+        all_msgs.append(wrapped)
+
+    assert len(all_msgs) == total
+    mid_point = total // 2
+    mid_id = all_msgs[mid_point - 1].id  # (total/2)th message
+
+    resumed = []
+    async for wrapped in reader.fetch_message_history(str(src_ch), after_id=str(mid_id)):
+        resumed.append(wrapped.content)
+
+    expected_remaining = total - mid_point
+    assert len(resumed) == expected_remaining, f"Expected {expected_remaining} after resume, got {len(resumed)}"
+    assert resumed[0] == f"[reaper-test] msg {mid_point + 1} in #reaper-live-resume"
+    assert resumed[-1] == f"[reaper-test] msg {total} in #reaper-live-resume"
+
+    await reader.close()
+    await src_http.close()
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_discord_live_seed_and_migrate(reaper_config, test_data_dir):
+    """Seed Discord source channels and migrate to a Fluxer target.
+
+    Requires ``ReaperFiles-AutoTest/reaper_config.yaml`` with:
+      ``source_bot_token`` (Discord), ``source_server_id``,
+      ``fluxer_bot_token``, ``fluxer_server_id``, and
+      ``source_platform: "discord"``.
+    """
+    if not test_data_dir.exists():
+        pytest.skip("ReaperFiles-AutoTest directory not found")
+
+    src_token = reaper_config.get("source_bot_token")
+    src_guild = reaper_config.get("source_server_id")
+    tgt_token = reaper_config.get("fluxer_bot_token")
+    tgt_guild = reaper_config.get("fluxer_server_id")
+
+    if reaper_config.get("source_platform") != "discord":
+        pytest.skip("source_platform is not 'discord'")
+
+    if not all([src_token, src_guild, tgt_token, tgt_guild]):
+        pytest.skip("Missing tokens or guild IDs in config")
+
+    # TODO: implement Discord live test using discord.py client
+    #  1. Use `ensure_test_channel(http, guild, name, count, is_fluxer=False)`
+    #     once the Discord path in live_helpers is implemented
+    #  2. Create DiscordReader, read channels, verify counts
+    #  3. Create FluxerWriter, migrate messages, verify on target
+    pytest.skip("Discord live test not yet implemented")
+
+
+# --- Asset Sync Debug Tests ---
+
+
+@pytest.mark.live
+@pytest.mark.asyncio
+async def test_compare_source_and_target_emojis(reaper_config, test_data_dir):
+    """Fetch emojis from both source and target, compare by name, and report
+    which are already present vs which would be migrated.
+
+    Runs for any source platform (discord or fluxer) as long as both
+    source and target tokens are configured in ``ReaperFiles-AutoTest``.
+
+    This is a **diagnostic** test — it always passes.  Read the output.
+    """
+    if not test_data_dir.exists():
+        pytest.skip("ReaperFiles-AutoTest directory not found")
+
+    src_token  = reaper_config.get("source_bot_token")
+    src_guild  = reaper_config.get("source_server_id")
+    tgt_token  = reaper_config.get("fluxer_bot_token")
+    tgt_guild  = reaper_config.get("fluxer_server_id")
+    src_api    = reaper_config.get("source_api_url") or "default"
+    tgt_api    = reaper_config.get("fluxer_api_url") or "default"
+    src_plat   = reaper_config.get("source_platform", "discord")
+
+    if not all([src_token, src_guild, tgt_token, tgt_guild]):
+        pytest.skip("Missing tokens or guild IDs in config")
+
+    # ── Source emojis ──────────────────────────────────────────────────
+    if src_plat == "discord":
+        from src.core.discord_reader import DiscordReader
+        reader = DiscordReader(token=src_token, server_id=src_guild)
+        await reader.start()
+        src_emojis = await reader.get_emojis()
+    else:
+        from src.fluxer.reader import FluxerReader
+        reader = FluxerReader(token=src_token, server_id=src_guild, api_url=src_api)
+        await reader.start()
+        src_emojis = await reader.get_emojis()
+
+    src_names  = {e.name for e in src_emojis}
+    src_anim   = {e.name: getattr(e, 'animated', False) for e in src_emojis}
+    src_by_id  = {str(e.id): e.name for e in src_emojis}
+
+    # ── Target emojis ──────────────────────────────────────────────────
+    from src.fluxer.writer import FluxerWriter
+    from src.core.configuration import AppConfig
+    tgt_config = AppConfig()
+    writer = FluxerWriter(token=tgt_token, community_id=tgt_guild, config=tgt_config, api_url=tgt_api)
+    await writer.start()
+    tgt_raw = await writer.get_emojis()  # list of dicts with "name" and "id"
+
+    tgt_names = {e.get("name") for e in tgt_raw if e.get("name")}
+    tgt_by_name = {e.get("name"): e.get("id") for e in tgt_raw if e.get("name")}
+    tgt_ids   = {e.get("id") for e in tgt_raw}
+
+    # ── Comparison ─────────────────────────────────────────────────────
+    already_on_target = src_names & tgt_names
+    missing_on_target = src_names - tgt_names
+    extra_on_target   = tgt_names - src_names
+
+    matched = len(already_on_target)
+    need_migration = len(missing_on_target)
+    total_src = len(src_names)
+    total_tgt = len(tgt_names)
+
+    print(f"\n{'='*60}")
+    print(f"  Source emojis : {total_src}  |  Target emojis : {total_tgt}")
+    print(f"  Already on target (would skip) : {matched}")
+    print(f"  Need migration                 : {need_migration}")
+    print(f"  On target but NOT in source    : {len(extra_on_target)}")
+    print(f"{'='*60}")
+
+    if missing_on_target:
+        print(f"\n  Emojis that WOULD be migrated ({need_migration}):")
+        for name in sorted(missing_on_target)[:10]:
+            anim = "🎞" if src_anim.get(name) else ""
+            print(f"    {anim} {name}")
+        if need_migration > 10:
+            print(f"    ... and {need_migration - 10} more")
+
+    if extra_on_target:
+        print(f"\n  Emojis on target but NOT in source ({len(extra_on_target)}):")
+        for name in sorted(extra_on_target)[:5]:
+            print(f"    {name}")
+        if len(extra_on_target) > 5:
+            print(f"    ... and {len(extra_on_target) - 5} more")
+
+    # ── State DB check ─────────────────────────────────────────────────
+    print(f"\n  State DB mappings:")
+    for src_id, src_name in sorted(src_by_id.items())[:5]:
+        tgt_id = tgt_by_name.get(src_name)
+        exists = "✓" if tgt_id and tgt_id in tgt_ids else "✗"
+        print(f"    {src_name:30s}  src={src_id[:10]}...  →  tgt={'found' if tgt_id else 'NONE'}  {exists}")
+
+    await reader.close()
+    await writer.close()
+
+    # Always pass — this is a diagnostic, not a gate
+    assert True

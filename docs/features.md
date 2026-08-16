@@ -1,6 +1,11 @@
 # Extensive Feature list
 Here's complete list of everything the tool can handle and any specific caveats or workarounds.
 
+## 🟢 Fluxer sources are supported for direct migration
+Starting with V4, you can migrate **from** a Fluxer community (official or self-hosted) **to** another Fluxer or Stoat community. Roles, channels, permissions, emojis, icons, messages, and more — all supported*. See the [guide](guide.md) for setup.
+
+*Barring Sticker Cloning — stickers are not cloned from Fluxer sources yet, and cloning stickers **to** a self-hosted Fluxer target fails (`401 UNAUTHORIZED` — an upstream `fluxer.py` issue; use the official Fluxer instance for stickers).
+
 - 🟩Fully supported
 - 🟧Work Around implemented
 - 🟥Limitation
@@ -48,6 +53,7 @@ Here's complete list of everything the tool can handle and any specific caveats 
 ### Emojis
 * 🟩 **Standard Emojis**: Full support for Unicode emojis.
 * 🟩 **Custom Server Emojis**: Automatically clones custom server emojis (both static and animated) to the target server.
+* 🟩 **Oversized Emojis**: Emojis over the target's size limit (e.g. 512 KB on Fluxer) are automatically resized/compressed before upload, so one large emoji can't stall the migration.
 * 🟩 **Emoji Mapping in messages**: References to custom emojis in migrated messages are updated to point to the new emoji IDs on the target platform.
 * 🟥 **External Emojis**: Emojis from external servers are not migrated; only the `:emoji_name:` will be displayed.
 
@@ -57,6 +63,7 @@ Here's complete list of everything the tool can handle and any specific caveats 
     - **Fluxer**: Converted to `.webp` for compatibility.
     - **Stoat**: Converted to `.gif`.
 > Stickers are currently migrated as attachments since sending stickers via api is not yet fully supported on target platforms.
+> ⚠️ **Self-hosted Fluxer targets**: sticker cloning fails with `401 UNAUTHORIZED` even for Administrator bots (upstream `fluxer.py` bug) — use the official Fluxer instance for stickers. Stickers are also not cloned when the **source** is Fluxer.
 
 ### Mentions & Discord Links
 * 🟩 **Channel Mentions**: Automatically resolves `#channel` mentions to point to the correct migrated channel on the target server.
@@ -77,7 +84,8 @@ Here's complete list of everything the tool can handle and any specific caveats 
 ---
 
 # Backup Tool
-You can create a local snapshot of your Discord server using the Backup Tool. 
+You can create a local snapshot of your Discord server using the Backup Tool.
+> ⚠️ Backups currently support **Discord sources only** — backing up Fluxer communities is planned but not implemented yet.
 
 * 🟩 **SQLite Database**: All server mappings, message IDs, and content are stored in a SQLite database.
 * 🟩 **Deduplicated Attachments**: All the attachment media is stored in a content-addressable storage system.

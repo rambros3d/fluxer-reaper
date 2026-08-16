@@ -114,7 +114,7 @@ class OperationPane(Container):
         self.engine: MigrationContext | None = None
         self.exporter: DiscordExporter | None = None
         self.validation_results: dict = {
-            "discord_validating": True,
+            "source_validating": True,
             "target_validating": True,
         }
         self.tokens_valid = False
@@ -126,7 +126,7 @@ class OperationPane(Container):
             with Vertical(id="op_info"):
                 with Horizontal(id="op_info_split"):
                     with Vertical(classes="info_pane"):
-                        yield Label("Discord", classes="pane_header")
+                        yield Label(f"{self.config.source_platform.capitalize()} (Source)", classes="pane_header text-glow")
                         yield Label("Server: [yellow]Loading...[/yellow]", id="op_lbl_d_server")
                         if self.view_mode == "backup":
                             yield Label("Source: [yellow]Loading...[/yellow]", id="op_lbl_d_bot")
@@ -141,7 +141,7 @@ class OperationPane(Container):
 
                     with Vertical(classes="info_pane", id="op_target_pane"):
                         yield Label("Target", id="op_lbl_t_header", classes="pane_header")
-                        yield Label("Community: [yellow]Loading...[/yellow]", id="op_lbl_t_comm")
+                        yield Label("Community: [yellow]Loading...[/yellow] ", id="op_lbl_t_comm")
                         yield Label("Bot: [yellow]Loading...[/yellow]", id="op_lbl_t_bot")
                         
                         with Horizontal(classes="status_row"):
@@ -193,6 +193,8 @@ class OperationPane(Container):
             return "."
         return f"ReaperFiles-{self.cfg_name}"
 
+
+    # REDESIGN
     def _rebuild_engine(self):
         # In backup_transfer mode, the Backup tab reads from LIVE discord, 
         # while the Shuttle tab reads from the LOCAL BACKUP.
@@ -203,13 +205,15 @@ class OperationPane(Container):
             
         self.engine = MigrationContext(self.config, self.target_platform, source_mode=source, base_dir=self._base_dir())
         if self.view_mode == "backup":
-            self.exporter = DiscordExporter(self.engine.discord_reader, base_dir=self._base_dir())
+            self.exporter = DiscordExporter(self.engine.source_reader, base_dir=self._base_dir())
 
     def _get_backup_info(self) -> str | None:
-        if not self.config or not self.config.discord_server_id:
+        if not self.config or not self.config.source_server_id:
             return None
-            
-        target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        
+        backup_str = f"SOURCE_BACKUP-{self.config.source_server_id}"
+                      
+        target_dir = Path(self._base_dir()) / backup_str
         if not target_dir.exists():
             return None
             
@@ -233,33 +237,35 @@ class OperationPane(Container):
     # ── labels ────────────────────────────────────────────────────────────
 
         # ── labels ────────────────────────────────────────────────────────────
+
+    # REDESIGN - DISCORD HEAVY
     def _update_info_labels(self):
         if not self.is_mounted:
             return
         v = self.validation_results
 
-        # Discord
-        d_name = v.get("discord_server_name")
-        d_bot = v.get("discord_bot_name")
+        # Source
+        d_name = v.get("source_server_name")
+        d_bot = v.get("source_bot_name")
         
-        is_val_d = v.get("discord_validating") or v.get("discord_token") is None
+        is_val_d = v.get("source_validating") or v.get("source_token") is None
         if is_val_d:
             s_disp, b_disp = "[yellow]Validating...[/yellow]", "[yellow]Validating...[/yellow]"
-        elif v.get("discord_timeout"):
+        elif v.get("source_timeout"):
             s_disp, b_disp = "[red]TIMEOUT[/red]", "[red]TIMEOUT[/red]"
-        elif v.get("discord_token") and v.get("discord_server"):
+        elif v.get("source_token") and v.get("source_server"):
             s_disp = f'[cyan]"{d_name}"[/cyan]'
             b_disp = f'[green]{d_bot}[/green]'
-        elif v.get("discord_token") and not v.get("discord_server"):
+        elif v.get("source_token") and not v.get("source_server"):
             s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", f"[green]{d_bot}[/green]"
-        elif v.get("discord_token") is False:
+        elif v.get("source_token") is False:
             if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
-                if not self.config.discord_server_id:
+                if not self.config.source_server_id:
                     s_disp, b_disp = "[red]SERVER NOT SELECTED[/red]", "[red]SERVER NOT SELECTED[/red]"
                 else:
                     s_disp, b_disp = "[red]NOT FOUND[/red]", "[red]NOT FOUND[/red]"
             else:
-                if not self.config.discord_bot_token:
+                if not self.config.source_bot_token:
                     s_disp, b_disp = "[red]NOT SET UP[/red]", "[red]NOT SET UP[/red]"
                 else:
                     s_disp, b_disp = "[red]INVALID TOKEN[/red]", "[red]INVALID TOKEN[/red]"
@@ -274,13 +280,13 @@ class OperationPane(Container):
         else:
             for lbl in self.query("#op_lbl_d_bot"): lbl.update(f"Bot: {b_disp}")
 
-        # Discord Side Status
-        d_err = v.get("discord_error")
+        # Source Side Status
+        d_err = v.get("source_error")
         di = v.get("discord_intents", {})
-        dp = v.get("discord_permissions", {})
+        dp = v.get("source_permissions", {})
         
         d_missing = []
-        if d_err is None and v.get("discord_token") and v.get("discord_server"):
+        if d_err is None and v.get("source_token") and v.get("source_server"):
             if not di.get("message_content"): d_missing.append("Message Content Intent")
             if not di.get("members"): d_missing.append("Server Members Intent")
             
@@ -296,17 +302,17 @@ class OperationPane(Container):
             for ldr in self.query("#op_d_loader"): ldr.display = False
             for lbl in self.query("#op_lbl_d_status"): lbl.display = True
             
-            if v.get("discord_token") and v.get("discord_server") and not d_missing:
+            if v.get("source_token") and v.get("source_server") and not d_missing:
                 d_status = "STATUS: [green]VALID[/green]"
-            elif v.get("discord_token") and not v.get("discord_server"):
+            elif v.get("source_token") and not v.get("source_server"):
                 d_status = "[red]SERVER NOT SET[/red]"
-            elif v.get("discord_timeout"):
+            elif v.get("source_timeout"):
                 d_status = "[red]TIMEOUT[/red]"
             elif d_err:
                 d_status = f"[red]{d_err}[/red]"
             elif d_missing:
                 d_status = f"[yellow]MISSING: {', '.join(d_missing)}[/yellow]"
-            elif v.get("discord_token") is False:
+            elif v.get("source_token") is False:
                 if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
                     d_status = "[yellow]Local Backup[/yellow] [red]Not Found[/red]"
                 else:
@@ -328,7 +334,7 @@ class OperationPane(Container):
             for rle in self.query("#op_vrule"): rle.display = False
             for pne in self.query("#op_target_pane"): pne.display = False
             
-            enabled = (v.get("discord_token") and v.get("discord_server") and not d_missing)
+            enabled = (v.get("source_token") and v.get("source_server") and not d_missing)
             for btn in self.query("#op_backup_msgs"):
                 btn.disabled = not enabled
             for btn in self.query("#op_backup_sync"):
@@ -347,7 +353,7 @@ class OperationPane(Container):
             for pne in self.query("#op_target_pane"): pne.display = True
             
             # Target
-            plat = "Fluxer" if self.target_platform == "fluxer" else "Stoat"
+            plat = "Fluxer (target)" if self.target_platform == "fluxer" else "Stoat (target)" 
             t_name = v.get("target_community_name")
             t_bot = v.get("target_bot_name")
             
@@ -434,17 +440,17 @@ class OperationPane(Container):
 
         info = self._get_backup_info()
         self.validation_results = {
-            "discord_validating": True,
+            "source_validating": True,
             "target_validating": True,
-            "discord_token": None, "discord_bot_name": None,
-            "discord_server": None, "discord_server_name": None,
-            "discord_intents": {}, "discord_permissions": {},
-            "discord_error": None,
+            "source_token": None, "source_bot_name": None,
+            "source_server": None, "source_server_name": None,
+            "discord_intents": {}, "source_permissions": {},
+            "source_error": None,
             "target_token": None, "target_bot_name": None,
             "target_community": None, "target_community_name": None,
             "target_permissions": {},
             "target_error": None,
-            "discord_timeout": False, "target_timeout": False,
+            "source_timeout": False, "target_timeout": False,
             "backup_info_text": f"Last backup: [cyan]{info}[/cyan]" if info else "",
         }
         self.tokens_valid = False
@@ -452,8 +458,8 @@ class OperationPane(Container):
         self.has_backup = bool(info)
 
         # Check what we have
-        has_d_token = bool(self.config.discord_bot_token)
-        has_d_server = bool(self.config.discord_server_id)
+        has_d_token = bool(self.config.source_bot_token)
+        has_d_server = bool(self.config.source_server_id)
         
         if self.target_platform == "stoat":
             has_t_token = bool(self.config.stoat_bot_token)
@@ -463,21 +469,21 @@ class OperationPane(Container):
             has_t_server = bool(self.config.fluxer_server_id)
 
         # Flag which operations are being validated
-        validating_discord = False
+        validating_source = False
         validating_target = False
 
-        # 1. Determine Discord validating status
+        # 1. Determine Source validating status
         if self.config.tool_mode == "backup_transfer" and self.view_mode == "shuttle":
             if has_d_server: 
-                validating_discord = True
+                validating_source = True
             else:
-                self.validation_results["discord_token"] = False
-                self.validation_results["discord_server"] = False
+                self.validation_results["source_token"] = False
+                self.validation_results["source_server"] = False
         else:
             if has_d_token:
-                validating_discord = True
+                validating_source = True
             else:
-                self.validation_results["discord_token"] = False
+                self.validation_results["source_token"] = False
 
         # 2. Determine Target validating status
         if self.view_mode == "shuttle" and has_t_token:
@@ -485,31 +491,31 @@ class OperationPane(Container):
         elif self.view_mode == "shuttle":
             self.validation_results["target_token"] = False
 
-        self.validation_results["discord_validating"] = validating_discord
+        self.validation_results["source_validating"] = validating_source
         self.validation_results["target_validating"] = validating_target
         
         # Trigger the UI spinners instantly
         self._update_info_labels()
 
-        async def check_discord():
+        async def check_source():
             try:
                 import asyncio
-                res = await asyncio.wait_for(self.engine.discord_reader.validate(), timeout=10.0)
-                self.validation_results["discord_token"] = res.get("token", False)
-                self.validation_results["discord_bot_name"] = res.get("bot_name")
-                self.validation_results["discord_server"] = res.get("server", False)
-                self.validation_results["discord_server_name"] = res.get("server_name")
+                res = await asyncio.wait_for(self.engine.source_reader.validate(), timeout=10.0)
+                self.validation_results["source_token"] = res.get("token", False)
+                self.validation_results["source_bot_name"] = res.get("bot_name")
+                self.validation_results["source_server"] = res.get("server", False)
+                self.validation_results["source_server_name"] = res.get("server_name")
                 self.validation_results["discord_intents"] = res.get("intents", {})
-                self.validation_results["discord_permissions"] = res.get("permissions", {})
-                self.validation_results["discord_error"] = res.get("error_reason")
+                self.validation_results["source_permissions"] = res.get("permissions", {})
+                self.validation_results["source_error"] = res.get("error_reason")
             except asyncio.TimeoutError:
-                self.validation_results["discord_timeout"] = True
+                self.validation_results["source_timeout"] = True
             except asyncio.CancelledError:
                 pass
             except Exception as e:
-                self.validation_results["discord_error"] = str(e)
+                self.validation_results["source_error"] = str(e)
             finally:
-                self.validation_results["discord_validating"] = False
+                self.validation_results["source_validating"] = False
                 self._check_and_update()
 
         async def check_target():
@@ -533,7 +539,7 @@ class OperationPane(Container):
                 self._check_and_update()
 
         coros = []
-        if validating_discord: coros.append(check_discord())
+        if validating_source: coros.append(check_source())
         if validating_target: coros.append(check_target())
         
         try:
@@ -548,10 +554,10 @@ class OperationPane(Container):
     def _check_and_update(self) -> None:
         """Called safely on the main thread after any validation task finishes."""
         v = self.validation_results
-        discord_ok = v.get("discord_token") and v.get("discord_server")
+        source_ok = v.get("source_token") and v.get("source_server")
         
         if self.view_mode == "backup":
-            self.tokens_valid = bool(discord_ok)
+            self.tokens_valid = bool(source_ok)
             # Check for backup regardless of token validity
             info = self._get_backup_info()
             if info:
@@ -559,7 +565,7 @@ class OperationPane(Container):
                 self.has_backup = True
         else:
             target_ok = v.get("target_token") and v.get("target_community")
-            self.tokens_valid = bool(discord_ok and target_ok)
+            self.tokens_valid = bool(source_ok and target_ok)
             
             # Post validation adjustments
             if self.tokens_valid:
@@ -596,7 +602,7 @@ class OperationPane(Container):
             self.run_backup_sync()
         elif bid == "op_backup_stats":
             from src.ui.backup_stats import BackupStatsScreen
-            target_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+            target_dir = Path(self._base_dir()) / f"SOURCE_BACKUP-{self.config.source_server_id}"
             self.app.push_screen(BackupStatsScreen(self.cfg_name, target_dir))
         elif bid == "op_autotest" or bid == "btn_autotest":
             self.run_autotest_sequence()
@@ -683,7 +689,7 @@ class OperationPane(Container):
         modal.write("[bold yellow]Starting Backup Auto-Test...[/bold yellow]")
         
         # 1. Clear old backup directory completely
-        server_dir = Path(self._base_dir()) / f"DISCORD_BACKUP-{self.config.discord_server_id}"
+        server_dir = Path(self._base_dir()) / f"SOURCE_BACKUP-{self.config.source_server_id}"
         if server_dir.exists():
             modal.write(f"[yellow]Deleting existing backup directory: {server_dir}[/yellow]")
             try:
@@ -693,20 +699,20 @@ class OperationPane(Container):
         
         # 2. Setup & Metadata
         modal.set_status("Initializing Discord connection...")
-        await self.engine.discord_reader.start()
+        await self.engine.source_reader.start()
         await self.exporter.setup()
         self.exporter.is_running = True
         
         modal.write("\n[bold cyan]Phase 1: Full Server Backup[/bold cyan]")
         
         # 3. Use unified backup logic in autotest mode
-        all_channels = await self.engine.discord_reader.get_channels()
+        all_channels = await self.engine.source_reader.get_channels()
         eligible_channels = [
             c for c in all_channels
             if c.type in [
-                self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                self.engine.source_reader.CHANNEL_TYPE_FORUM
             ]
         ]
         
@@ -716,8 +722,8 @@ class OperationPane(Container):
             force_overwrite=True,
             is_autotest=True
         )
-    # ── (1) clone server template (combined) ─────────────────────────────
 
+    # ── (1) clone server template (combined) ─────────────────────────────
     def _open_clone_menu(self):
         options = [
             ("sub_clone_roles", "Roles & Role Permissions"),
@@ -776,17 +782,25 @@ class OperationPane(Container):
             preview = await self._fetch_clone_preview(selections) if connections_started else {}
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
                 if src_server:
+                    # Fetch live counts from the reader (works for both Discord and Fluxer)
+                    try:
+                        src_roles = await self.engine.source_reader.get_roles()
+                        src_emojis = await self.engine.source_reader.get_emojis()
+                        src_channels = await self.engine.source_reader.get_channels()
+                    except Exception:
+                        src_roles, src_emojis, src_channels = [], [], []
+
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
-                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
-                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_channels)}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
@@ -899,17 +913,25 @@ class OperationPane(Container):
                 logger.warning(f"Could not pre-connect for Sync preview: {e}")
 
             if connections_started:
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
                 if src_server:
+                    # Fetch live counts from the reader (works for both Discord and Fluxer)
+                    try:
+                        src_roles = await self.engine.source_reader.get_roles()
+                        src_emojis = await self.engine.source_reader.get_emojis()
+                        src_channels = await self.engine.source_reader.get_channels()
+                    except Exception:
+                        src_roles, src_emojis, src_channels = [], [], []
+
                     modal.write(f"[bold cyan]Source Server Profile:[/bold cyan]")
                     modal.write(f"  Name: [green]{src_server.name}[/green]")
                     modal.write(f"  Icon: [green]{'Present' if src_server.icon else 'None'}[/green]")
-                    modal.write(f"  Roles: [green]{len(getattr(src_server, 'roles', []))}[/green]")
-                    modal.write(f"  Emojis: [green]{len(getattr(src_server, 'emojis', []))}[/green]")
-                    modal.write(f"  Channels: [green]{len(getattr(src_server, 'channels', []))}[/green]")
+                    modal.write(f"  Roles: [green]{len(src_roles)}[/green]")
+                    modal.write(f"  Emojis: [green]{len(src_emojis)}[/green]")
+                    modal.write(f"  Channels: [green]{len(src_channels)}[/green]")
                     modal.write("")
                 modal.write(f"[bold cyan]Target Community:[/bold cyan] [green]{tgt_server_name}[/green]\n")
 
@@ -976,8 +998,8 @@ class OperationPane(Container):
         
         modal.set_item_status("Processing Server Structure...")
         await sync_channel_state(self.engine)
-        categories = await self.engine.discord_reader.get_categories()
-        channels = await self.engine.discord_reader.get_channels()
+        categories = await self.engine.source_reader.get_categories()
+        channels = await self.engine.source_reader.get_channels()
         
         async def update_progress(item_name, status, current, total):
             color = "cyan" if status == "Copying" else "yellow"
@@ -1031,6 +1053,17 @@ class OperationPane(Container):
         return synced
 
     async def _logic_copy_assets(self, modal: ProgressScreen, types_to_include: list[str], force: bool = False):
+        # Ensure the migration state database is initialised so that
+        # name-based matching in sync_assets_state is persisted.
+        tid = self.config.fluxer_server_id if self.target_platform == "fluxer" else self.config.stoat_server_id
+        if tid and not self.engine.state.db:
+            try:
+                tgt_info = await self.engine.writer.validate()
+                name = tgt_info.get("community_name", "Target") if tgt_info else "Target"
+            except Exception:
+                name = "Target"
+            self.engine.ensure_state_initialized(str(tid), name)
+
         asset_mod = stoat_emoji_stickers if self.target_platform == "stoat" else fluxer_emoji_stickers
         modal.set_item_status("Processing Assets...")
         await asset_mod.sync_assets_state(self.engine)
@@ -1135,7 +1168,6 @@ class OperationPane(Container):
         return "\n".join(lines)
 
     # ── (5) message migration ─────────────────────────────────────────────
-
     @work(exclusive=True)
     async def run_migrate_messages(self, modal: ProgressScreen | None = None) -> None:
         await self._logic_migrate_messages(modal)
@@ -1149,10 +1181,10 @@ class OperationPane(Container):
         await self._perform_auto_matching()
         
         # 2. Get channels
-        d_channels = await self.engine.discord_reader.get_channels()
+        d_channels = await self.engine.source_reader.get_channels()
         text_channels = [c for c in d_channels if c.type in [
-            self.engine.discord_reader.CHANNEL_TYPE_TEXT, 
-            self.engine.discord_reader.CHANNEL_TYPE_NEWS
+            self.engine.source_reader.CHANNEL_TYPE_TEXT, 
+            self.engine.source_reader.CHANNEL_TYPE_NEWS
         ]]
         
         modal.write(f"[bold cyan]Auto-Test: Found {len(text_channels)} channels to migrate.[/bold cyan]")
@@ -1193,6 +1225,7 @@ class OperationPane(Container):
 
         migrate_mod = fluxer_migrate if self.target_platform == "fluxer" else stoat_migrate
         platform_name = self.target_platform.capitalize()
+        source_name = getattr(self.engine.config, "source_platform", "discord").capitalize()
 
         if not modal:
             modal = ProgressScreen(log_level=self.config.log_level)
@@ -1210,15 +1243,15 @@ class OperationPane(Container):
             modal.set_status("Synchronizing entity mappings...")
             await self._perform_auto_matching()
 
-            full_d = await self.engine.discord_reader.get_channels()
+            full_d = await self.engine.source_reader.get_channels()
             
             # If reading from backup, only show channels that have actual message backup data
-            if getattr(self.engine, "source_mode", "live") == "backup" and hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
-                valid_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+            if getattr(self.engine, "source_mode", "live") == "backup" and hasattr(self.engine.source_reader, "get_backed_up_channel_ids"):
+                valid_ids = await self.engine.source_reader.get_backed_up_channel_ids()
                 full_d = [c for c in full_d if c.id in valid_ids]
                 
-            d_channels = [c for c in full_d if c.type in [self.engine.discord_reader.CHANNEL_TYPE_TEXT, self.engine.discord_reader.CHANNEL_TYPE_NEWS]]
-            d_cats = await self.engine.discord_reader.get_categories()
+            d_channels = [c for c in full_d if c.type in [self.engine.source_reader.CHANNEL_TYPE_TEXT, self.engine.source_reader.CHANNEL_TYPE_NEWS]]
+            d_cats = await self.engine.source_reader.get_categories()
             d_cat_map = {c.id: c.name for c in d_cats}
 
             if not d_channels:
@@ -1250,7 +1283,7 @@ class OperationPane(Container):
                     if not pick_future.done():
                         pick_future.set_result(result)
 
-                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name, all_tgt_channels=full_f), on_pick)
+                self.app.push_screen(ChannelPickerScreen(d_channels, d_cat_map, f_channels, target_cat_names, platform_name, src_name=source_name, all_tgt_channels=full_f), on_pick)
                 res = await pick_future
 
                 if res is None:
@@ -1294,7 +1327,7 @@ class OperationPane(Container):
                     last_migrated = self.engine.state.get_last_message_id(str(target_channel.get('id')))
                     has_previous = bool(last_migrated)
 
-                src_server = getattr(self.engine.discord_reader, 'guild', None)
+                src_server = getattr(self.engine.source_reader, 'guild', None)
                 tgt_server_info = await self.engine.writer.validate()
                 tgt_server_name = tgt_server_info.get("community_name", "target community")
                 
@@ -1329,7 +1362,7 @@ class OperationPane(Container):
                 async def update_scan(current_stats):
                     modal.set_status(f"[cyan]Scanned {current_stats['messages']} items...")
 
-                logger.info(f"Analyzing message history for Discord #{source_channel.name}...")
+                logger.info(f"Analyzing message history for {source_name} #{source_channel.name}...")
                 
                 # Run analysis and wait for confirmation concurrently
                 analysis_task = asyncio.create_task(migrate_mod.analyze_migration(
@@ -1342,10 +1375,10 @@ class OperationPane(Container):
                 # Fetch and display message previews as background tasks
                 async def fetch_previews():
                     try:
-                        first_msg_task = asyncio.create_task(self.engine.discord_reader.get_first_message(source_channel.id))
+                        first_msg_task = asyncio.create_task(self.engine.source_reader.get_first_message(source_channel.id))
                         prev_msg_task = None
                         if has_previous and last_migrated:
-                            prev_msg_task = asyncio.create_task(self.engine.discord_reader.get_message(source_channel.id, int(last_migrated)))
+                            prev_msg_task = asyncio.create_task(self.engine.source_reader.get_message(source_channel.id, int(last_migrated)))
                         
                         first_msg = await first_msg_task
                         if first_msg:
@@ -1411,7 +1444,7 @@ class OperationPane(Container):
                     i_status = f"[bold]{stats_analysis['messages']}[/bold] New Messages, [bold]{stats_analysis['threads']}[/bold] Threads."
                     modal.show_info(m_status, i_status)
                     
-                    modal.set_status(f"Awaiting Confirmation to migrate Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+                    modal.set_status(f"Awaiting Confirmation to migrate {source_name} [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
                     
                     # Now wait for the choice if not already made
                     choice = await confirm_task
@@ -1440,7 +1473,7 @@ class OperationPane(Container):
                         if not future.done():
                             future.set_result(res)
                             
-                    id_modal = MessageIDInputModal(self.engine.discord_reader, source_channel.id)
+                    id_modal = MessageIDInputModal(self.engine.source_reader, source_channel.id)
                     self.app.push_screen(id_modal, id_callback)
                     verified_id = await future
                     
@@ -1525,7 +1558,8 @@ class OperationPane(Container):
             total_attachments = stats_analysis["attachments"]
             
             modal.set_status(f"Migrating: [cyan]#{source_channel.name}[/cyan] → [green]#{target_channel.get('name')}[/green]")
-            modal.write(f"[bold cyan]Migration Started:[/bold cyan] Discord [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
+            source_label = getattr(self.engine.config, "source_platform", "discord").capitalize()
+            modal.write(f"[bold cyan]Migration Started:[/bold cyan] {source_label} [cyan]#{source_channel.name}[/cyan] → {platform_name} [green]#{target_channel.get('name')}[/green]")
             modal.write(f"[dim]Stats: {total_messages} messages, {total_threads} threads, {total_attachments} files[/dim]\n")
             
             logger.info(f"Execution started for #{source_channel.name} -> {platform_name} @ {target_channel.get('name')}")
@@ -1577,7 +1611,7 @@ class OperationPane(Container):
                 event_title = "Message Migration"
                 modal.phase_report(event_title, "stopped", show_back=False)
 
-            lines = [f"Migrated Discord #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
+            lines = [f"Migrated {source_label} #{source_channel.name} → {platform_name} #{target_channel.get('name')}:"]
             lines.append(f"{result['messages']} messages, {result['attachments']} attachments, {result['threads']} threads")
             await log_audit_event(self.engine, event_title, "\n".join(lines))
 
@@ -1596,6 +1630,7 @@ class OperationPane(Container):
     @work(exclusive=True)
     async def run_waterfall_migration(self, modal: ProgressScreen | None = None) -> None:
         await self._logic_waterfall_migration(modal)
+
 
     async def _logic_waterfall_migration(self, modal: ProgressScreen | None = None, is_autotest: bool = False) -> None:
         if not self.tokens_valid:
@@ -1621,12 +1656,12 @@ class OperationPane(Container):
             await self._perform_auto_matching()
 
             # 1. Missing channels check
-            if hasattr(self.engine.discord_reader, "get_all_channels"):
-                full_d = await self.engine.discord_reader.get_all_channels()
+            if hasattr(self.engine.source_reader, "get_all_channels"):
+                full_d = await self.engine.source_reader.get_all_channels()
                 # Include TEXT (0), CATEGORY (4), and NEWS (5)
                 d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             else:
-                full_d = await self.engine.discord_reader.get_channels()
+                full_d = await self.engine.source_reader.get_channels()
                 d_channels = [c for c in full_d if c.type in [0, 4, 5]]
             missing_channels = []
             for d in d_channels:
@@ -1706,8 +1741,8 @@ class OperationPane(Container):
             
             # Also check threads (filtering to only include those belonging to active channels)
             active_channel_ids = {str(c.id) for c in d_channels}
-            if hasattr(self.engine.discord_reader, "get_active_threads"):
-                threads = await self.engine.discord_reader.get_active_threads()
+            if hasattr(self.engine.source_reader, "get_active_threads"):
+                threads = await self.engine.source_reader.get_active_threads()
                 for t in threads:
                     pid = str(getattr(t, 'parent_id', getattr(t, 'channel_id', None)))
                     if pid not in active_channel_ids: continue
@@ -1717,8 +1752,8 @@ class OperationPane(Container):
             # 2.5 Filter by actual content (Only for BackupReader)
             # If a channel has NO messages in the backup, it will always be at 0 progress.
             # We exclude those from the global MIN calculation to avoid pulling it to 0.
-            if hasattr(self.engine.discord_reader, "get_backed_up_channel_ids"):
-                backed_up_src_ids = await self.engine.discord_reader.get_backed_up_channel_ids()
+            if hasattr(self.engine.source_reader, "get_backed_up_channel_ids"):
+                backed_up_src_ids = await self.engine.source_reader.get_backed_up_channel_ids()
                 backed_up_src_ids_str = {str(sid) for sid in backed_up_src_ids}
                 
                 filtered_tgt_ids = []
@@ -1729,8 +1764,8 @@ class OperationPane(Container):
                         if tid: filtered_tgt_ids.append(tid)
                 
                 # Also check threads
-                if hasattr(self.engine.discord_reader, "threads"):
-                    for t in self.engine.discord_reader.threads:
+                if hasattr(self.engine.source_reader, "threads"):
+                    for t in self.engine.source_reader.threads:
                         if str(t.id) in backed_up_src_ids_str:
                             tid = self.engine.state.get_target_channel_id(str(t.id))
                             if tid: filtered_tgt_ids.append(tid)
@@ -2032,7 +2067,7 @@ class OperationPane(Container):
         if not self.engine:
             return
         
-        reader = self.engine.discord_reader
+        reader = self.engine.source_reader
         writer = self.engine.writer
         is_fluxer = self.target_platform == "fluxer"
 
@@ -2174,7 +2209,7 @@ class OperationPane(Container):
         """Fetches preview data from Discord (source server) for cloning confirmation,
         comparing with existing mappings in SQLite for presence highlighting."""
         preview = {}
-        reader = self.engine.discord_reader
+        reader = self.engine.source_reader
         
         # We rely on the global auto-match that ran during connection
         mapping_ch = self.engine.state.channel_map
@@ -2276,9 +2311,9 @@ class OperationPane(Container):
         modal.write(f"[bold green]Success! {counts.get('emojis', 0)} emojis, {counts.get('stickers', 0)} stickers deleted.[/bold green]")
         await log_audit_event(self.engine, "Danger Zone: Assets Wiped", f"Deleted {counts.get('emojis', 0)} emojis and {counts.get('stickers', 0)} stickers.")
 
+
+
     # ── backup workers ───────────────────────────────────────────────────
-
-
     @work(exclusive=True)
     async def run_backup_messages(self) -> None:
         """UI entry point for full backup."""
@@ -2288,19 +2323,19 @@ class OperationPane(Container):
 
         try:
             modal_prog.set_status("Fetching channels...")
-            await self.engine.discord_reader.start()
+            await self.engine.source_reader.start()
             await self.exporter.setup()
 
-            all_channels = await self.engine.discord_reader.get_channels()
-            all_categories = await self.engine.discord_reader.get_categories()
+            all_channels = await self.engine.source_reader.get_channels()
+            all_categories = await self.engine.source_reader.get_categories()
             cat_map = {c.id: c.name for c in all_categories}
 
             eligible_channels = [
                 c for c in all_channels
                 if c.type in [
-                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                    self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.source_reader.CHANNEL_TYPE_FORUM
                 ]
             ]
 
@@ -2486,6 +2521,7 @@ class OperationPane(Container):
             await self.engine.close_connections()
             self.run_validate()
 
+
     @work(exclusive=True)
     async def run_backup_sync(self) -> None:
         modal_prog = ProgressScreen(log_level=self.config.log_level)
@@ -2495,11 +2531,11 @@ class OperationPane(Container):
 
         try:
             modal_prog.set_status("Starting sync...")
-            await self.engine.discord_reader.start()
+            await self.engine.source_reader.start()
             await self.exporter.setup()
 
             # Gather and print summary
-            server = getattr(self.engine.discord_reader, 'guild', None)
+            server = getattr(self.engine.source_reader, 'guild', None)
             if server:
                 modal_prog.write(f"[bold cyan]Server Profile to Sync:[/bold cyan]")
                 modal_prog.write(f"  Name: [green]{server.name}[/green]")
@@ -2547,13 +2583,13 @@ class OperationPane(Container):
             modal_prog.write(f"[bold green]Profile Sync Complete:[/bold green] {len(roles)} roles, {e_count} emojis, {s_count} stickers.")
             modal_prog.write("")
 
-            all_channels = await self.engine.discord_reader.get_channels()
+            all_channels = await self.engine.source_reader.get_channels()
             eligible_channels = [
                 c for c in all_channels
                 if c.type in [
-                    self.engine.discord_reader.CHANNEL_TYPE_TEXT,
-                    self.engine.discord_reader.CHANNEL_TYPE_NEWS,
-                    self.engine.discord_reader.CHANNEL_TYPE_FORUM
+                    self.engine.source_reader.CHANNEL_TYPE_TEXT,
+                    self.engine.source_reader.CHANNEL_TYPE_NEWS,
+                    self.engine.source_reader.CHANNEL_TYPE_FORUM
                 ]
             ]
 

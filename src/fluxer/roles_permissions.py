@@ -11,7 +11,7 @@ async def sync_roles_state(context: MigrationContext):
     Scans Fluxer for roles matching Discord names and updates state file mappings.
     """
     logger.info("Synchronizing role mappings with Fluxer...")
-    discord_roles = await context.discord_reader.get_roles()
+    discord_roles = await context.source_reader.get_roles()
     fluxer_roles = await context.fluxer_writer.client.get_guild_roles(context.config.fluxer_server_id)
     
     # Build name -> id maps and ID sets for Fluxer for fast lookup
@@ -41,8 +41,8 @@ async def sync_roles_state(context: MigrationContext):
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
     logger.info("Starting permissions synchronization...")
-    categories = await context.discord_reader.get_categories()
-    channels = await context.discord_reader.get_channels()
+    categories = await context.source_reader.get_categories()
+    channels = await context.source_reader.get_channels()
     
     # Only sync for items that are already mapped
     categories = [c for c in categories if context.state.get_fluxer_category_id(str(c.id))]
@@ -51,48 +51,66 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
     synced_info = {
         "categories_synced": [],
         "channels_synced": [],
-        "structure": {} # category_name -> [channel_names]
+        "structure": {}
     }
 
     total = len(categories) + len(channels)
     current_idx = 0
-    
+
     if total == 0:
         logger.info("No mapped categories or channels found for permission sync.")
         return synced_info
     
     logger.info(f"Syncing permissions for {len(categories)} categories and {len(channels)} channels.")
 
-    async def _sync_overwrites(discord_item, fluxer_id):
-        """Helper to sync role overwrites for a given channel or category."""
-        for target, overwrite in discord_item.overwrites.items():
+    # Helper to get overwrites from the source reader (generic)
+    async def _get_overwrites(item):
+        # If the reader has a dedicated method, use it
+        if hasattr(context.source_reader, 'get_channel_overwrites'):
+            return await context.source_reader.get_channel_overwrites(str(item.id))
+        # Fallback for Discord: use the object's overwrites attribute
+        overwrites = []
+        for target, overwrite in item.overwrites.items():
             if type(target).__name__ == "Role":
-                discord_role_id = str(target.id)
-                # Handle @everyone role special case
-                if discord_role_id == context.config.discord_server_id:
-                    fluxer_role_id = context.config.fluxer_server_id
-                else:
-                    fluxer_role_id = context.state.get_fluxer_role_id(discord_role_id)
-                
-                if not fluxer_role_id:
-                    continue
-                    
                 allow_val, deny_val = overwrite.pair()
-                await context.fluxer_writer.set_channel_permission(
-                    channel_id=fluxer_id,
-                    overwrite_id=fluxer_role_id,
-                    allow=allow_val.value,
-                    deny=deny_val.value,
-                    is_role=True
-                )
+                overwrites.append({
+                    "id": str(target.id),
+                    "type": 0,  # role
+                    "allow": allow_val.value if hasattr(allow_val, 'value') else allow_val,
+                    "deny": deny_val.value if hasattr(deny_val, 'value') else deny_val,
+                })
+        return overwrites
+
+    async def _sync_overwrites(discord_item, fluxer_id):
+        """Sync role overwrites for a given channel or category."""
+        overwrites = await _get_overwrites(discord_item)
+        for ow in overwrites:
+            if ow.get("type") != 0:  # only roles for now
+                continue
+            discord_role_id = ow["id"]
+            # Handle @everyone special case
+            if discord_role_id == context.config.source_server_id:
+                fluxer_role_id = context.config.fluxer_server_id
+            else:
+                fluxer_role_id = context.state.get_fluxer_role_id(discord_role_id)
+            if not fluxer_role_id:
+                continue
+            await context.fluxer_writer.set_channel_permission(
+                channel_id=fluxer_id,
+                overwrite_id=fluxer_role_id,
+                allow=ow.get("allow", 0),
+                deny=ow.get("deny", 0),
+                is_role=True
+            )
 
     # Dictionary to map category names to their synced channels
     # Categorize items as we sync them
-    cat_name_map = {str(cat.id): cat.name for cat in (await context.discord_reader.get_categories())}
+    cat_name_map = {str(cat.id): cat.name for cat in (await context.source_reader.get_categories())}
 
-    # Sync Category Permissions (Role Overwrites)
+    # Sync Category Permissions
     for cat in categories:
-        if not context.is_running: break
+        if not context.is_running:
+            break
         fluxer_id = context.state.get_fluxer_category_id(str(cat.id))
         if fluxer_id:
             try:
@@ -102,28 +120,28 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
                     synced_info["structure"][cat.name] = []
             except Exception as e:
                 logger.error(f"Failed syncing permissions for category {cat.name}: {e}")
-        
         current_idx += 1
-        if progress_callback: await progress_callback(f"Cat: {cat.name}", current_idx, total)
+        if progress_callback:
+            await progress_callback(f"Cat: {cat.name}", current_idx, total)
 
     # Sync Channel Permissions
     for channel in channels:
-        if not context.is_running: break
+        if not context.is_running:
+            break
         fluxer_id = context.state.get_fluxer_channel_id(str(channel.id))
         if fluxer_id:
             try:
                 await _sync_overwrites(channel, fluxer_id)
                 synced_info["channels_synced"].append(channel.name)
-                
                 parent_name = cat_name_map.get(str(channel.category_id), "No Category") if channel.category_id else "No Category"
                 if parent_name not in synced_info["structure"]:
                     synced_info["structure"][parent_name] = []
                 synced_info["structure"][parent_name].append(channel.name)
             except Exception as e:
                 logger.error(f"Failed syncing permissions for channel {channel.name}: {e}")
-        
         current_idx += 1
-        if progress_callback: await progress_callback(channel.name, current_idx, total)
+        if progress_callback:
+            await progress_callback(channel.name, current_idx, total)
 
     logger.info(f"Permissions sync complete: {len(synced_info['categories_synced'])} categories, {len(synced_info['channels_synced'])} channels.")
     return synced_info
@@ -132,7 +150,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 async def migrate_roles(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None, force: bool = False) -> list[str]:
     """Copies roles and their baseline permissions. Returns a list of cloned role names."""
     # Sort roles by position to respect Discord hierarchy
-    roles = sorted(await context.discord_reader.get_roles(), key=lambda r: r.position, reverse=True)
+    roles = sorted(await context.source_reader.get_roles(), key=lambda r: r.position, reverse=True)
 
     if not force:
         roles = [r for r in roles if not context.state.get_fluxer_role_id(str(r.id))]
@@ -151,16 +169,17 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
         # No permission mapping nescessary since fluxer uses the same permission map as discord
         fluxer_id = await context.fluxer_writer.create_role(
             name=role.name,
-            color=role.color.value,
+            color=role.color.value if hasattr(role.color, 'value') else role.color,
             hoist=role.hoist,
             mentionable=role.mentionable,
-            permissions=role.permissions.value,
-            position=role.position
+            permissions=role.permissions.value if hasattr(role.permissions, 'value') else role.permissions,
+            position=role.position if hasattr(role, 'position') else None
         )
         if fluxer_id:
             context.state.set_role_mapping(str(role.id), fluxer_id)
             cloned_role_names.append(role.name)
         
-        if progress_callback: await progress_callback(role.name, idx + 1, total)
+        if progress_callback:
+            await progress_callback(role.name, idx + 1, total)
         
     return cloned_role_names

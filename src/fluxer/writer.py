@@ -2,24 +2,138 @@ import asyncio
 import io
 import logging
 from typing import Optional, List, Dict, Any
-from fluxer import Bot, Webhook, Forbidden, File
+from fluxer import HTTPClient, Bot, Unauthorized, Webhook, Forbidden, File
+from src.core.configuration import AppConfig
+
+try:
+    from PIL import Image
+    _HAS_PIL = True
+except ImportError:
+    _HAS_PIL = False
+
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Emoji image optimisation
+# ---------------------------------------------------------------------------
+
+# Fluxer emoji size limit: 512 KB (static images are auto-resized by the API,
+# but animated GIFs must already fit).  We target just under the cap so that
+# an efficient re-encode at original dimensions usually passes without any
+# quality loss.
+_EMOJI_MAX_KB = 500
+
+
+def _shrink_emoji_image(image_bytes: bytes, name: str = "?") -> bytes:
+    """Return *image_bytes* resized / re-encoded so that it fits within
+    :data:`_EMOJI_MAX_KB` (if Pillow is available).
+
+    Strategy (tried in order, stops at first that fits):
+    1. Re-encode at original size — preserves original palette, zero quality loss.
+    2. Down-scale in fine steps — only when the raw re-encode is still too large.
+    """
+    if not _HAS_PIL or len(image_bytes) <= _EMOJI_MAX_KB * 1024:
+        return image_bytes
+
+    try:
+        original_kb = len(image_bytes) / 1024
+        img = Image.open(io.BytesIO(image_bytes))
+        fmt = img.format or "PNG"
+        is_anim = getattr(img, "is_animated", False)
+
+        # Scales: 1.0 = re-encode only (no resize), then gradual down-scale.
+        scales = [1.0, 0.95, 0.9, 0.85, 0.8, 0.7, 0.6, 0.5, 0.4, 0.33, 0.25]
+
+        for scale in scales:
+            new_w = max(32, int(img.width * scale))
+            new_h = max(32, int(img.height * scale))
+
+            buf = io.BytesIO()
+            if is_anim:
+                # Rewind to the first frame — previous scale attempt
+                # consumed the iterator.
+                img.seek(0)
+
+                frames: list[Image.Image] = []
+                durations: list[int] = []
+                disposals: list[int] = []
+                try:
+                    while True:
+                        if scale < 1.0:
+                            frame = img.convert("RGBA")
+                            frame = frame.resize((new_w, new_h), Image.LANCZOS)
+                        else:
+                            frame = img.copy()
+                        durations.append(img.info.get("duration", 0) or 100)
+                        disposals.append(img.info.get("disposal", 2))
+                        frames.append(frame)
+                        img.seek(img.tell() + 1)
+                except EOFError:
+                    pass
+
+                if not frames:
+                    continue
+
+                frames[0].save(
+                    buf,
+                    format="GIF",
+                    save_all=True,
+                    append_images=frames[1:],
+                    duration=durations,
+                    loop=img.info.get("loop", 0),
+                    disposal=disposals,
+                    transparency=0,
+                )
+            else:
+                # Static image — resize from the original (never reassign
+                # ``img`` itself or subsequent scale attempts would compound
+                # multiplicatively).
+                if scale < 1.0:
+                    resized = img.resize((new_w, new_h), Image.LANCZOS)
+                else:
+                    resized = img
+                resized.save(buf, format=fmt, optimize=True)
+
+            result = buf.getvalue()
+            result_kb = len(result) / 1024
+
+            if len(result) <= _EMOJI_MAX_KB * 1024:
+                verb = "re-encoded" if scale >= 1.0 else f"shrunk (scale={scale:.0%}, {new_w}x{new_h})"
+                logger.info(
+                    "Optimised emoji '%s': %.0f KB → %.0f KB (%s)",
+                    name, original_kb, result_kb, verb,
+                )
+                return result
+
+        logger.warning(
+            "Could not shrink emoji '%s' below %d KB (final: %.0f KB)",
+            name, _EMOJI_MAX_KB, result_kb,
+        )
+        return image_bytes
+
+    except Exception:
+        logger.debug("Image optimisation failed for emoji '%s'", name, exc_info=True)
+        return image_bytes
+
+
 class FluxerWriter:
-    def __init__(self, token: str, community_id: str, api_url: str = "default"):
+    def __init__(self, token: str, community_id: str, config: AppConfig, api_url: str = "default"):
         self.token = token
         self.community_id = str(community_id)
         self.api_url = api_url
         self.bot: Optional[Bot] = None
+        self.config = config
         self._bot_task: Optional[asyncio.Task] = None
         self._ready_event = asyncio.Event()
         self._webhooks: Dict[str, Webhook] = {} # channel_id -> Webhook
         self._channels_cache: List[Dict[str, Any]] | None = None
+        self._channel_last_timestamp: Dict[str, int] = {}  # channel_id -> last message unix timestamp
 
     @staticmethod
     async def fetch_guilds(token: str, api_url: str = "default") -> list[tuple[str, str]]:
         """Fetches the list of Fluxer communities the bot is in. Returns list of (label, id)."""
+        import asyncio
         from fluxer import HTTPClient, Guild
         
         http_kwargs = {}
@@ -28,13 +142,15 @@ class FluxerWriter:
             
         async with HTTPClient(token, **http_kwargs) as http:
             try:
-                guilds_data = await http.get_current_user_guilds()
+                guilds_data = await asyncio.wait_for(http.get_current_user_guilds(), timeout=15)
                 guilds_list = []
                 for g_data in guilds_data:
                     g = Guild.from_data(g_data)
                     label = f"{g.id}-{g.name}"
                     guilds_list.append((label, str(g.id)))
                 return guilds_list
+            except asyncio.TimeoutError:
+                raise RuntimeError("Fetching guilds timed out")
             except Exception as e:
                 print(f"Failed to fetch Fluxer communities via HTTP: {e}")
                 logger.error(f"Failed to fetch Fluxer communities via HTTP: {e}")
@@ -99,89 +215,77 @@ class FluxerWriter:
         return self.bot._http if self.bot else None
 
     async def validate(self) -> dict:
-        """Validates the token, community ID, and permissions."""
-        if not self.bot or not self._ready_event.is_set():
-            await self.start()
-        
-        is_token_valid = False
-        is_community_valid = False
-        bot_name = None
-        community_name = None
-        error_reason = None
-        permissions = {
-            "administrator": False
+        """
+        Validate token and community using only HTTP.
+        Returns a dict with token, community, permissions, etc.
+        """
+        import asyncio
+        result = {
+            "token": False,
+            "community": False,
+            "bot_name": None,
+            "community_name": None,
+            "error_reason": None,
+            "permissions": {"administrator": False}
         }
+        TIMEOUT = 15  # seconds
 
         try:
-            # Check token by fetching me
-            me_id = None
-            try:
-                if self.bot and self.bot.user:
-                    is_token_valid = True
-                    bot_name = self.bot.user.username
-                    me_id = self.bot.user.id
-                else:
-                    me = await self.client.get_current_user()
-                    if me:
-                        is_token_valid = True
-                        bot_name = me.get("username")
-                        me_id = int(me["id"])
-            except Exception as e:
-                error_reason = f"Token Error: {str(e)}"
-                return {
-                    "token": False,
-                    "community": False,
-                    "bot_name": None,
-                    "community_name": None,
-                    "error_reason": error_reason,
-                    "permissions": permissions
-                }
-            
-            # Check community and permissions concurrently
-            try:
-                # 1. Fetch data concurrently
-                guild_data, member_data, roles_data = await asyncio.gather(
-                    self.client.get_guild(self.community_id),
-                    self.client.get_guild_member(self.community_id, me_id),
-                    self.client.get_guild_roles(self.community_id)
-                )
+            # Build HTTP client with optional custom API URL
+            http_kwargs = {}
+            if self.api_url and self.api_url != "default":
+                http_kwargs["api_url"] = self.api_url
 
+            http = HTTPClient(self.token, **http_kwargs)
+            try:
+                # 1. Validate token – fetch current user
+                me = await asyncio.wait_for(http.get_current_user(), timeout=TIMEOUT)
+                result["token"] = True
+                result["bot_name"] = me.get("username")
+                me_id = int(me["id"])
+
+                # 2. Fetch community metadata and roles concurrently
+                guild_data, roles_data = await asyncio.gather(
+                    asyncio.wait_for(http.get_guild(self.community_id), timeout=TIMEOUT),
+                    asyncio.wait_for(http.get_guild_roles(self.community_id), timeout=TIMEOUT)
+                )
                 if guild_data:
-                    is_community_valid = True
-                    community_name = guild_data.get("name")
+                    result["community"] = True
+                    result["community_name"] = guild_data.get("name")
                     owner_id = int(guild_data.get("owner_id", 0))
-                    
-                    # 2. Compute effective permissions
-                    member_role_ids = {int(r) for r in member_data.get("roles", [])}
-                    computed_perms = 0
-                    guild_id_int = int(self.community_id)
-                    
-                    for r_data in roles_data:
-                        r_id = int(r_data["id"])
-                        # Add permissions for @everyone (role ID == guild ID) or roles the bot has
-                        if r_id == guild_id_int or r_id in member_role_ids:
-                            computed_perms |= int(r_data.get("permissions", 0))
-                    
-                    # 3. Check for Administrator bypass (Guild Owner or Administrator bit 1<<3)
-                    is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
-                    
-                    # 4. Map permissions dictionary
-                    permissions["administrator"] = is_admin
+
+                    # 3. Check admin permission (bot is owner or has Administrator bit)
+                    try:
+                        member_data = await asyncio.wait_for(
+                            http.get_guild_member(self.community_id, me_id),
+                            timeout=TIMEOUT
+                        )
+                        member_role_ids = {int(r) for r in member_data.get("roles", [])}
+                        computed_perms = 0
+                        guild_id_int = int(self.community_id)
+                        for r_data in roles_data:
+                            r_id = int(r_data["id"])
+                            if r_id == guild_id_int or r_id in member_role_ids:
+                                computed_perms |= int(r_data.get("permissions", 0))
+                        is_admin = (me_id == owner_id) or bool(computed_perms & (1 << 3))
+                        result["permissions"]["administrator"] = is_admin
+                    except Exception:
+                        # Fallback: only owner check
+                        result["permissions"]["administrator"] = (me_id == owner_id)
                 else:
-                    error_reason = "Community not found"
+                    result["error_reason"] = "Community not found"
+
+            except asyncio.TimeoutError:
+                result["error_reason"] = "Validation timed out (API unreachable or slow)"
             except Exception as e:
-                error_reason = f"Community/Permission Error: {str(e)}"
+                result["error_reason"] = f"Validation error: {e}"
+            finally:
+                await http.close()
+
         except Exception as e:
-            error_reason = str(e)
-            
-        return {
-            "token": is_token_valid,
-            "community": is_community_valid,
-            "bot_name": bot_name,
-            "community_name": community_name,
-            "error_reason": error_reason,
-            "permissions": permissions
-        }
+            result["error_reason"] = str(e)
+
+        return result
 
     async def create_channel(self, name: str, topic: str = "", type: int = 0, parent_id: Optional[str] = None, nsfw: bool = False, slowmode_delay: int = 0, position: Optional[int] = None) -> str:
         """
@@ -243,6 +347,17 @@ class FluxerWriter:
         assert self.client is not None
         self._channels_cache = await self.client.get_guild_channels(self.community_id)
         return self._channels_cache
+    
+    async def get_emojis(self) -> list[dict]:
+        """Returns list of custom emojis in the community as dicts."""
+        assert self.client is not None
+        return await self.client.get_guild_emojis(self.community_id)
+
+    async def get_stickers(self) -> list[dict]:
+        """Returns list of custom stickers in the community as dicts."""
+        assert self.client is not None
+        return await self.client.get_guild_stickers(self.community_id)
+    
 
     async def send_message(self, channel_id: str, author_name: str, content: str, timestamp: int, author_avatar_url: Optional[str] = None, files: Optional[List[Dict[str, Any]]] = None, reply_to_message_id: Optional[str] = None, is_forwarded: bool = False, embeds: Optional[List[Dict[str, Any]]] = None) -> Optional[str]:
         """
@@ -308,12 +423,20 @@ class FluxerWriter:
             # Current limitation: fluxer.py execute_webhook doesn't support 'message_reference' yet.
             # So if we have a reply, we MUST use the bot's direct send method.
             if webhook and not reply_to_message_id:
+                # Break visual message grouping if > 7min gap since last message
+                # in this channel (adds invisible zero-width space to username)
+                webhook_username = f"{author_name} ({self.config.source_platform})"
+                last_ts = self._channel_last_timestamp.get(channel_id, 0)
+                if last_ts and abs(timestamp - last_ts) > 420:
+                    webhook_username += "\u200b"
+                self._channel_last_timestamp[channel_id] = timestamp
+
                 logger.debug(f"Fluxer: Sending message via webhook {webhook.id} for user '{author_name}'")
                 try:
                     msg = await asyncio.wait_for(
                         webhook.send(
                             content=final_content,
-                            username=f"{author_name} (discord)",
+                            username=webhook_username,
                             avatar_url=author_avatar_url,
                             files=fluxer_files,
                             embeds=normalized_embeds,
@@ -329,6 +452,9 @@ class FluxerWriter:
                     return None
             else:
                 # Use bot direct message (supports files and message_reference)
+                # Update timestamp tracking for grouping
+                self._channel_last_timestamp[channel_id] = timestamp
+
                 # We add the author name to the prefix since bot name won't match
                 bot_prefix = f"-# <t:{timestamp}:D>\n"
                 if is_forwarded:
@@ -425,35 +551,51 @@ class FluxerWriter:
             return ""
 
     async def create_emoji(self, name: str, image_bytes: bytes) -> str:
-        """
-        Creates a custom emoji in the Fluxer community.
-        """
+        """Creates a custom emoji. image_bytes must be raw bytes (not base64/data URI)."""
         assert self.client is not None
-        
+        if not image_bytes:
+            logger.warning("create_emoji: empty image data for '%s' — skipping", name)
+            return ""
+
+        # Shrink oversized images so the API accepts them
+        image_bytes = _shrink_emoji_image(image_bytes, name)
+
         try:
             emoji = await self.client.create_guild_emoji(
                 guild_id=self.community_id,
                 name=name,
-                image=image_bytes
+                image=image_bytes  # raw bytes – library will base64-encode
             )
             return str(emoji["id"])
         except Exception as e:
-            logger.error(f"Failed to copy emoji '{name}': {e}", exc_info=True)
+            size_kb = len(image_bytes) / 1024
+            logger.error(
+                "Failed to copy emoji '%s' (%.1f KB): %s", name, size_kb, e,
+                exc_info=True,
+            )
             return ""
 
     async def create_sticker(self, name: str, image_bytes: bytes) -> str:
-        """
-        Creates a custom sticker in the Fluxer community.
+        """Creates a custom sticker. image_bytes must be raw bytes. Returns ID on success, empty string on failure.
+
+        Note
+        ----
+        Sticker creation returns ``401 UNAUTHORIZED`` on some self-hosted Fluxer
+        instances even when the bot has Administrator permissions.  This is a
+        server-side / ``fluxer.py`` library issue — the endpoint works correctly
+        against the official Fluxer API (``api.fluxer.app``).  Tracked upstream.
         """
         assert self.client is not None
-        
         try:
             sticker = await self.client.create_guild_sticker(
                 guild_id=self.community_id,
                 name=name,
-                image=image_bytes
+                image=image_bytes  # raw bytes
             )
             return str(sticker["id"])
+        except Unauthorized:
+            logger.warning(f"Sticker creation failed (Unauthorized) for '{name}'. Skipping.")
+            return ""
         except Exception as e:
             logger.error(f"Failed to copy sticker '{name}': {e}", exc_info=True)
             return ""

@@ -22,7 +22,8 @@ def pytest_configure(config):
     """Register global warning filters and marks."""
     # Register marks if needed
     config.addinivalue_line("markers", "asyncio: mark test as asyncio")
-    
+    config.addinivalue_line("markers", "live: live integration test (requires ReaperFiles-AutoTest with real tokens)")
+
     # Silence benign async mock and ResourceWarnings globally
     config.addinivalue_line("filterwarnings", "ignore::RuntimeWarning")
     config.addinivalue_line("filterwarnings", "ignore::ResourceWarning")
@@ -31,6 +32,15 @@ def pytest_sessionstart(session):
     """Clear the log file at the beginning of the test session."""
     with open(LOG_FILE, "w") as f:
         f.write("--- Reaper Test Session Started ---\n")
+
+
+def pytest_collection_modifyitems(config, items):
+    """Skip live tests by default — opt in with ``-m live``."""
+    if config.getoption("-m") != "live":
+        skip_live = pytest.mark.skip(reason="live test — use '-m live' to run")
+        for item in items:
+            if "live" in item.keywords:
+                item.add_marker(skip_live)
 
 def pytest_report_header(config):
     """Print data source status to the console header."""
@@ -78,8 +88,8 @@ def reaper_config(test_data_dir):
         return data
     # Fallback mock config
     return {
-        "discord_bot_token": "mock_discord_token",
-        "discord_server_id": "123456789012345678",
+        "source_bot_token": "mock_source_token",
+        "source_server_id": "123456789012345678",
         "tool_mode": "backup_transfer",
         "target_platform": "fluxer",
         "fluxer_bot_token": "mock_fluxer_token",
@@ -123,12 +133,12 @@ def backup_db(temp_db):
 
 @pytest.fixture
 def backup_reader(test_data_dir, reaper_config, tmp_path):
-    sid = reaper_config.get("discord_server_id")
-    backup_path = test_data_dir / f"DISCORD_BACKUP-{sid}"
+    sid = reaper_config.get("source_server_id")
+    backup_path = test_data_dir / f"SOURCE_BACKUP-{sid}"
     
     if not test_data_dir.exists() or not backup_path.exists():
         # Fallback: create mock backup structure
-        mock_path = tmp_path / f"DISCORD_BACKUP-{sid}"
+        mock_path = tmp_path / f"SOURCE_BACKUP-{sid}"
         print(f"[DATA_SOURCE] USE_MOCK_BACKUP: {mock_path.name}")
         _log(f"[DATA_SOURCE] USE_MOCK_BACKUP: {mock_path.name}")
         mock_path.mkdir(parents=True, exist_ok=True)
@@ -147,7 +157,7 @@ def backup_reader(test_data_dir, reaper_config, tmp_path):
     return BackupReader(backup_path)
 
 @pytest.fixture
-def mock_discord_reader():
+def mock_source_reader():
     reader = MagicMock()
     reader.guild = MagicMock()
     reader.fetch_message_history = AsyncMock()

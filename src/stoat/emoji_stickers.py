@@ -11,7 +11,7 @@ async def sync_assets_state(context: MigrationContext):
     Scans Stoat for emojis matching Discord names and updates state file mappings.
     """
     logger.info("Synchronizing asset mappings (emojis) with Stoat...")
-    discord_emojis = await context.discord_reader.get_emojis()
+    discord_emojis = await context.source_reader.get_emojis()
     # Stickers not supported on Stoat based on current library investigation
     
     # StoatWriter should have a way to fetch emojis
@@ -35,11 +35,12 @@ async def sync_assets_state(context: MigrationContext):
         # Using target mapping in state
         stoat_id = context.state.get_target_emoji_id(discord_id)
         
-        if stoat_id:
-            if stoat_id not in stoat_emoji_ids:
-                context.state.remove_emoji_mapping(discord_id)
-                removals += 1
-        elif emoji.name in stoat_emoji_map:
+        if stoat_id and stoat_id not in stoat_emoji_ids:
+            context.state.remove_emoji_mapping(discord_id)
+            removals += 1
+            stoat_id = None
+
+        if not stoat_id and emoji.name in stoat_emoji_map:
             context.state.set_target_emoji_mapping(discord_id, stoat_emoji_map[emoji.name])
             updates += 1
                 
@@ -58,7 +59,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
     """
     objs = []
     if "Emoji" in types_to_include:
-        emojis = await context.discord_reader.get_emojis()
+        emojis = await context.source_reader.get_emojis()
         objs.extend([(e, "Emoji") for e in emojis])
     
     # Stickers are skipped for Stoat
@@ -84,7 +85,7 @@ async def migrate_emojis(context: MigrationContext, progress_callback: Callable[
         try:
             if obj_type == "Emoji":
                 logger.debug(f"Migrating emoji to Stoat: {obj.name}")
-                img_data = await context.discord_reader.download_emoji(obj)
+                img_data = await context.source_reader.download_emoji(obj)
                 stoat_id = await context.writer.create_emoji(
                     name=obj.name,
                     image_bytes=img_data

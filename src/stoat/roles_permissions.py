@@ -11,7 +11,7 @@ async def sync_roles_state(context: MigrationContext):
     Scans Stoat for roles matching Discord names and updates state file mappings.
     """
     logger.info("Synchronizing role mappings with Stoat...")
-    discord_roles = await context.discord_reader.get_roles()
+    discord_roles = await context.source_reader.get_roles()
     server = await context.stoat_writer._get_server()
     stoat_roles = list(server.roles.values())
     
@@ -42,8 +42,8 @@ async def sync_roles_state(context: MigrationContext):
 async def sync_permissions(context: MigrationContext, progress_callback: Callable[[str, int, int], Awaitable[None]] | None = None) -> dict:
     """Syncs category and channel role overrides/permissions."""
     logger.info("Starting permissions synchronization for Stoat...")
-    discord_categories = await context.discord_reader.get_categories()
-    discord_channels = await context.discord_reader.get_channels()
+    discord_categories = await context.source_reader.get_categories()
+    discord_channels = await context.source_reader.get_channels()
     
     # Only sync for items that are already mapped
     mapped_categories = [c for c in discord_categories if context.state.get_target_category_id(str(c.id))]
@@ -89,7 +89,13 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 
         # Flatten overwrites: start with category, then overlay channel overrides
         final_overwrites = {} # role_id -> PermissionOverwrite
-        
+
+        # TODO(fluxer-source): Fluxer channel/category objects do not expose an
+        # ``.overwrites`` attribute (overwrites come from
+        # ``source_reader.get_channel_overwrites()``).  Fluxer→Stoat permission
+        # sync currently raises AttributeError here and is silently skipped by
+        # the per-channel try/except below.
+
         # A. Start with Category overwrites (Inheritance)
         if channel.category_id and channel.category_id in cat_map:
             cat = cat_map[channel.category_id]
@@ -105,7 +111,7 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
                     # Merge logic: channel overwrites specific settings, but 
                     # keeps inherited settings for any permission marked as 'None' in channel
                     cat_ow = final_overwrites[target.id]
-                    merged = context.discord_reader.create_permission_overwrite()
+                    merged = context.source_reader.create_permission_overwrite()
                     # Apply category settings
                     for name, value in cat_ow:
                         setattr(merged, name, value)
@@ -125,12 +131,12 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
             # (due to default denys) before it finishes setting other role permissions.
             sorted_overrides = sorted(
                 final_overwrites.items(),
-                key=lambda x: str(x[0]) == str(context.discord_reader.server_id)
+                key=lambda x: str(x[0]) == str(context.source_reader.server_id)
             )
 
             for d_role_id, merged_ov in sorted_overrides:
                 # Map Discord role to Stoat role
-                if str(d_role_id) == str(context.discord_reader.server_id):
+                if str(d_role_id) == str(context.source_reader.server_id):
                     # @everyone
                     stoat_id = str(context.stoat_writer.community_id)
                     is_role = False # set_default_permissions path
@@ -172,7 +178,7 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
     
     # 1. Sync default permissions (@everyone)
     try:
-        guild = context.discord_reader.guild
+        guild = context.source_reader.guild
         if guild:
             default_role = guild.default_role
             await context.stoat_writer.update_default_role_permissions(default_role.permissions.value)
@@ -181,7 +187,7 @@ async def migrate_roles(context: MigrationContext, progress_callback: Callable[[
         logger.error(f"Failed to sync default permissions: {e}")
 
     # 2. Fetch and filter roles
-    roles = await context.discord_reader.get_roles()
+    roles = await context.source_reader.get_roles()
     if not force:
         roles = [r for r in roles if not context.state.get_target_role_id(str(r.id))]
 

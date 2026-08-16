@@ -13,7 +13,7 @@ from textual.containers import Container, Vertical, Horizontal, VerticalScroll
 from textual.widgets import Header, Footer, Button, ContentSwitcher, Rule
 from textual.screen import Screen
 
-from src.core.configuration import load_config
+from src.core.configuration import load_config, FLUXER_SOURCE_DISABLE_BACKUP_MODES
 from src.ui.shuttle_ops import OperationPane
 from src.ui.widgets import RamDisplay, Footnote
 
@@ -118,6 +118,9 @@ class ModeScreen(Screen):
         yield Header(show_clock=True)
 
         mode = self.config.tool_mode or "backup_only"
+        # Fluxer source only supports direct transfer until backup is implemented
+        if FLUXER_SOURCE_DISABLE_BACKUP_MODES and getattr(self.config, "source_platform", "discord") == "fluxer":
+            mode = "direct_transfer"
 
         with Container(id="main_outer"):
             with Container(id="main_container"):
@@ -136,6 +139,7 @@ class ModeScreen(Screen):
                         if mode == "backup_transfer":
                             yield Button("Switch to Migrate ⇄", id="btn_switch", variant="primary", tooltip="Switch between\nBackup & Migrate operations")
                         yield Button("Configuration", id="btn_config", variant="success", tooltip="Change Bot tokens\nand Reaper Mode")
+                        yield Button("Back to Config Selection", id="btn_back", variant="warning", tooltip="Return to the configuration selection screen")
                         yield Button("Exit", id="btn_exit", variant="error")
 
         yield Footer()
@@ -146,6 +150,8 @@ class ModeScreen(Screen):
         bid = event.button.id
         if bid == "btn_exit":
             self.app.exit()
+        elif bid == "btn_back":
+            self.app.pop_screen()
         elif bid == "btn_config":
             from src.ui.main_app import ConfigScreen
             def reload_screen(saved: bool = False):
