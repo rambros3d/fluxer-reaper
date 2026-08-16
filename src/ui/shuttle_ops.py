@@ -498,31 +498,6 @@ class OperationPane(Container):
         self._update_info_labels()
 
         async def check_source():
-            if self.config.source_platform != "discord": 
-                try:
-                    import asyncio
-                    res = await asyncio.wait_for(self.engine.source_reader.validate(), timeout=10.0)
-                    self.validation_results["source_token"] = res.get("token", False)
-                    self.validation_results["source_bot_name"] = res.get("bot_name")
-                    self.validation_results["source_server"] = res.get("server", False)
-                    self.validation_results["source_server_name"] = res.get("server_name")
-                    self.validation_results["discord_intents"] = res.get("intents", {})
-                    self.validation_results["source_permissions"] = res.get("permissions", {})
-                    self.validation_results["source_error"] = res.get("error_reason")
-                except asyncio.TimeoutError:
-                    self.validation_results["source_timeout"] = True
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    self.validation_results["source_error"] = str(e)
-                finally:
-                    self.validation_results["source_validating"] = False
-                    self._check_and_update()
-            else: 
-                await check_discord()
-            
-
-        async def check_discord():
             try:
                 import asyncio
                 res = await asyncio.wait_for(self.engine.source_reader.validate(), timeout=10.0)

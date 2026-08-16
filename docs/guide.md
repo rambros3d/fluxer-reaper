@@ -7,13 +7,18 @@ DiscoReaper supports two source platforms:
 | Source | Modes available |
 |---|---|
 | **Discord** | Direct migration, Backup, Backup-then-migrate |
-| **Fluxer** | Direct migration only (backup coming later) |
+| **Fluxer** | Direct migration only (backup not implemented yet) |
 
 To use a Fluxer source, set **Source Platform** to `fluxer` when creating a config. You'll need:
 - A Fluxer bot token (from the Developer Portal or your self-hosted instance)
     - The Fluxer Bot should be given Administrator for ease of use
 - The community (guild) ID you want to migrate from
 - If self-hosted: the API URL (e.g. `https://your-instance.com/api`)
+
+Notes for Fluxer sources:
+- Stickers are not cloned from Fluxer sources yet.
+- Oversized emojis are automatically compressed to fit the target's size limit.
+- Sticker cloning to a self-hosted Fluxer target fails (`401 UNAUTHORIZED`, upstream `fluxer.py` bug).
 
 ---
 
@@ -33,6 +38,7 @@ The primary suite of tools for moving data between Discord & Fluxer/Stoat.
 
 ## 2. Backup & Archiving
 Tools for creating and maintaining permanent local copies of your data.
+> ⚠️ Backup tools currently support **Discord sources only**.
 
 *   **Full Server Backup**: 
     Downloads the entire server structure-including all categories, channels, custom roles, and permission overwrites-along with full message histories and all file attachments into a high-performance SQLite database.

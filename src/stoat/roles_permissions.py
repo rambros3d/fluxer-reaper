@@ -89,7 +89,13 @@ async def sync_permissions(context: MigrationContext, progress_callback: Callabl
 
         # Flatten overwrites: start with category, then overlay channel overrides
         final_overwrites = {} # role_id -> PermissionOverwrite
-        
+
+        # TODO(fluxer-source): Fluxer channel/category objects do not expose an
+        # ``.overwrites`` attribute (overwrites come from
+        # ``source_reader.get_channel_overwrites()``).  Fluxer→Stoat permission
+        # sync currently raises AttributeError here and is silently skipped by
+        # the per-channel try/except below.
+
         # A. Start with Category overwrites (Inheritance)
         if channel.category_id and channel.category_id in cat_map:
             cat = cat_map[channel.category_id]

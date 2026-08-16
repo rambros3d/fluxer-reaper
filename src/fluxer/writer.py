@@ -86,9 +86,14 @@ def _shrink_emoji_image(image_bytes: bytes, name: str = "?") -> bytes:
                     transparency=0,
                 )
             else:
+                # Static image — resize from the original (never reassign
+                # ``img`` itself or subsequent scale attempts would compound
+                # multiplicatively).
                 if scale < 1.0:
-                    img = img.resize((new_w, new_h), Image.LANCZOS)
-                img.save(buf, format=fmt, optimize=True)
+                    resized = img.resize((new_w, new_h), Image.LANCZOS)
+                else:
+                    resized = img
+                resized.save(buf, format=fmt, optimize=True)
 
             result = buf.getvalue()
             result_kb = len(result) / 1024

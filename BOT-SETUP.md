@@ -1,6 +1,9 @@
 
 # Bot Setup
 
+> Discord can only be used as a **source** platform. Fluxer can be a source and/or target.
+> If you're using a **self-hosted Fluxer instance**, create the bot application in your own instance's settings (by going to the app: User Settings > Applications ) instead of the official Fluxer app — the steps below are the same.
+
 # 1) Fluxer Bot
 
 Go to your **user settings** in Fluxer (**Ctrl** + **,**) and **Create Application**

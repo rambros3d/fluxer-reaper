@@ -225,6 +225,51 @@ class DeleteDataModal(ModalScreen[str]):
             self.dismiss("cancel")
 
 
+class OverwriteConfigModal(ModalScreen[bool]):
+    """Confirmation modal before overwriting an existing configuration during clone."""
+
+    DEFAULT_CSS = """
+    OverwriteConfigModal { align: center middle; }
+    #overwrite_dialog {
+        width: 56; height: auto;
+        border: thick $warning 80%; background: $surface; padding: 1 2;
+    }
+    #overwrite_title { text-style: bold; color: $warning; margin-bottom: 1; }
+    #overwrite_warning { margin-bottom: 1; color: $text-warning; }
+    #overwrite_buttons { height: auto; margin-top: 1; }
+    #overwrite_buttons Button { width: 1fr; margin: 0 1; }
+    """
+
+    def __init__(self, new_name: str, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.new_name = new_name
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="overwrite_dialog"):
+            yield Label("Configuration Already Exists!", id="overwrite_title")
+            yield Label(
+                f"A configuration named [bold]{self.new_name}[/bold] already exists.\n\n"
+                f"Cloning over it will [bold]overwrite[/bold] its\n"
+                f"[bold]ReaperFiles-{self.new_name}/reaper_config.yaml[/bold].\n\n"
+                f"Existing database and backup files in the folder are kept.\n\n"
+                f"Do you want to overwrite it?",
+                id="overwrite_warning"
+            )
+            with Horizontal(id="overwrite_buttons"):
+                yield Button("Overwrite", variant="warning", id="btn_overwrite_confirm")
+                yield Button("Cancel", variant="primary", id="btn_overwrite_cancel")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_overwrite_confirm":
+            self.dismiss(True)
+        elif event.button.id == "btn_overwrite_cancel":
+            self.dismiss(False)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(False)
+
+
 class CloneConfigModal(ModalScreen[tuple | None]):
     """Modal to clone a configuration with a new name and optionally a new source platform."""
 
@@ -330,18 +375,22 @@ class ConfigRow(Horizontal, can_focus=False):
     }
     """
 
-    def __init__(self, cfg_name: str, display_name: str, *args, **kwargs):
+    def __init__(self, cfg_name: str, display_name: str, standalone: bool = False, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.cfg_name = cfg_name
         self.display_name = display_name
+        self.standalone = standalone
 
     def compose(self) -> ComposeResult:
         yield Button(self.display_name, id=f"open_cfg__{self.cfg_name}", classes="btn_open",
                      tooltip=f"Open configuration '{self.display_name}'")
-        yield Button("📋", id=f"clone_cfg__{self.cfg_name}", classes="btn_clone",
-                     tooltip=f"Clone configuration '{self.display_name}'")
-        yield Button("🗑️", id=f"delete_cfg__{self.cfg_name}", classes="btn_trash",
-                     tooltip=f"Delete configuration '{self.display_name}'")
+        # The standalone "." config cannot be cloned/deleted via
+        # "ReaperFiles-." paths, so those buttons are hidden for it.
+        if not self.standalone:
+            yield Button("📋", id=f"clone_cfg__{self.cfg_name}", classes="btn_clone",
+                         tooltip=f"Clone configuration '{self.display_name}'")
+            yield Button("🗑️", id=f"delete_cfg__{self.cfg_name}", classes="btn_trash",
+                         tooltip=f"Delete configuration '{self.display_name}'")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -459,7 +508,7 @@ class ConfigSelectionScreen(Screen):
             else:
                 display_name = c
 
-            row = ConfigRow(cfg_name=c, display_name=display_name)
+            row = ConfigRow(cfg_name=c, display_name=display_name, standalone=(c == "."))
             scroll.mount(row)
 
         return configs
@@ -537,17 +586,30 @@ class ConfigSelectionScreen(Screen):
         source_config = load_config(cfg_path)
         source_platform = source_config.source_platform or "discord"
 
-        def on_clone(result):
-            if result is None:
-                return
-            new_name, new_platform = result
-
+        def do_clone(new_name: str, new_platform: str | None):
             cloned = clone_config(cfg_name, new_name, new_platform)
             if cloned:
                 self.notify(f"Configuration cloned to '{new_name}'.", severity="information")
                 self.refresh_configs()
             else:
                 self.notify(f"Failed to clone configuration '{cfg_name}'.", severity="error")
+
+        def on_clone(result):
+            if result is None:
+                return
+            new_name, new_platform = result
+
+            # Confirm before overwriting an existing configuration
+            if Path(f"ReaperFiles-{new_name}").exists():
+                def on_overwrite(confirmed: bool):
+                    if confirmed:
+                        do_clone(new_name, new_platform)
+                    else:
+                        self.notify(f"Clone to '{new_name}' cancelled.", severity="warning")
+                self.app.push_screen(OverwriteConfigModal(new_name), on_overwrite)
+                return
+
+            do_clone(new_name, new_platform)
 
         self.app.push_screen(CloneConfigModal(cfg_name, source_platform), on_clone)
 
@@ -837,18 +899,18 @@ class ConfigScreen(Screen):
                         yield RadioButton(
                             "Shuttle Transfer  (direct migration)",
                             id="radio_direct",
-                            value=True
+                            value=(cur_mode == "direct_transfer")
                         )
                         yield RadioButton(
                             "Backup & Migrate  (backup first, then migrate)",
                             id="radio_backup",
-                            value=False,
+                            value=(cur_mode == "backup_transfer"),
                             disabled=disable_backup,
                         )
                         yield RadioButton(
                             "Backup Only       (local backup, no migration)",
                             id="radio_bkonly",
-                            value=False,
+                            value=(cur_mode == "backup_only"),
                             disabled=disable_backup,
                         )
 
@@ -1005,7 +1067,7 @@ class ConfigScreen(Screen):
         key = f"{role}_{platform}"
         config = self.FETCH_CONFIGS.get(key)
         if not config:
-            self.logger.error(f"No fetch config for {key}")
+            logger.error(f"No fetch config for {key}")
             return
 
         # Get the saved ID from the config object
@@ -1023,7 +1085,7 @@ class ConfigScreen(Screen):
             from src.stoat.writer import StoatWriter
             coro = StoatWriter.fetch_guilds(token, api_url or "default")
         else:
-            self.logger.error(f"Unsupported fetch combination: {role}/{platform}")
+            logger.error(f"Unsupported fetch combination: {role}/{platform}")
             return
 
         await self._fetch_and_populate(coro, config, saved_id, initial)
@@ -1217,11 +1279,59 @@ class ConfigScreen(Screen):
 # App
 # ──────────────────────────────────────────────────────────────────────────────
 
+class TerminalSizeWarningModal(ModalScreen[None]):
+    """One-time popup warning the user that the terminal window is too small."""
+
+    DEFAULT_CSS = """
+    TerminalSizeWarningModal { align: center middle; }
+    #termsize_dialog {
+        width: 60; height: auto; min-height: 12;
+        border: thick $warning 80%; background: $surface; padding: 1 2;
+    }
+    #termsize_title { text-style: bold; color: $warning; margin-bottom: 1; }
+    #termsize_body { margin-bottom: 1; color: $text-warning; }
+    #termsize_buttons { height: auto; margin-top: 1; }
+    #termsize_buttons Button { width: 1fr; }
+    """
+
+    def __init__(self, cols: int, rows: int, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cols = cols
+        self.rows = rows
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="termsize_dialog"):
+            yield Label("Terminal Window Too Small", id="termsize_title")
+            yield Label(
+                f"Your terminal is [bold]{self.cols}x{self.rows}[/bold].\n\n"
+                f"Enlarge it to at least [bold]100x45[/bold] — otherwise the \n"
+                f"server-profile and log boxes may be hidden.\n\n"
+                f"You can continue, but some information\n may not be visible.\n",
+                id="termsize_body"
+            )
+            with Horizontal(id="termsize_buttons"):
+                yield Button("Got it", variant="primary", id="btn_termsize_ok")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn_termsize_ok":
+            self.dismiss(None)
+
+    def on_key(self, event) -> None:
+        if event.key == "escape":
+            self.dismiss(None)
+
+
 class ReaperApp(App):
     TITLE = get_app_version()
     SCREENS = {
         "config_selection": ConfigSelectionScreen,
     }
+
+    # Recommended minimum terminal size (cols x rows).  Below this the
+    # operation panes clip their log output box and the server-profile
+    # information box on small terminals (e.g. a 30-row Konsole window).
+    MIN_COLS = 100
+    MIN_ROWS = 45
 
     DEFAULT_CSS = """
     RamDisplay {
@@ -1242,9 +1352,29 @@ class ReaperApp(App):
     }
     """
 
+    _terminal_size_warned = False
+
     def on_mount(self) -> None:
         self.push_screen("config_selection")
         self.theme = "dracula"
+        self.call_after_refresh(self._warn_terminal_size_once)
+
+    def _too_small(self) -> tuple[int, int] | None:
+        """Return (cols, rows) if the terminal is below the recommended
+        minimum, else None."""
+        cols, rows = self.size
+        if rows < self.MIN_ROWS or cols < self.MIN_COLS:
+            return cols, rows
+        return None
+
+    def _warn_terminal_size_once(self) -> None:
+        """One-time popup telling the user the terminal is too small."""
+        if self._terminal_size_warned:
+            return
+        self._terminal_size_warned = True
+        too_small = self._too_small()
+        if too_small is not None:
+            self.push_screen(TerminalSizeWarningModal(*too_small))
 
     def action_screenshot(self, filename: str | None = None, path: str | None = None) -> None:
         """Action to take a screenshot."""

@@ -152,8 +152,6 @@ class ModeScreen(Screen):
             self.app.exit()
         elif bid == "btn_back":
             self.app.pop_screen()
-            from src.ui.main_app import ConfigSelectionScreen
-            self.app.push_screen(ConfigSelectionScreen())
         elif bid == "btn_config":
             from src.ui.main_app import ConfigScreen
             def reload_screen(saved: bool = False):

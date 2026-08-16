@@ -1,5 +1,20 @@
 # DiscoReaper
 
+## ⭐ Extended PR build — Fluxer as a Source
+
+> This branch adds **Fluxer as a source platform** (in addition to Discord).
+> It may take a while to be merged upstream, so you can get it directly here:
+>
+> - **Pre-built binaries**: [Get them from this fork's Releases page](https://github.com/omstr/disco-reaper/releases/latest)
+> - **Or download the code yourself**:
+>   ```bash
+>   git clone -b V4-main https://github.com/omstr/disco-reaper.git
+>   cd disco-reaper
+>   ./launch.sh          # Linux/macOS  (launch.bat on Windows)
+>   ```
+
+---
+
 **DiscoReaper** is a powerful tool designed to help you migrate your entire Discord server — or a Fluxer community — to Fluxer or Stoat. It clones channels, roles, emojis, permissions, and your community's full message history.
 
 ### Get it here: [![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-linux.zip)   [![Windows](https://custom-icon-badges.demolab.com/badge/Windows-0078D6?logo=windows11&logoColor=white)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-windows.zip) [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=F0F0F0)](https://github.com/rambros3d/disco-reaper/releases/latest/download/disco-reaper-macos.zip)
@@ -40,9 +55,18 @@
 | - Threads | 🟩 | 🟩 |
 | - Forums | ⚠️ | ⚠️ |
 
-- **Fluxer Source**: 
-   - Local source backup for Fluxer yet to be implemented, only available mode is **Direct Migration**
+### Supported Source Platforms
+
+| Source | Direct Migration | Local Backup | Backup then Migrate |
+| :--- | :---: | :---: | :---: |
+| **Discord** | 🟩 | 🟩 | 🟩 |
+| **Fluxer** | 🟩 | ⏳ | ⏳ |
+
+- **Fluxer Source**:
+   - Only **Direct Migration** is available for Fluxer sources — local backup for Fluxer is not implemented yet.
    - Cloning Stickers from a Fluxer Source does not work yet.
+   - ⚠️ Cloning stickers to a **self-hosted Fluxer target** also fails — the sticker endpoint returns `401 UNAUTHORIZED` even with Administrator permissions (an upstream `fluxer.py` issue). Use the official Fluxer instance if you need stickers.
+   - Oversized emojis (over the target's size limit) are automatically resized/compressed so the migration doesn't fail.
 - ⚠️**Fluxer/Stoat**: Threads & Forums type channels are not yet natively available. As a workaround, threads are migrated in their parent channels as normal messages. 
 - ⚠️**Stoat**: doesn't have features like Category Permissions or Slowmode settings for channels.
 - ⏳**Stoat**: permission sync for channels was not implemented due to architectural differences.
@@ -92,13 +116,19 @@ Migrate directly from Discord or your Local Backups to the target community.
 ### Option 2: Running from Source (To use latest unstable code)
 1. **Clone**: Clone the repository to your local machine:
    ```bash
+   # Upstream (Discord-only source)
    git clone https://github.com/rambros3d/disco-reaper.git
    cd disco-reaper
    ```
+   For the **extended PR build** (Fluxer as a source), clone this fork's branch instead:
+   ```bash
+   git clone -b V4-main https://github.com/omstr/disco-reaper.git
+   cd disco-reaper
+   ```
 2. **Launch**: Run the appropriate launcher script for your OS. It will automatically create a virtual environment and install dependencies:
-   - **Linux**: `./launch-app.sh`
-   - **MacOS**: `./launch-app-MAC.sh`
-   - **Windows**: Double-click `launch-app-WIN.bat`
+   - **Linux**: `./launch.sh`
+   - **MacOS**: `./launch.sh`
+   - **Windows**: Double-click `launch.bat`
 
 ---
 ## What do the people say

@@ -145,6 +145,11 @@ async def migrate_channels(context: MigrationContext, progress_callback: Callabl
         logger.debug(f"Creating channel {channel.name}: topic={topic}, nsfw={nsfw}, slowmode={slowmode}")
         
         # Map Discord-specific types to target-supported types
+        # TODO(fluxer-source): FluxerReader defines CHANNEL_TYPE_* as raw ints
+        # (e.g. CHANNEL_TYPE_TEXT = 0), so `.value` on them raises AttributeError
+        # for Fluxer→Stoat migrations.  Normalize both operands, e.g.
+        # ``getattr(v, "value", v)``, once Fluxer-as-source for Stoat targets
+        # is supported.
         raw_type = channel.type.value if hasattr(channel.type, 'value') else 0
         if raw_type == context.source_reader.CHANNEL_TYPE_VOICE.value:
             ch_type = 2

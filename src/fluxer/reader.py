@@ -810,18 +810,17 @@ class FluxerReader:
     async def get_first_message(
         self, channel_id: str
     ) -> Optional[FluxerMessageWrapper]:
-        """Return the oldest message in *channel_id*."""
+        """Return the oldest message in *channel_id*.
+
+        The Fluxer API only returns messages newest-first, so a plain
+        ``limit=1`` request would yield the *newest* message.  Reuse
+        ``fetch_message_history`` (which paginates backwards and yields
+        oldest-first) and return its first item.
+        """
         await self._ensure_http()
         try:
-            msgs = await self._http.get_messages(
-                channel_id, limit=1
-            )
-            if msgs:
-                raw = msgs[0]
-                msg = Message.from_data(raw)
-                return FluxerMessageWrapper(msg, raw,
-                                             web_base=self.web_base_url,
-                                             guild_id=self.community_id)
+            async for wrapped in self.fetch_message_history(channel_id):
+                return wrapped  # oldest message
         except Exception:
             logger.debug(
                 "Failed to fetch first message in channel %s",
@@ -841,7 +840,11 @@ class FluxerReader:
         The Fluxer API returns messages newest-first and supports ``before``
         for backwards pagination.  We collect **all** batches by walking
         backwards from the newest message, then reverse the full list to
-        yield oldest-first -- No alternative for newest-first API.
+        yield oldest-first.
+
+        NOTE: This buffers the entire channel history in memory.  The Fluxer
+        API has no ascending-order / ``after`` cursor, so buffering is the
+        only way to yield messages oldest-first — it cannot be streamed.
 
         Parameters
         ----------

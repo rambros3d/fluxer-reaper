@@ -38,6 +38,10 @@ stoat_bot_token: YOUR_STOAT_BOT_TOKEN
 
 *Fluxer sources do not have full support yet (reaper modes)
 
+### Why do sticker clones fail on my self-hosted Fluxer instance?
+- Sticker creation returns `401 UNAUTHORIZED` on some self-hosted Fluxer instances even when the bot has Administrator permissions. This is an upstream `fluxer.py` issue — the endpoint works against the official Fluxer API (`api.fluxer.app`).
+- Stickers are also not cloned when the **source** is Fluxer (not implemented yet).
+
 ---
 
 ### Where do I get help?

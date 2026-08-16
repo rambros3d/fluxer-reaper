@@ -1,7 +1,10 @@
+import logging
 from typing import Optional, Union
 import yaml
 from pathlib import Path
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +163,12 @@ def clone_config(source_name: str, new_name: str, new_source_platform: str | Non
         config.source_api_url = None
 
     folder_path = Path(f"ReaperFiles-{new_name}")
+    if folder_path.exists():
+        logger.warning(
+            "clone_config: destination 'ReaperFiles-%s' already exists — "
+            "its reaper_config.yaml will be overwritten.",
+            new_name,
+        )
     folder_path.mkdir(exist_ok=True)
     new_config_path = folder_path / "reaper_config.yaml"
     save_config(config, new_config_path)
